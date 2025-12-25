@@ -7,21 +7,108 @@ from transformers import AutoTokenizer
 from models.modeling_llama import LlamaForCausalLM
 
 
+class TrieNode:
+    """
+    Node in the prefix trie for storing beam search sequences.
+
+    Each node can store multiple tokens up to max_tokens_per_node.
+    When max length is reached, a new child node is created even if sequences don't diverge.
+    """
+
+    def __init__(self, tokens: Optional[List[int]] = None, parent: Optional['TrieNode'] = None,
+                 max_tokens_per_node: int = 32):
+        self.tokens = tokens or []  # List of tokens stored in this node
+        self.parent = parent
+        self.children: Dict[tuple, 'TrieNode'] = {}  # Key is tuple of tokens leading to child
+        self.max_tokens_per_node = max_tokens_per_node
+
+        # Calculate total depth (total tokens from root to this node)
+        self.total_tokens = (parent.total_tokens if parent else 0) + len(self.tokens)
+
+    def add_sequence(self, new_tokens: List[int]) -> 'TrieNode':
+        """
+        Add a sequence of tokens, creating nodes as needed.
+
+        Returns the final node containing the sequence.
+        """
+        if not new_tokens:
+            return self
+
+        current_node = self
+        remaining_tokens = new_tokens[:]
+
+        while remaining_tokens:
+            # Determine how many tokens to store in the next node
+            tokens_for_node = remaining_tokens[:self.max_tokens_per_node]
+            remaining_tokens = remaining_tokens[self.max_tokens_per_node:]
+
+            # Use tuple as key for children dict
+            tokens_key = tuple(tokens_for_node)
+
+            # Check if child with these tokens already exists
+            if tokens_key not in current_node.children:
+                current_node.children[tokens_key] = TrieNode(
+                    tokens=list(tokens_for_node),
+                    parent=current_node,
+                    max_tokens_per_node=self.max_tokens_per_node
+                )
+
+            current_node = current_node.children[tokens_key]
+
+        return current_node
+
+    def get_full_sequence(self) -> List[int]:
+        """Reconstruct the full sequence from root to this node."""
+        sequence = []
+        current = self
+        path = []
+
+        # Collect all nodes from this node back to root
+        while current is not None:
+            path.append(current)
+            current = current.parent
+
+        # Reverse to go from root to current node, and collect tokens
+        path.reverse()
+        for node in path:
+            sequence.extend(node.tokens)
+
+        return sequence
+
+    def get_sequence_tensor(self) -> torch.Tensor:
+        """Get the full sequence as a PyTorch tensor."""
+        tokens = self.get_full_sequence()
+        return torch.tensor(tokens) if tokens else torch.tensor([])
+
+    def __repr__(self):
+        return f"TrieNode(tokens={self.tokens}, total_tokens={self.total_tokens}, children={len(self.children)})"
+
+
 @dataclass
 class BeamCandidate:
     """Represents a single beam candidate with its sequence and score."""
-    sequence: torch.Tensor  # Token sequence
+    trie_node: TrieNode    # Reference to trie node containing the sequence
     score: float           # Log probability score
-    length: int           # Current sequence length
     finished: bool = False # Whether sequence has ended (EOS token)
 
+    @property
+    def sequence(self) -> torch.Tensor:
+        """Get the full sequence as a tensor."""
+        return self.trie_node.get_sequence_tensor()
+
+    @property
+    def length(self) -> int:
+        """Get the total length of the sequence."""
+        return self.trie_node.total_tokens
 
 class BeamState:
-    """Manages the current state of all beam candidates."""
+    """Manages the current state of all beam candidates using a trie structure."""
 
-    def __init__(self, beam_size: int, device: torch.device):
+    def __init__(self, beam_size: int, device: torch.device, max_tokens_per_node: int = 32):
         self.beam_size = beam_size
         self.device = device
+        self.max_tokens_per_node = max_tokens_per_node
+        self.root = TrieNode(max_tokens_per_node=max_tokens_per_node)
         self.candidates: List[BeamCandidate] = []
         self.finished_candidates: List[BeamCandidate] = []
 
@@ -133,11 +220,6 @@ class VanillaBeamSearchStrategy(BeamStrategy):
         return False
 
 
-@dataclass
-class DiverseCandidateInfo:
-    """Internal wrapper for diverse beam search candidate tracking."""
-    candidate: BeamCandidate
-    group_id: int
 
 
 class DiverseBeamSearchStrategy(BeamStrategy):
@@ -306,11 +388,14 @@ class BeamSearchGenerator:
         # Initialize beam state
         beam_state = BeamState(self.strategy.beam_size, self.device)
 
+        # Create initial trie node with input sequence
+        input_tokens = input_ids[0].tolist()
+        initial_node = beam_state.root.add_sequence(input_tokens)
+
         # Create initial beam candidate
         initial_candidate = BeamCandidate(
-            sequence=input_ids[0],
-            score=0.0,
-            length=input_ids.shape[1]
+            trie_node=initial_node,
+            score=0.0
         )
         beam_state.add_candidate(initial_candidate)
 
@@ -371,17 +456,16 @@ class BeamSearchGenerator:
                 top_probs, top_indices = torch.topk(next_token_probs[batch_idx], top_k)
 
                 for prob, token_id in zip(top_probs, top_indices):
-                    # Create new sequence
-                    new_sequence = torch.cat([parent_candidate.sequence, token_id.unsqueeze(0)])
+                    # Create new trie node by adding the new token
+                    new_node = parent_candidate.trie_node.add_sequence([token_id.item()])
                     new_score = parent_candidate.score + prob.item()
 
                     # Check if sequence is finished
                     is_finished = token_id.item() == eos_token_id
 
                     new_candidate = BeamCandidate(
-                        sequence=new_sequence,
+                        trie_node=new_node,
                         score=new_score,
-                        length=new_sequence.shape[0],
                         finished=is_finished
                     )
                     new_candidates.append(new_candidate)
@@ -402,8 +486,9 @@ class BeamSearchGenerator:
         # Decode sequences
         results = []
         for candidate in final_candidates:
-            # Remove input tokens from the generated sequence
-            generated_tokens = candidate.sequence[input_ids.shape[1]:]
+            # Get full sequence and remove input tokens
+            full_sequence = candidate.trie_node.get_full_sequence()
+            generated_tokens = full_sequence[len(input_tokens):]  # Remove input portion
             generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
             results.append(generated_text)
 
