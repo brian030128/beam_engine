@@ -1,0 +1,44 @@
+# --- Python / Bytecode ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# --- Environments ---
+.venv/
+venv/
+env/
+.conda/
+.env
+
+# --- Build / Packaging ---
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# --- ML Specific (Weights & Data) ---
+# Prevent uploading heavy model checkpoints or datasets
+data/
+checkpoints/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+
+# --- FlashInfer / Ninja Artifacts ---
+# FlashInfer uses Ninja for JIT kernels; ignore the build caches
+.ninja_deps
+.ninja_log
+/target/
+
+# --- IDEs / Editors ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# --- Logs ---
+logs/
+*.log
