@@ -1,10 +1,453 @@
+import torch
+import torch.nn.functional as F
+from abc import ABC, abstractmethod
+from typing import List, Tuple, Dict, Optional
+from dataclasses import dataclass
 from transformers import AutoTokenizer
 from models.modeling_llama import LlamaForCausalLM
 
 
+@dataclass
+class BeamCandidate:
+    """Represents a single beam candidate with its sequence and score."""
+    sequence: torch.Tensor  # Token sequence
+    score: float           # Log probability score
+    length: int           # Current sequence length
+    finished: bool = False # Whether sequence has ended (EOS token)
+    group_id: Optional[int] = None  # For diverse beam search grouping
+
+
+class BeamState:
+    """Manages the current state of all beam candidates."""
+
+    def __init__(self, beam_size: int, device: torch.device):
+        self.beam_size = beam_size
+        self.device = device
+        self.candidates: List[BeamCandidate] = []
+        self.finished_candidates: List[BeamCandidate] = []
+
+    def add_candidate(self, candidate: BeamCandidate):
+        """Add a new beam candidate."""
+        if candidate.finished:
+            self.finished_candidates.append(candidate)
+        else:
+            self.candidates.append(candidate)
+
+    def get_active_candidates(self) -> List[BeamCandidate]:
+        """Get all active (non-finished) candidates."""
+        return [c for c in self.candidates if not c.finished]
+
+    def get_best_finished(self, num_return: int) -> List[BeamCandidate]:
+        """Get the best finished candidates, normalized by length."""
+        if not self.finished_candidates:
+            # If no finished candidates, return best active ones
+            sorted_active = sorted(self.candidates, key=lambda x: x.score / x.length, reverse=True)
+            return sorted_active[:num_return]
+
+        # Sort by normalized score (score / length) to avoid length bias
+        sorted_finished = sorted(self.finished_candidates, key=lambda x: x.score / x.length, reverse=True)
+        return sorted_finished[:num_return]
+
+
+class BeamStrategy(ABC):
+    """Abstract base class for beam search strategies."""
+
+    @abstractmethod
+    def select_candidates(self, beam_state: BeamState, new_candidates: List[BeamCandidate],
+                         step: int) -> List[BeamCandidate]:
+        """
+        Select which candidates to keep for the next step.
+
+        Args:
+            beam_state: Current beam state
+            new_candidates: All newly generated candidates
+            step: Current generation step
+
+        Returns:
+            List of candidates to keep (should be <= beam_size)
+        """
+        pass
+
+    @abstractmethod
+    def should_stop(self, beam_state: BeamState, max_length: int, step: int) -> bool:
+        """
+        Decide whether to stop generation.
+
+        Args:
+            beam_state: Current beam state
+            max_length: Maximum sequence length
+            step: Current generation step
+
+        Returns:
+            True if generation should stop
+        """
+        pass
+
+
+class DiverseBeamSearchStrategy(BeamStrategy):
+    """
+    Implements diverse beam search strategy.
+
+    Diverse beam search encourages diversity by:
+    1. Grouping beams and ensuring diversity within groups
+    2. Applying diversity penalties to similar sequences
+    3. Balancing exploration vs exploitation
+    """
+
+    def __init__(self, beam_size: int, num_groups: int = 2, diversity_penalty: float = 0.5,
+                 length_penalty: float = 1.0):
+        """
+        Args:
+            beam_size: Total number of beams
+            num_groups: Number of diverse groups to maintain
+            diversity_penalty: Penalty for generating similar tokens to other groups
+            length_penalty: Length normalization penalty (>1 favors longer sequences)
+        """
+        self.beam_size = beam_size
+        self.num_groups = num_groups
+        self.group_size = beam_size // num_groups
+        self.diversity_penalty = diversity_penalty
+        self.length_penalty = length_penalty
+
+        if beam_size % num_groups != 0:
+            raise ValueError(f"beam_size ({beam_size}) must be divisible by num_groups ({num_groups})")
+
+    def select_candidates(self, beam_state: BeamState, new_candidates: List[BeamCandidate],
+                         step: int) -> List[BeamCandidate]:
+        """Select diverse candidates using group-based selection."""
+        if not new_candidates:
+            return []
+
+        # Sort all candidates by score
+        all_candidates = sorted(new_candidates, key=lambda x: x.score, reverse=True)
+
+        # Initialize groups
+        selected_groups = [[] for _ in range(self.num_groups)]
+        selected_tokens_by_group = [set() for _ in range(self.num_groups)]
+
+        # Assign candidates to groups with diversity penalty
+        for candidate in all_candidates:
+            if sum(len(group) for group in selected_groups) >= self.beam_size:
+                break
+
+            # Get the last token of this candidate
+            last_token = candidate.sequence[-1].item() if candidate.sequence.numel() > 0 else None
+
+            # Find the best group for this candidate
+            best_group_idx = self._find_best_group(
+                candidate, selected_groups, selected_tokens_by_group, last_token
+            )
+
+            if best_group_idx is not None and len(selected_groups[best_group_idx]) < self.group_size:
+                candidate.group_id = best_group_idx
+                selected_groups[best_group_idx].append(candidate)
+                if last_token is not None:
+                    selected_tokens_by_group[best_group_idx].add(last_token)
+
+        # Flatten selected candidates
+        selected_candidates = []
+        for group in selected_groups:
+            selected_candidates.extend(group)
+
+        return selected_candidates[:self.beam_size]
+
+    def _find_best_group(self, candidate: BeamCandidate, selected_groups: List[List[BeamCandidate]],
+                        selected_tokens_by_group: List[set], last_token: Optional[int]) -> Optional[int]:
+        """Find the best group for a candidate considering diversity."""
+        best_group_idx = None
+        best_score = float('-inf')
+
+        for group_idx, group in enumerate(selected_groups):
+            if len(group) >= self.group_size:
+                continue
+
+            # Calculate diversity penalty
+            diversity_penalty = 0.0
+            if last_token is not None:
+                # Penalty for using tokens already used by other groups
+                for other_group_idx, other_tokens in enumerate(selected_tokens_by_group):
+                    if other_group_idx != group_idx and last_token in other_tokens:
+                        diversity_penalty += self.diversity_penalty
+
+            # Adjusted score with diversity penalty
+            adjusted_score = candidate.score - diversity_penalty
+
+            if adjusted_score > best_score:
+                best_score = adjusted_score
+                best_group_idx = group_idx
+
+        return best_group_idx
+
+    def should_stop(self, beam_state: BeamState, max_length: int, step: int) -> bool:
+        """Stop if all beams are finished or max length reached."""
+        active_candidates = beam_state.get_active_candidates()
+
+        # Stop if no active candidates or max length reached
+        if not active_candidates or step >= max_length:
+            return True
+
+        # Stop if we have enough finished candidates and they're better than active ones
+        if len(beam_state.finished_candidates) >= self.beam_size:
+            best_finished_score = max(c.score / c.length for c in beam_state.finished_candidates)
+            best_active_score = max(c.score / c.length for c in active_candidates) if active_candidates else 0
+            return best_finished_score > best_active_score
+
+        return False
+
+
+class BeamSearchGenerator:
+    """Main beam search generator with pluggable strategies."""
+
+    def __init__(self, model, tokenizer, strategy: BeamStrategy):
+        """
+        Args:
+            model: The language model
+            tokenizer: The tokenizer
+            strategy: The beam search strategy to use
+        """
+        self.model = model
+        self.tokenizer = tokenizer
+        self.strategy = strategy
+        self.device = next(model.parameters()).device
+
+    def generate(self, input_text: str, max_length: int = 50, num_return_sequences: int = 1,
+                 temperature: float = 1.0, pad_token_id: Optional[int] = None,
+                 eos_token_id: Optional[int] = None) -> List[str]:
+        """
+        Generate sequences using beam search with the configured strategy.
+
+        Args:
+            input_text: Input text to continue
+            max_length: Maximum length of generated sequences
+            num_return_sequences: Number of sequences to return
+            temperature: Sampling temperature
+            pad_token_id: Padding token ID
+            eos_token_id: End-of-sequence token ID
+
+        Returns:
+            List of generated text sequences
+        """
+        # Set default token IDs
+        if pad_token_id is None:
+            pad_token_id = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
+        if eos_token_id is None:
+            eos_token_id = self.tokenizer.eos_token_id
+
+        # Tokenize input
+        inputs = self.tokenizer(input_text, return_tensors="pt")
+        input_ids = inputs.input_ids.to(self.device)
+
+        # Initialize beam state
+        beam_state = BeamState(self.strategy.beam_size, self.device)
+
+        # Create initial beam candidate
+        initial_candidate = BeamCandidate(
+            sequence=input_ids[0],
+            score=0.0,
+            length=input_ids.shape[1]
+        )
+        beam_state.add_candidate(initial_candidate)
+
+        # Generation loop
+        step = 0
+        while not self.strategy.should_stop(beam_state, max_length, step):
+            active_candidates = beam_state.get_active_candidates()
+            if not active_candidates:
+                break
+
+            # Prepare batch of sequences for model forward pass
+            batch_sequences = []
+            candidate_indices = []
+
+            for i, candidate in enumerate(active_candidates):
+                batch_sequences.append(candidate.sequence)
+                candidate_indices.append(i)
+
+            if not batch_sequences:
+                break
+
+            # Pad sequences to same length
+            max_seq_len = max(seq.shape[0] for seq in batch_sequences)
+            padded_sequences = []
+
+            for seq in batch_sequences:
+                if seq.shape[0] < max_seq_len:
+                    padding = torch.full((max_seq_len - seq.shape[0],), pad_token_id,
+                                       dtype=seq.dtype, device=seq.device)
+                    padded_seq = torch.cat([seq, padding])
+                else:
+                    padded_seq = seq
+                padded_sequences.append(padded_seq)
+
+            batch_input = torch.stack(padded_sequences)
+
+            # Forward pass
+            with torch.no_grad():
+                outputs = self.model(batch_input)
+                logits = outputs.logits
+
+            # Apply temperature
+            if temperature != 1.0:
+                logits = logits / temperature
+
+            # Get probabilities for next token
+            next_token_logits = logits[:, -1, :]  # Shape: (batch_size, vocab_size)
+            next_token_probs = F.log_softmax(next_token_logits, dim=-1)
+
+            # Generate new candidates
+            new_candidates = []
+
+            for batch_idx, candidate_idx in enumerate(candidate_indices):
+                parent_candidate = active_candidates[candidate_idx]
+
+                # Get top-k next tokens
+                top_k = min(self.strategy.beam_size * 2, next_token_probs.shape[1])
+                top_probs, top_indices = torch.topk(next_token_probs[batch_idx], top_k)
+
+                for prob, token_id in zip(top_probs, top_indices):
+                    # Create new sequence
+                    new_sequence = torch.cat([parent_candidate.sequence, token_id.unsqueeze(0)])
+                    new_score = parent_candidate.score + prob.item()
+
+                    # Check if sequence is finished
+                    is_finished = token_id.item() == eos_token_id
+
+                    new_candidate = BeamCandidate(
+                        sequence=new_sequence,
+                        score=new_score,
+                        length=new_sequence.shape[0],
+                        finished=is_finished
+                    )
+                    new_candidates.append(new_candidate)
+
+            # Let strategy select which candidates to keep
+            selected_candidates = self.strategy.select_candidates(beam_state, new_candidates, step)
+
+            # Update beam state
+            beam_state.candidates = []
+            for candidate in selected_candidates:
+                beam_state.add_candidate(candidate)
+
+            step += 1
+
+        # Get final results
+        final_candidates = beam_state.get_best_finished(num_return_sequences)
+
+        # Decode sequences
+        results = []
+        for candidate in final_candidates:
+            # Remove input tokens from the generated sequence
+            generated_tokens = candidate.sequence[input_ids.shape[1]:]
+            generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            results.append(generated_text)
+
+        return results
+
+
+# Model and tokenizer setup
 model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B")
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
 
-inputs = tokenizer("Hello, my dog is cute", return_tensors="pt")
-outputs = model(**inputs)
-print(outputs.logits.shape)
+# Set pad token if not set
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
+
+
+def demo_diverse_beam_search():
+    """Demonstrate diverse beam search generation."""
+    print("=== Diverse Beam Search Demo ===")
+
+    # Create diverse beam search strategy
+    strategy = DiverseBeamSearchStrategy(
+        beam_size=4,           # Total number of beams
+        num_groups=2,          # Divide beams into 2 groups for diversity
+        diversity_penalty=0.5, # Penalty for generating similar tokens
+        length_penalty=1.1     # Slight preference for longer sequences
+    )
+
+    # Create generator
+    generator = BeamSearchGenerator(model, tokenizer, strategy)
+
+    # Example prompts
+    prompts = [
+        "The future of artificial intelligence is",
+        "Once upon a time in a magical forest,",
+        "The best way to solve climate change is"
+    ]
+
+    for prompt in prompts:
+        print(f"\nPrompt: '{prompt}'")
+        print("-" * 50)
+
+        # Generate diverse sequences
+        generated_texts = generator.generate(
+            input_text=prompt,
+            max_length=30,
+            num_return_sequences=4,
+            temperature=0.8
+        )
+
+        for i, text in enumerate(generated_texts, 1):
+            print(f"{i}. {text}")
+
+
+def demo_custom_strategy():
+    """Demonstrate how to implement a custom beam strategy."""
+
+    class GreedyBeamStrategy(BeamStrategy):
+        """Simple greedy beam search strategy (standard beam search)."""
+
+        def __init__(self, beam_size: int):
+            self.beam_size = beam_size
+
+        def select_candidates(self, beam_state: BeamState, new_candidates: List[BeamCandidate],
+                             step: int) -> List[BeamCandidate]:
+            """Select top-k candidates by score."""
+            # Simply select the top beam_size candidates by score
+            sorted_candidates = sorted(new_candidates, key=lambda x: x.score, reverse=True)
+            return sorted_candidates[:self.beam_size]
+
+        def should_stop(self, beam_state: BeamState, max_length: int, step: int) -> bool:
+            """Stop when max length reached or all beams finished."""
+            active_candidates = beam_state.get_active_candidates()
+            return not active_candidates or step >= max_length
+
+    print("\n=== Custom Greedy Strategy Demo ===")
+
+    # Create custom strategy
+    greedy_strategy = GreedyBeamStrategy(beam_size=3)
+
+    # Create generator with custom strategy
+    generator = BeamSearchGenerator(model, tokenizer, greedy_strategy)
+
+    prompt = "The secret to happiness is"
+    print(f"\nPrompt: '{prompt}'")
+    print("-" * 50)
+
+    generated_texts = generator.generate(
+        input_text=prompt,
+        max_length=25,
+        num_return_sequences=3,
+        temperature=0.9
+    )
+
+    for i, text in enumerate(generated_texts, 1):
+        print(f"{i}. {text}")
+
+
+if __name__ == "__main__":
+    print("Loading model and tokenizer...")
+
+    # Run demonstrations
+    demo_diverse_beam_search()
+    demo_custom_strategy()
+
+    print("\n=== Strategy Comparison ===")
+    print("Diverse beam search promotes variety in generated sequences by:")
+    print("1. Grouping beams and ensuring diversity within groups")
+    print("2. Penalizing tokens already used by other groups")
+    print("3. Balancing exploration vs exploitation")
+    print("\nYou can easily switch strategies by changing the BeamStrategy class!")
+    print("Try implementing TopKBeamStrategy, NucleusBeamStrategy, or other custom approaches.")
+
+
