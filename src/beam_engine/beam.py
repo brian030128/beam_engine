@@ -14,7 +14,6 @@ class BeamCandidate:
     score: float           # Log probability score
     length: int           # Current sequence length
     finished: bool = False # Whether sequence has ended (EOS token)
-    group_id: Optional[int] = None  # For diverse beam search grouping
 
 
 class BeamState:
@@ -84,6 +83,63 @@ class BeamStrategy(ABC):
         pass
 
 
+class VanillaBeamSearchStrategy(BeamStrategy):
+    """
+    Standard beam search strategy that selects candidates purely by score.
+
+    This is the classic beam search implementation that simply keeps the
+    top-k candidates with the highest scores at each step.
+    """
+
+    def __init__(self, beam_size: int, length_penalty: float = 1.0):
+        """
+        Args:
+            beam_size: Number of beams to maintain
+            length_penalty: Length normalization penalty (>1 favors longer sequences)
+        """
+        self.beam_size = beam_size
+        self.length_penalty = length_penalty
+
+    def select_candidates(self, beam_state: BeamState, new_candidates: List[BeamCandidate],
+                         step: int) -> List[BeamCandidate]:
+        """Select top candidates by score."""
+        if not new_candidates:
+            return []
+
+        # Sort by score (with optional length penalty)
+        def get_score(candidate):
+            if self.length_penalty == 1.0:
+                return candidate.score
+            else:
+                return candidate.score / (candidate.length ** self.length_penalty)
+
+        sorted_candidates = sorted(new_candidates, key=get_score, reverse=True)
+        return sorted_candidates[:self.beam_size]
+
+    def should_stop(self, beam_state: BeamState, max_length: int, step: int) -> bool:
+        """Stop when max length reached or all beams finished."""
+        active_candidates = beam_state.get_active_candidates()
+
+        # Stop if no active candidates or max length reached
+        if not active_candidates or step >= max_length:
+            return True
+
+        # Stop if we have enough finished candidates and they're better than active ones
+        if len(beam_state.finished_candidates) >= self.beam_size:
+            best_finished_score = max(c.score / c.length for c in beam_state.finished_candidates)
+            best_active_score = max(c.score / c.length for c in active_candidates) if active_candidates else 0
+            return best_finished_score > best_active_score
+
+        return False
+
+
+@dataclass
+class DiverseCandidateInfo:
+    """Internal wrapper for diverse beam search candidate tracking."""
+    candidate: BeamCandidate
+    group_id: int
+
+
 class DiverseBeamSearchStrategy(BeamStrategy):
     """
     Implements diverse beam search strategy.
@@ -92,6 +148,9 @@ class DiverseBeamSearchStrategy(BeamStrategy):
     1. Grouping beams and ensuring diversity within groups
     2. Applying diversity penalties to similar sequences
     3. Balancing exploration vs exploitation
+
+    This strategy manages its own grouping logic internally without
+    polluting the general BeamCandidate structure.
     """
 
     def __init__(self, beam_size: int, num_groups: int = 2, diversity_penalty: float = 0.5,
@@ -109,6 +168,9 @@ class DiverseBeamSearchStrategy(BeamStrategy):
         self.diversity_penalty = diversity_penalty
         self.length_penalty = length_penalty
 
+        # Internal state for tracking candidate groups
+        self._candidate_to_group: Dict[int, int] = {}  # Maps candidate id to group id
+
         if beam_size % num_groups != 0:
             raise ValueError(f"beam_size ({beam_size}) must be divisible by num_groups ({num_groups})")
 
@@ -121,9 +183,12 @@ class DiverseBeamSearchStrategy(BeamStrategy):
         # Sort all candidates by score
         all_candidates = sorted(new_candidates, key=lambda x: x.score, reverse=True)
 
-        # Initialize groups
-        selected_groups = [[] for _ in range(self.num_groups)]
+        # Initialize groups for tracking diverse candidates
+        selected_groups: List[List[BeamCandidate]] = [[] for _ in range(self.num_groups)]
         selected_tokens_by_group = [set() for _ in range(self.num_groups)]
+
+        # Clear previous candidate to group mapping for new step
+        self._candidate_to_group.clear()
 
         # Assign candidates to groups with diversity penalty
         for candidate in all_candidates:
@@ -139,7 +204,8 @@ class DiverseBeamSearchStrategy(BeamStrategy):
             )
 
             if best_group_idx is not None and len(selected_groups[best_group_idx]) < self.group_size:
-                candidate.group_id = best_group_idx
+                # Track which group this candidate belongs to
+                self._candidate_to_group[id(candidate)] = best_group_idx
                 selected_groups[best_group_idx].append(candidate)
                 if last_token is not None:
                     selected_tokens_by_group[best_group_idx].add(last_token)
@@ -391,34 +457,18 @@ def demo_diverse_beam_search():
             print(f"{i}. {text}")
 
 
-def demo_custom_strategy():
-    """Demonstrate how to implement a custom beam strategy."""
+def demo_vanilla_beam_search():
+    """Demonstrate vanilla (standard) beam search generation."""
+    print("\n=== Vanilla Beam Search Demo ===")
 
-    class GreedyBeamStrategy(BeamStrategy):
-        """Simple greedy beam search strategy (standard beam search)."""
+    # Create vanilla beam search strategy
+    strategy = VanillaBeamSearchStrategy(
+        beam_size=4,           # Number of beams
+        length_penalty=1.1     # Slight preference for longer sequences
+    )
 
-        def __init__(self, beam_size: int):
-            self.beam_size = beam_size
-
-        def select_candidates(self, beam_state: BeamState, new_candidates: List[BeamCandidate],
-                             step: int) -> List[BeamCandidate]:
-            """Select top-k candidates by score."""
-            # Simply select the top beam_size candidates by score
-            sorted_candidates = sorted(new_candidates, key=lambda x: x.score, reverse=True)
-            return sorted_candidates[:self.beam_size]
-
-        def should_stop(self, beam_state: BeamState, max_length: int, step: int) -> bool:
-            """Stop when max length reached or all beams finished."""
-            active_candidates = beam_state.get_active_candidates()
-            return not active_candidates or step >= max_length
-
-    print("\n=== Custom Greedy Strategy Demo ===")
-
-    # Create custom strategy
-    greedy_strategy = GreedyBeamStrategy(beam_size=3)
-
-    # Create generator with custom strategy
-    generator = BeamSearchGenerator(model, tokenizer, greedy_strategy)
+    # Create generator
+    generator = BeamSearchGenerator(model, tokenizer, strategy)
 
     prompt = "The secret to happiness is"
     print(f"\nPrompt: '{prompt}'")
@@ -427,7 +477,7 @@ def demo_custom_strategy():
     generated_texts = generator.generate(
         input_text=prompt,
         max_length=25,
-        num_return_sequences=3,
+        num_return_sequences=4,
         temperature=0.9
     )
 
@@ -439,15 +489,14 @@ if __name__ == "__main__":
     print("Loading model and tokenizer...")
 
     # Run demonstrations
+    demo_vanilla_beam_search()
     demo_diverse_beam_search()
-    demo_custom_strategy()
 
     print("\n=== Strategy Comparison ===")
-    print("Diverse beam search promotes variety in generated sequences by:")
-    print("1. Grouping beams and ensuring diversity within groups")
-    print("2. Penalizing tokens already used by other groups")
-    print("3. Balancing exploration vs exploitation")
-    print("\nYou can easily switch strategies by changing the BeamStrategy class!")
+    print("Vanilla beam search: Selects candidates purely by score - simple and fast.")
+    print("Diverse beam search: Promotes variety by grouping beams and penalizing similarity.")
+    print("\nBoth strategies are now cleanly separated with no shared dependencies!")
+    print("You can easily switch strategies by changing the BeamStrategy class.")
     print("Try implementing TopKBeamStrategy, NucleusBeamStrategy, or other custom approaches.")
 
 
