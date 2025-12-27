@@ -483,20 +483,19 @@ class LlamaAttention(nn.Module):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         # Choose attention implementation based on mode
         if attention_mode == AttentionMode.PREFILL:
             if page_table is None:
                 raise ValueError("PageTable must be provided for PREFILL attention mode")
 
-            # Use FlashInfer prefill kernel for initial prompt processing
+            # FlashInfer handles RoPE internally, so pass unrotated tensors
             # Convert to NHD layout: [batch, num_heads, seq_len, head_dim] -> [batch, seq_len, num_heads, head_dim]
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
-                query_states.transpose(1, 2),  # Convert to NHD layout
-                key_states.transpose(1, 2),    # Convert to NHD layout
-                value_states.transpose(1, 2),  # Convert to NHD layout
+                query_states.transpose(1, 2),  # Unrotated query in NHD layout
+                key_states.transpose(1, 2),    # Unrotated key in NHD layout
+                value_states.transpose(1, 2),  # Unrotated value in NHD layout
                 attention_mask,
                 self.scaling,
                 page_table,
