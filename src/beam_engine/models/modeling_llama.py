@@ -272,6 +272,12 @@ def flashinfer_prefill_attention_forward(
         last_page_len_val = page_table.page_size
     paged_kv_last_page_len = torch.tensor([last_page_len_val], dtype=torch.int32, device=device)
 
+    # Debug: Show what positions we're telling FlashInfer about
+    print(f"Debug: Sequence positions - seq_len={seq_len}, page_size={page_table.page_size}")
+    print(f"Debug: Page allocation - pages_needed={len(page_indices)}, page_indices={page_indices}")
+    print(f"Debug: Position mapping - tokens 0-{seq_len-1} stored in pages {page_indices}")
+    print(f"Debug: FlashInfer will see positions: 0-{last_page_len_val-1} in final page")
+
     # Create workspace buffer (128MB recommended)
     workspace_size = 128 * 1024 * 1024  # 128MB
     workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
