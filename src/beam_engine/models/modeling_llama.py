@@ -286,13 +286,18 @@ def flashinfer_prefill_attention_forward(
 
     # Plan the attention computation
     print(f"Debug: Planning attention computation")
+    # Extract correct head counts for Grouped Query Attention (GQA)
+    num_qo_heads = num_heads  # Query heads from query tensor
+    num_kv_heads = key.shape[2]  # KV heads from key tensor shape [batch, seq_len, num_kv_heads, head_dim]
+    print(f"Debug: num_qo_heads={num_qo_heads}, num_kv_heads={num_kv_heads}")
+
     prefill_wrapper.plan(
         qo_indptr,
         paged_kv_indptr,
         paged_kv_indices,
         paged_kv_last_page_len,
-        num_heads,  # num_qo_heads
-        num_heads,  # num_kv_heads (assuming same for simplicity)
+        num_qo_heads,  # num_qo_heads (query heads)
+        num_kv_heads,  # num_kv_heads (key-value heads)
         head_dim,
         page_table.page_size,
         causal=True
@@ -399,12 +404,16 @@ def flashinfer_decode_attention_forward(
     )
 
     # Plan the decode operation
+    # Extract correct head counts for Grouped Query Attention (GQA)
+    num_qo_heads = num_heads  # Query heads from query tensor
+    num_kv_heads = key.shape[1]  # KV heads from key tensor shape [batch, num_kv_heads, seq_len, head_dim]
+
     decode_wrapper.plan(
         paged_kv_indptr,
         paged_kv_indices,
         paged_kv_last_page_len,
-        num_heads,  # num_qo_heads
-        num_heads,  # num_kv_heads
+        num_qo_heads,  # num_qo_heads (query heads)
+        num_kv_heads,  # num_kv_heads (key-value heads)
         head_dim,
         page_table.page_size,
         causal=True
