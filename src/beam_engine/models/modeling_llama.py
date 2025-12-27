@@ -259,10 +259,12 @@ def flashinfer_prefill_attention_forward(
         remaining_tokens -= tokens_in_this_page
 
     # Prepare FlashInfer batch prefill - ensure all tensors are on the same device
+    print(f"Debug: Preparing FlashInfer tensors, seq_len={seq_len}")
     device = query.device
     qo_indptr = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
     paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
     paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
+    print(f"Debug: Created index tensors")
 
     # Calculate last page length
     last_page_len_val = seq_len % page_table.page_size
@@ -275,12 +277,15 @@ def flashinfer_prefill_attention_forward(
     workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
 
     # Initialize prefill wrapper
+    print(f"Debug: Initializing prefill wrapper")
     prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
         workspace_buffer,
         kv_layout="NHD"
     )
+    print(f"Debug: Prefill wrapper initialized")
 
     # Plan the attention computation
+    print(f"Debug: Planning attention computation")
     prefill_wrapper.plan(
         qo_indptr,
         paged_kv_indptr,
@@ -292,6 +297,7 @@ def flashinfer_prefill_attention_forward(
         page_table.page_size,
         causal=True
     )
+    print(f"Debug: Attention computation planned")
 
     # Reshape query for FlashInfer: [batch_size * seq_len, num_heads, head_dim]
     query_flashinfer = query.reshape(-1, num_heads, head_dim)
