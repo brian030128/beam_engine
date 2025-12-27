@@ -126,7 +126,7 @@ class PageTable:
             index: Number index to start writing tokens to (usually last page length)
         """
         assert key.shape == value.shape
-        assert key.shape[0] + index < self.page_size
+        assert key.shape[0] + index <= self.page_size, f"Cannot fit {key.shape[0]} tokens at index {index} in page size {self.page_size}"
 
         if layer >= self.layer_num:
             raise ValueError(f"Layer {layer} out of range (max: {self.layer_num-1})")
@@ -137,13 +137,13 @@ class PageTable:
         if index > self.page_size:
             raise ValueError(f"Index {index} exceeds page size {self.page_size}")
 
-        seq_len = min(key.shape[0], value.shape[0], index)
+        seq_len = key.shape[0]  # Number of tokens to write
 
         if seq_len > 0:
             # Write to the specific layer and page using 5D tensor format
-            # kv_cache_at_layer[layer][page_idx, 0] = keys
-            # kv_cache_at_layer[layer][page_idx, 1] = values
-            self.kv_cache_at_layer[layer][page_idx, 0, index:index + key.shape[0]] = key
-            self.kv_cache_at_layer[layer][page_idx, 1, index:index + value.shape[0]] = value
+            # kv_cache_at_layer[layer]: [total_num_pages, 2, page_size, num_kv_heads, head_dim]
+            # key/value should be [seq_len, num_kv_heads, head_dim]
+            self.kv_cache_at_layer[layer][page_idx, 0, index:index + seq_len, :, :] = key
+            self.kv_cache_at_layer[layer][page_idx, 1, index:index + seq_len, :, :] = value
 
         logger.debug(f"Wrote {seq_len} tokens to layer {layer}, page {page_idx}")
