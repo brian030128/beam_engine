@@ -236,12 +236,15 @@ def flashinfer_prefill_attention_forward(
 
         if tokens_in_this_page > 0:
             # Extract tokens for this page
+            print(f"Debug: key shape before slice: {key.shape}")
             page_key = key[0, :, current_pos:current_pos + tokens_in_this_page, :]  # [num_heads, tokens, head_dim]
             page_value = value[0, :, current_pos:current_pos + tokens_in_this_page, :]
+            print(f"Debug: page_key shape after slice: {page_key.shape}")
 
             # Transpose to match page table format [tokens, num_heads, head_dim]
             page_key = page_key.transpose(0, 1)
             page_value = page_value.transpose(0, 1)
+            print(f"Debug: page_key shape after transpose: {page_key.shape}")
 
             # Write to page table for this layer
             page_table.write_block(
