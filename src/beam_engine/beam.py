@@ -535,7 +535,8 @@ class BeamSearchGenerator:
 
 
 # Model and tokenizer setup
-model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B")
+device = torch.device("cuda:5") if torch.cuda.is_available() else torch.device("cpu")
+model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B", device_map=device)
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
 
 # Set pad token if not set
