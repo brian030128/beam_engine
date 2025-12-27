@@ -300,7 +300,10 @@ def flashinfer_prefill_attention_forward(
         num_kv_heads,  # num_kv_heads (key-value heads)
         head_dim,
         page_table.page_size,
-        causal=True
+        causal=True,
+        pos_encoding_mode="ROPE_LLAMA",  # Enable LLaMA-style RoPE
+        rope_scale=1.0,
+        rope_theta=10000.0  # Standard RoPE theta for LLaMA
     )
     print(f"Debug: Attention computation planned")
 
@@ -417,7 +420,10 @@ def flashinfer_decode_attention_forward(
         num_kv_heads,  # num_kv_heads (key-value heads)
         head_dim,
         page_table.page_size,
-        causal=True
+        causal=True,
+        pos_encoding_mode="ROPE_LLAMA",  # Enable LLaMA-style RoPE
+        rope_scale=1.0,
+        rope_theta=10000.0  # Standard RoPE theta for LLaMA
     )
 
     # Reshape query for FlashInfer: [batch_size, num_heads, head_dim]
@@ -517,12 +523,13 @@ class LlamaAttention(nn.Module):
             if page_table is None or page_indices is None:
                 raise ValueError("PageTable and page_indices must be provided for DECODE attention mode")
 
+            # FlashInfer handles RoPE internally, so pass unrotated tensors
             # Use FlashInfer decode kernel for token-by-token generation
             attn_output, attn_weights = flashinfer_decode_attention_forward(
                 self,
-                query_states,
-                key_states,
-                value_states,
+                query_states,  # Unrotated query
+                key_states,    # Unrotated key
+                value_states,  # Unrotated value
                 attention_mask,
                 self.scaling,
                 page_table,
