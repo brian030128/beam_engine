@@ -214,6 +214,7 @@ def flashinfer_prefill_attention_forward(
     """
     batch_size, num_heads, seq_len, head_dim = query.shape
     print("origin query shape",query.shape)
+    print(f"Parsed dimensions: batch={batch_size}, num_heads={num_heads}, seq_len={seq_len}, head_dim={head_dim}")
 
     # Store KV states in page table
     # Handle single batch (beam search handles batching at higher level)
@@ -484,9 +485,9 @@ class LlamaAttention(nn.Module):
             # Use FlashInfer prefill kernel for initial prompt processing
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
-                query_states.transpose(1, 2),
-                key_states.transpose(1, 2),
-                value_states.transpose(1, 2),
+                query_states,
+                key_states,
+                value_states,
                 attention_mask,
                 self.scaling,
                 page_table,
