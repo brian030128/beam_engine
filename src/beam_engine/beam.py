@@ -5,6 +5,8 @@ from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 from transformers import AutoTokenizer
 from models.modeling_llama import LlamaForCausalLM
+from page_table import PageTable
+from attention_mode import AttentionMode
 
 
 class TrieNode:
@@ -87,9 +89,11 @@ class TrieNode:
 @dataclass
 class BeamCandidate:
     """Represents a single beam candidate with its sequence and score."""
-    trie_node: TrieNode    # Reference to trie node containing the sequence
-    score: float           # Log probability score
-    finished: bool = False # Whether sequence has ended (EOS token)
+    trie_node: TrieNode              # Reference to trie node containing the sequence
+    score: float                     # Log probability score
+    finished: bool = False           # Whether sequence has ended (EOS token)
+    page_indices: Optional[List[int]] = None  # Page indices in the page table for this candidate
+    last_page_len: Optional[int] = None       # Length of the last page for this candidate
 
     @property
     def sequence(self) -> torch.Tensor:
@@ -346,17 +350,31 @@ class DiverseBeamSearchStrategy(BeamStrategy):
 class BeamSearchGenerator:
     """Main beam search generator with pluggable strategies."""
 
-    def __init__(self, model, tokenizer, strategy: BeamStrategy):
+    def __init__(self, model, tokenizer, strategy: BeamStrategy, page_size: int = 64):
         """
         Args:
             model: The language model
             tokenizer: The tokenizer
             strategy: The beam search strategy to use
+            page_size: Size of each page in the page table (tokens per page)
         """
         self.model = model
         self.tokenizer = tokenizer
         self.strategy = strategy
         self.device = next(model.parameters()).device
+        self.page_size = page_size
+
+        # Extract model configuration for page table
+        config = self.model.config
+        self.page_table = PageTable(
+            layer_num=config.num_hidden_layers,
+            page_size=page_size,
+            max_num_pages=1024,  # Adjust based on memory constraints
+            head_num=config.num_key_value_heads,
+            head_dim=getattr(config, "head_dim", config.hidden_size // config.num_attention_heads),
+            device=self.device,
+            store_dtype=torch.float16  # Use half precision for memory efficiency
+        )
 
     def generate(self, input_text: str, max_length: int = 50, num_return_sequences: int = 1,
                  temperature: float = 1.0, pad_token_id: Optional[int] = None,
@@ -392,7 +410,7 @@ class BeamSearchGenerator:
         input_tokens = input_ids[0].tolist()
         initial_node = beam_state.root.add_sequence(input_tokens)
 
-        # Create initial beam candidate
+        # Create initial beam candidate (no page info yet, will be set during prefill)
         initial_candidate = BeamCandidate(
             trie_node=initial_node,
             score=0.0
@@ -401,72 +419,91 @@ class BeamSearchGenerator:
 
         # Generation loop
         step = 0
+        is_prefill = True  # First step is prefill, subsequent steps are decode
+
         while not self.strategy.should_stop(beam_state, max_length, step):
             active_candidates = beam_state.get_active_candidates()
             if not active_candidates:
                 break
 
-            # Prepare batch of sequences for model forward pass
-            batch_sequences = []
-            candidate_indices = []
-
-            for i, candidate in enumerate(active_candidates):
-                batch_sequences.append(candidate.sequence)
-                candidate_indices.append(i)
-
-            if not batch_sequences:
-                break
-
-            # Pad sequences to same length
-            max_seq_len = max(seq.shape[0] for seq in batch_sequences)
-            padded_sequences = []
-
-            for seq in batch_sequences:
-                if seq.shape[0] < max_seq_len:
-                    padding = torch.full((max_seq_len - seq.shape[0],), pad_token_id,
-                                       dtype=seq.dtype, device=seq.device)
-                    padded_seq = torch.cat([seq, padding])
-                else:
-                    padded_seq = seq
-                padded_sequences.append(padded_seq)
-
-            batch_input = torch.stack(padded_sequences)
-
-            # Forward pass
-            with torch.no_grad():
-                outputs = self.model(batch_input)
-                logits = outputs.logits
-
-            # Apply temperature
-            if temperature != 1.0:
-                logits = logits / temperature
-
-            # Get probabilities for next token
-            next_token_logits = logits[:, -1, :]  # Shape: (batch_size, vocab_size)
-            next_token_probs = F.log_softmax(next_token_logits, dim=-1)
-
-            # Generate new candidates
+            # For single-batch beam search, we process one candidate at a time
+            # This is simpler for FlashInfer integration
             new_candidates = []
 
-            for batch_idx, candidate_idx in enumerate(candidate_indices):
-                parent_candidate = active_candidates[candidate_idx]
+            for candidate in active_candidates:
+                if is_prefill:
+                    # First step: use prefill kernel for the full input sequence
+                    # Add batch dimension (batch_size=1 for single sequence)
+                    sequence = candidate.sequence.unsqueeze(0)
 
-                # Get top-k next tokens
-                top_k = min(self.strategy.beam_size * 2, next_token_probs.shape[1])
-                top_probs, top_indices = torch.topk(next_token_probs[batch_idx], top_k)
+                    with torch.no_grad():
+                        outputs = self.model(
+                            sequence,
+                            attention_mode=AttentionMode.PREFILL,
+                            page_table=self.page_table
+                        )
+                        logits = outputs.logits
+
+                    # Compute page info based on sequence length
+                    seq_len = sequence.shape[1]
+                    pages_needed = (seq_len + self.page_size - 1) // self.page_size
+                    page_indices = list(range(len(self.page_table.allocated_pages) - pages_needed, len(self.page_table.allocated_pages)))
+                    last_page_len = seq_len % self.page_size
+                    if last_page_len == 0 and seq_len > 0:
+                        last_page_len = self.page_size
+
+                    # Update candidate with page info
+                    candidate.page_indices = page_indices
+                    candidate.last_page_len = last_page_len
+
+                    # Get next token probabilities
+                    next_token_logits = logits[0, -1, :]  # Last token logits
+                else:
+                    # Subsequent steps: use decode kernel for single token
+                    # Get the last token of the sequence and add batch dimension
+                    last_token = candidate.sequence[-1:].unsqueeze(0)
+
+                    with torch.no_grad():
+                        outputs = self.model(
+                            last_token,
+                            attention_mode=AttentionMode.DECODE,
+                            page_table=self.page_table,
+                            page_indices=candidate.page_indices,
+                            last_page_len=candidate.last_page_len
+                        )
+                        logits = outputs.logits
+
+                    # Get next token probabilities
+                    next_token_logits = logits[0, -1, :]  # Last token logits
+
+                # Apply temperature
+                if temperature != 1.0:
+                    next_token_logits = next_token_logits / temperature
+
+                # Get probabilities for next token
+                next_token_probs = F.log_softmax(next_token_logits, dim=-1)
+
+                # Generate new candidates from top-k tokens
+                top_k = min(self.strategy.beam_size * 2, next_token_probs.shape[0])
+                top_probs, top_indices = torch.topk(next_token_probs, top_k)
 
                 for prob, token_id in zip(top_probs, top_indices):
                     # Create new trie node by adding the new token
-                    new_node = parent_candidate.trie_node.add_sequence([token_id.item()])
-                    new_score = parent_candidate.score + prob.item()
+                    new_node = candidate.trie_node.add_sequence([token_id.item()])
+                    new_score = candidate.score + prob.item()
 
                     # Check if sequence is finished
                     is_finished = token_id.item() == eos_token_id
 
+                    # Create new candidate with updated page info
+                    new_last_page_len = candidate.last_page_len + 1 if candidate.last_page_len is not None else None
+
                     new_candidate = BeamCandidate(
                         trie_node=new_node,
                         score=new_score,
-                        finished=is_finished
+                        finished=is_finished,
+                        page_indices=candidate.page_indices.copy() if candidate.page_indices else None,
+                        last_page_len=new_last_page_len
                     )
                     new_candidates.append(new_candidate)
 
@@ -478,6 +515,8 @@ class BeamSearchGenerator:
             for candidate in selected_candidates:
                 beam_state.add_candidate(candidate)
 
+            # After first step, switch to decode mode
+            is_prefill = False
             step += 1
 
         # Get final results

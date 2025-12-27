@@ -44,6 +44,9 @@ from transformers.utils import TransformersKwargs, auto_docstring, can_return_tu
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.utils.generic import check_model_inputs
 from .configuration_llama import LlamaConfig
+from ..attention_mode import AttentionMode
+from ..page_table import PageTable
+import flashinfer
 
 
 logger = logging.get_logger(__name__)
@@ -194,6 +197,204 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
+def flashinfer_prefill_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    page_table: PageTable,
+    dropout: float = 0.0,
+    **kwargs: Unpack[TransformersKwargs],
+):
+    """
+    FlashInfer prefill attention using batch prefill with paged KV cache.
+    Used for initial prompt processing where we compute attention for full sequences.
+    """
+    batch_size, num_heads, seq_len, head_dim = query.shape
+
+    # Store KV states in page table
+    # Handle single batch (beam search handles batching at higher level)
+    assert batch_size == 1, "Current implementation expects single sequence per call"
+
+    # Calculate number of pages needed for this sequence
+    pages_needed = (seq_len + page_table.page_size - 1) // page_table.page_size
+
+    # Allocate pages for this sequence
+    page_indices = []
+    for _ in range(pages_needed):
+        page_idx = page_table.allocate_block()
+        page_indices.append(page_idx)
+
+    # Write KV states to allocated pages
+    remaining_tokens = seq_len
+    current_pos = 0
+
+    for i, page_idx in enumerate(page_indices):
+        tokens_in_this_page = min(remaining_tokens, page_table.page_size)
+
+        if tokens_in_this_page > 0:
+            # Extract tokens for this page
+            page_key = key[0, :, current_pos:current_pos + tokens_in_this_page, :]  # [num_heads, tokens, head_dim]
+            page_value = value[0, :, current_pos:current_pos + tokens_in_this_page, :]
+
+            # Transpose to match page table format [tokens, num_heads, head_dim]
+            page_key = page_key.transpose(0, 1)
+            page_value = page_value.transpose(0, 1)
+
+            # Write to page table for this layer
+            page_table.write_block(
+                layer=module.layer_idx,
+                page_idx=page_idx,
+                key=page_key,
+                value=page_value,
+                index=0
+            )
+
+        current_pos += tokens_in_this_page
+        remaining_tokens -= tokens_in_this_page
+
+    # Prepare FlashInfer batch prefill
+    qo_indptr = torch.tensor([0, seq_len], dtype=torch.int32, device=query.device)
+    paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=query.device)
+    paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=query.device)
+
+    # Calculate last page length
+    last_page_len = seq_len % page_table.page_size
+    if last_page_len == 0 and seq_len > 0:
+        last_page_len = page_table.page_size
+    paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=query.device)
+
+    # Create workspace buffer (128MB recommended)
+    workspace_size = 128 * 1024 * 1024  # 128MB
+    workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=query.device)
+
+    # Initialize prefill wrapper
+    prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
+        workspace_buffer,
+        kv_layout="NHD"
+    )
+
+    # Plan the attention computation
+    prefill_wrapper.plan(
+        qo_indptr,
+        paged_kv_indptr,
+        paged_kv_indices,
+        paged_kv_last_page_len,
+        num_heads,  # num_qo_heads
+        num_heads,  # num_kv_heads (assuming same for simplicity)
+        head_dim,
+        page_table.page_size,
+        causal=True
+    )
+
+    # Reshape query for FlashInfer: [batch_size * seq_len, num_heads, head_dim]
+    query_flashinfer = query.reshape(-1, num_heads, head_dim)
+
+    # Get paged KV cache for this layer
+    paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
+
+    # Run prefill attention
+    attn_output = prefill_wrapper.run(query_flashinfer, paged_kv_cache, causal=True, sm_scale=scaling)
+
+    # Reshape output back to original format
+    attn_output = attn_output.reshape(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
+
+    return attn_output, None  # FlashInfer doesn't return attention weights
+
+
+def flashinfer_decode_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    page_table: PageTable,
+    page_indices: list,
+    last_page_len: int,
+    dropout: float = 0.0,
+    **kwargs: Unpack[TransformersKwargs],
+):
+    """
+    FlashInfer decode attention using BatchDecodeWithPagedKVCacheWrapper.
+    Used for token-by-token generation where we only compute attention for the last token.
+    """
+    batch_size, num_heads, seq_len, head_dim = query.shape
+
+    # For decode, we expect seq_len = 1 (single new token)
+    assert seq_len == 1, "Decode attention expects single token input"
+    assert batch_size == 1, "Current implementation expects single sequence per call"
+
+    # Append new KV to the last page or allocate new page if needed
+    if last_page_len >= page_table.page_size:
+        # Need to allocate a new page
+        new_page_idx = page_table.allocate_block()
+        page_indices.append(new_page_idx)
+        last_page_len = 0
+
+    # Get the current page to append to
+    current_page_idx = page_indices[-1]
+
+    # Extract single token KV
+    token_key = key[0, :, 0, :].transpose(0, 1).unsqueeze(0)  # [1, num_heads, head_dim]
+    token_value = value[0, :, 0, :].transpose(0, 1).unsqueeze(0)  # [1, num_heads, head_dim]
+
+    # Append to page table
+    page_table.write_block(
+        layer=module.layer_idx,
+        page_idx=current_page_idx,
+        key=token_key,
+        value=token_value,
+        index=last_page_len
+    )
+
+    # Update last page length
+    last_page_len += 1
+
+    # Prepare FlashInfer batch decode
+    paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=query.device)
+    paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=query.device)
+    paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=query.device)
+
+    # Create workspace buffer
+    workspace_size = 128 * 1024 * 1024  # 128MB
+    workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=query.device)
+
+    # Initialize decode wrapper
+    decode_wrapper = flashinfer.decode.BatchDecodeWithPagedKVCacheWrapper(
+        workspace_buffer,
+        kv_layout="NHD"
+    )
+
+    # Plan the decode operation
+    decode_wrapper.plan(
+        paged_kv_indptr,
+        paged_kv_indices,
+        paged_kv_last_page_len,
+        num_heads,  # num_qo_heads
+        num_heads,  # num_kv_heads
+        head_dim,
+        page_table.page_size,
+        causal=True
+    )
+
+    # Reshape query for FlashInfer: [batch_size, num_heads, head_dim]
+    query_flashinfer = query.squeeze(2)  # Remove seq_len dimension
+
+    # Get paged KV cache for this layer
+    paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
+
+    # Run decode attention
+    attn_output = decode_wrapper.run(query_flashinfer, paged_kv_cache, causal=True, sm_scale=scaling)
+
+    # Reshape output back to original format [batch_size, num_heads, 1, head_dim]
+    attn_output = attn_output.unsqueeze(2)
+
+    return attn_output, None  # FlashInfer doesn't return attention weights
+
+
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -228,6 +429,10 @@ class LlamaAttention(nn.Module):
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[Cache] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        attention_mode: Optional[AttentionMode] = None,
+        page_table: Optional[PageTable] = None,
+        page_indices: Optional[list] = None,
+        last_page_len: Optional[int] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -240,25 +445,54 @@ class LlamaAttention(nn.Module):
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        if past_key_values is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
+        # Choose attention implementation based on mode
+        if attention_mode == AttentionMode.PREFILL:
+            if page_table is None:
+                raise ValueError("PageTable must be provided for PREFILL attention mode")
 
-        attention_interface: Callable = eager_attention_forward
-        if self.config._attn_implementation != "eager":
-            attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+            # Use FlashInfer prefill kernel for initial prompt processing
+            attn_output, attn_weights = flashinfer_prefill_attention_forward(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                self.scaling,
+                page_table,
+                dropout=0.0 if not self.training else self.attention_dropout,
+                **kwargs,
+            )
+            # Return page indices for subsequent decode calls
+            pages_needed = (query_states.shape[2] + page_table.page_size - 1) // page_table.page_size
+            new_page_indices = list(range(len(page_table.allocated_pages) - pages_needed, len(page_table.allocated_pages)))
+            last_page_len = query_states.shape[2] % page_table.page_size
+            if last_page_len == 0 and query_states.shape[2] > 0:
+                last_page_len = page_table.page_size
 
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            dropout=0.0 if not self.training else self.attention_dropout,
-            scaling=self.scaling,
-            **kwargs,
-        )
+            # Store page info in kwargs for beam search to retrieve
+            kwargs['page_indices'] = new_page_indices
+            kwargs['last_page_len'] = last_page_len
+
+        elif attention_mode == AttentionMode.DECODE:
+            if page_table is None or page_indices is None:
+                raise ValueError("PageTable and page_indices must be provided for DECODE attention mode")
+
+            # Use FlashInfer decode kernel for token-by-token generation
+            attn_output, attn_weights = flashinfer_decode_attention_forward(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                self.scaling,
+                page_table,
+                page_indices,
+                last_page_len or 0,
+                dropout=0.0 if not self.training else self.attention_dropout,
+                **kwargs,
+            )
+        else:
+            raise ValueError(f"Invalid attention mode: {attention_mode}. Must be PREFILL or DECODE")
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
@@ -299,6 +533,10 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            attention_mode=kwargs.get('attention_mode'),
+            page_table=kwargs.get('page_table'),
+            page_indices=kwargs.get('page_indices'),
+            last_page_len=kwargs.get('last_page_len'),
             **kwargs,
         )
         hidden_states = residual + hidden_states
