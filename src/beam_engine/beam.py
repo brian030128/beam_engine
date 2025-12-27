@@ -434,7 +434,7 @@ class BeamSearchGenerator:
                 if is_prefill:
                     # First step: use prefill kernel for the full input sequence
                     # Add batch dimension (batch_size=1 for single sequence)
-                    sequence = candidate.sequence.unsqueeze(0)
+                    sequence = candidate.sequence.unsqueeze(0).to(self.device)
 
                     with torch.no_grad():
                         outputs = self.model(
