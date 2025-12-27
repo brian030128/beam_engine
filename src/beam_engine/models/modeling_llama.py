@@ -242,8 +242,8 @@ def flashinfer_prefill_attention_forward(
             print(f"Debug: page_key shape after slice: {page_key.shape}")
 
             # Transpose to match page table format [tokens, num_heads, head_dim]
-            page_key = page_key.transpose(0, 1)
-            page_value = page_value.transpose(0, 1)
+            page_key = page_key
+            page_value = page_value
             print(f"Debug: page_key shape after transpose: {page_key.shape}")
 
             # Write to page table for this layer
@@ -458,9 +458,9 @@ class LlamaAttention(nn.Module):
             # Use FlashInfer prefill kernel for initial prompt processing
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
-                query_states,
-                key_states,
-                value_states,
+                query_states.transpose(1, 2),
+                key_states.transpose(1, 2),
+                value_states.transpose(1, 2),
                 attention_mask,
                 self.scaling,
                 page_table,
