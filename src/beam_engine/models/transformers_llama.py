@@ -17,36 +17,33 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Callable, Optional, Union
+from collections.abc import Callable
+from typing import Optional, Union
 
 import torch
 from torch import nn
 
-from transformers.activations import ACT2FN
-from transformers.cache_utils import Cache, DynamicCache
-from transformers.generation import GenerationMixin
-from transformers.integrations import use_kernel_forward_from_hub
-from transformers.masking_utils import create_causal_mask
-from transformers.modeling_layers import (
+from ...activations import ACT2FN
+from ...cache_utils import Cache, DynamicCache
+from ...generation import GenerationMixin
+from ...integrations import use_kernel_forward_from_hub, use_kernel_func_from_hub, use_kernelized_func
+from ...masking_utils import create_causal_mask
+from ...modeling_layers import (
     GenericForQuestionAnswering,
     GenericForSequenceClassification,
     GenericForTokenClassification,
     GradientCheckpointingLayer,
 )
-from transformers.modeling_outputs import (
+from ...modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
-from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
-from transformers.processing_utils import Unpack
-from transformers.utils import TransformersKwargs, auto_docstring, can_return_tuple, logging
-from transformers.utils.deprecation import deprecate_kwarg
-from transformers.utils.generic import check_model_inputs
+from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
+from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
+from ...processing_utils import Unpack
+from ...utils import TransformersKwargs, auto_docstring, can_return_tuple, logging
+from ...utils.generic import check_model_inputs, maybe_autocast
 from .configuration_llama import LlamaConfig
-from attention_mode import AttentionMode
-from page_table import PageTable
-import flashinfer
 
 
 logger = logging.get_logger(__name__)
@@ -78,20 +75,49 @@ class LlamaRotaryEmbedding(nn.Module):
 
     def __init__(self, config: LlamaConfig, device=None):
         super().__init__()
-        # BC: "rope_type" was originally "type"
-        if hasattr(config, "rope_scaling") and isinstance(config.rope_scaling, dict):
-            self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-        else:
-            self.rope_type = "default"
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
+        self.rope_type = self.config.rope_parameters["rope_type"]
+        rope_init_fn: Callable = self.compute_default_rope_parameters
+        if self.rope_type != "default":
+            rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+        inv_freq, self.attention_scaling = rope_init_fn(self.config, device)
+
         self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.original_inv_freq = self.inv_freq
+        self.register_buffer("original_inv_freq", inv_freq.clone(), persistent=False)
+
+    @staticmethod
+    def compute_default_rope_parameters(
+        config: Optional[LlamaConfig] = None,
+        device: Optional["torch.device"] = None,
+        seq_len: Optional[int] = None,
+    ) -> tuple["torch.Tensor", float]:
+        """
+        Computes the inverse frequencies according to the original RoPE implementation
+        Args:
+            config ([`~transformers.PreTrainedConfig`]):
+                The model configuration.
+            device (`torch.device`):
+                The device to use for initialization of the inverse frequencies.
+            seq_len (`int`, *optional*):
+                The current sequence length. Unused for this type of RoPE.
+        Returns:
+            Tuple of (`torch.Tensor`, `float`), containing the inverse frequencies for the RoPE embeddings and the
+            post-processing scaling factor applied to the computed cos/sin (unused in this type of RoPE).
+        """
+        base = config.rope_parameters["rope_theta"]
+        dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+
+        attention_factor = 1.0  # Unused in this type of RoPE
+
+        # Compute the inverse frequencies
+        inv_freq = 1.0 / (
+            base ** (torch.arange(0, dim, 2, dtype=torch.int64).to(device=device, dtype=torch.float) / dim)
+        )
+        return inv_freq, attention_factor
 
     @torch.no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
@@ -100,7 +126,7 @@ class LlamaRotaryEmbedding(nn.Module):
         position_ids_expanded = position_ids[:, None, :].float()
 
         device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
-        with torch.autocast(device_type=device_type, enabled=False):  # Force float32
+        with maybe_autocast(device_type=device_type, enabled=False):  # Force float32
             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
             emb = torch.cat((freqs, freqs), dim=-1)
             cos = emb.cos() * self.attention_scaling
@@ -116,6 +142,7 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 
+@use_kernel_func_from_hub("rotary_pos_emb")
 def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     """Applies Rotary Position Embedding to the query and key tensors.
 
@@ -197,271 +224,7 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
-def flashinfer_prefill_attention_forward(
-    module: nn.Module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
-    scaling: float,
-    page_table: PageTable,
-    dropout: float = 0.0,
-    **kwargs: Unpack[TransformersKwargs],
-):
-    """
-    FlashInfer prefill attention using batch prefill with paged KV cache.
-    Used for initial prompt processing where we compute attention for full sequences.
-    """
-    batch_size, seq_len, num_heads, head_dim = query.shape  # NHD format: [batch, seq_len, num_heads, head_dim]
-    print("origin query shape",query.shape)
-    print(f"Parsed dimensions: batch={batch_size}, seq_len={seq_len}, num_heads={num_heads}, head_dim={head_dim}")
-
-    # Store KV states in page table
-    # Handle single batch (beam search handles batching at higher level)
-    assert batch_size == 1, "Current implementation expects single sequence per call"
-
-    # Calculate number of pages needed for this sequence
-    pages_needed = (seq_len + page_table.page_size - 1) // page_table.page_size
-
-    # Allocate pages for this sequence
-    page_indices = []
-    for _ in range(pages_needed):
-        page_idx = page_table.allocate_block()
-        page_indices.append(page_idx)
-
-    # Write KV states to allocated pages
-    remaining_tokens = seq_len
-    current_pos = 0
-
-    for i, page_idx in enumerate(page_indices):
-        tokens_in_this_page = min(remaining_tokens, page_table.page_size)
-
-        if tokens_in_this_page > 0:
-            # Extract tokens for this page from NHD format [batch, seq_len, num_heads, head_dim]
-            print(f"Debug: key shape before slice: {key.shape}")
-            page_key = key[0, current_pos:current_pos + tokens_in_this_page, :, :]  # [tokens, num_heads, head_dim]
-            page_value = value[0, current_pos:current_pos + tokens_in_this_page, :, :]
-            print(f"Debug: page_key shape after slice: {page_key.shape}")
-
-            # Already in correct format [tokens, num_heads, head_dim] for NHD
-            print(f"Debug: page_key shape (already NHD): {page_key.shape}")
-
-            # Debug: Check what we're storing - ALL tokens
-            print(f"Debug: Storing in page {page_idx}, layer {module.layer_idx}")
-            print(f"Debug: tokens_in_this_page={tokens_in_this_page}, page_key.shape={page_key.shape}")
-            for t in range(min(tokens_in_this_page, 7)):  # Show all tokens
-                print(f"Debug: Key token {t}: {page_key[t, 0, :5]}")
-
-            # Write to page table for this layer
-            page_table.write_block(
-                layer=module.layer_idx,
-                page_idx=page_idx,
-                key=page_key,
-                value=page_value,
-                index=0
-            )
-
-            # Debug: Verify what was stored - check the full range
-            stored_kv = page_table.kv_cache_at_layer[module.layer_idx][page_idx]
-            print(f"Debug: After storage, checking first {tokens_in_this_page} positions:")
-            for t in range(min(tokens_in_this_page, 7)):
-                print(f"Debug: Stored token {t}: {stored_kv[0, t, 0, :5]}")
-
-            # Also check what's in positions we didn't write to
-            if tokens_in_this_page < page_table.page_size:
-                print(f"Debug: Unwritten position {tokens_in_this_page}: {stored_kv[0, tokens_in_this_page, 0, :5]}")
-
-        current_pos += tokens_in_this_page
-        remaining_tokens -= tokens_in_this_page
-
-    # Prepare FlashInfer batch prefill - ensure all tensors are on the same device
-    print(f"Debug: Preparing FlashInfer tensors, seq_len={seq_len}")
-    device = query.device
-    qo_indptr = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
-    paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
-    paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
-
-    # Calculate last page length
-    last_page_len_val = seq_len % page_table.page_size
-    if last_page_len_val == 0 and seq_len > 0:
-        last_page_len_val = page_table.page_size
-    paged_kv_last_page_len = torch.tensor([last_page_len_val], dtype=torch.int32, device=device)
-    print(f"Debug: Created index tensors")
-
-    # Create workspace buffer (128MB recommended)
-    workspace_size = 128 * 1024 * 1024  # 128MB
-    workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
-
-    # Initialize prefill wrapper
-    print(f"Debug: Initializing prefill wrapper")
-    prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
-        workspace_buffer,
-        kv_layout="NHD"
-    )
-    print(f"Debug: Prefill wrapper initialized")
-
-    # Plan the attention computation
-    print(f"Debug: Planning attention computation")
-    # Extract correct head counts for Grouped Query Attention (GQA)
-    num_qo_heads = num_heads  # Query heads from query tensor
-    num_kv_heads = key.shape[2]  # KV heads from key tensor shape [batch, seq_len, num_kv_heads, head_dim]
-    print(f"Debug: num_qo_heads={num_qo_heads}, num_kv_heads={num_kv_heads}")
-
-    prefill_wrapper.plan(
-        qo_indptr,
-        paged_kv_indptr,
-        paged_kv_indices,
-        paged_kv_last_page_len,
-        num_qo_heads,  # num_qo_heads (query heads)
-        num_kv_heads,  # num_kv_heads (key-value heads)
-        head_dim,
-        page_table.page_size,
-        causal=True
-        # RoPE applied manually before calling FlashInfer
-    )
-    print(f"Debug: Attention computation planned")
-
-    # FlashInfer expects query without batch dimension: [seq_len, num_heads, head_dim]
-    print(f"Debug: Query shape for FlashInfer: {query.shape}")
-    query_flashinfer = query[0]  # Remove batch dimension: [seq_len, num_heads, head_dim]
-    print(f"Debug: Query ready for FlashInfer: {query_flashinfer.shape}")
-
-    # Get paged KV cache for this layer
-    paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
-    print(f"Debug: Got paged KV cache shape {paged_kv_cache.shape}")
-
-    # Run prefill attention
-    print(f"Debug: Running prefill attention")
-    print(f"Debug: query_flashinfer shape: {query_flashinfer.shape}, dtype: {query_flashinfer.dtype}")
-    print(f"Debug: paged_kv_cache shape: {paged_kv_cache.shape}, dtype: {paged_kv_cache.dtype}")
-    print(f"Debug: qo_indptr: {qo_indptr}")
-    print(f"Debug: paged_kv_indices: {paged_kv_indices}")
-    print(f"Debug: paged_kv_indptr: {paged_kv_indptr}")
-    print(f"Debug: paged_kv_last_page_len: {paged_kv_last_page_len}")
-
-    print(f"Debug: About to call prefill_wrapper.run")
-    print(f"Debug: All tensors on same device? query: {query_flashinfer.device}, kv_cache: {paged_kv_cache.device}")
-    print(f"Debug: All tensors same dtype? query: {query_flashinfer.dtype}, kv_cache: {paged_kv_cache.dtype}")
-
-    try:
-        print(f"Debug: Calling prefill_wrapper.run...")
-        attn_output = prefill_wrapper.run(query_flashinfer, paged_kv_cache)
-        print(f"Debug: prefill_wrapper.run completed successfully!")
-    except Exception as e:
-        print(f"Debug: ERROR in prefill_wrapper.run: {e}")
-        print(f"Debug: Error type: {type(e)}")
-        print(f"Debug: Full traceback:")
-        import traceback
-        traceback.print_exc()
-        raise
-    print(f"Debug: Prefill attention completed, output shape {attn_output.shape}")
-
-    # Reshape output back to original format
-    print(f"Debug: Reshaping output back to original format")
-    # FlashInfer returns [seq_len, num_qo_heads, head_dim], we need [batch, num_heads, seq_len, head_dim]
-    attn_output = attn_output.unsqueeze(0).transpose(1, 2)  # Add batch dim and transpose to [batch, num_heads, seq_len, head_dim]
-    print(f"Debug: Final output shape {attn_output.shape}")
-
-    return attn_output, None  # FlashInfer doesn't return attention weights
-
-
-def flashinfer_decode_attention_forward(
-    module: nn.Module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
-    scaling: float,
-    page_table: PageTable,
-    page_indices: list,
-    last_page_len: int,
-    dropout: float = 0.0,
-    **kwargs: Unpack[TransformersKwargs],
-):
-    """
-    FlashInfer decode attention using BatchDecodeWithPagedKVCacheWrapper.
-    Used for token-by-token generation where we only compute attention for the last token.
-    """
-    batch_size, num_heads, seq_len, head_dim = query.shape
-
-    # For decode, we expect seq_len = 1 (single new token)
-    assert seq_len == 1, "Decode attention expects single token input"
-    assert batch_size == 1, "Current implementation expects single sequence per call"
-
-    # Append new KV to the last page or allocate new page if needed
-    if last_page_len >= page_table.page_size:
-        # Need to allocate a new page
-        new_page_idx = page_table.allocate_block()
-        page_indices.append(new_page_idx)
-        last_page_len = 0
-
-    # Get the current page to append to
-    current_page_idx = page_indices[-1]
-
-    # Extract single token KV
-    token_key = key[0, :, 0, :].transpose(0, 1).unsqueeze(0)  # [1, num_heads, head_dim]
-    token_value = value[0, :, 0, :].transpose(0, 1).unsqueeze(0)  # [1, num_heads, head_dim]
-
-    # Append to page table
-    page_table.write_block(
-        layer=module.layer_idx,
-        page_idx=current_page_idx,
-        key=token_key,
-        value=token_value,
-        index=last_page_len
-    )
-
-    # Update last page length
-    last_page_len += 1
-
-    # Prepare FlashInfer batch decode - ensure all tensors are on the same device
-    device = query.device
-    paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
-    paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
-    paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)
-
-    # Create workspace buffer
-    workspace_size = 128 * 1024 * 1024  # 128MB
-    workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
-
-    # Initialize decode wrapper
-    decode_wrapper = flashinfer.decode.BatchDecodeWithPagedKVCacheWrapper(
-        workspace_buffer,
-        kv_layout="NHD"
-    )
-
-    # Plan the decode operation
-    # Extract correct head counts for Grouped Query Attention (GQA)
-    num_qo_heads = num_heads  # Query heads from query tensor
-    num_kv_heads = key.shape[1]  # KV heads from key tensor shape [batch, num_kv_heads, seq_len, head_dim]
-
-    decode_wrapper.plan(
-        paged_kv_indptr,
-        paged_kv_indices,
-        paged_kv_last_page_len,
-        num_qo_heads,  # num_qo_heads (query heads)
-        num_kv_heads,  # num_kv_heads (key-value heads)
-        head_dim,
-        page_table.page_size,
-        causal=True
-        # RoPE applied manually before calling FlashInfer
-    )
-
-    # Reshape query for FlashInfer: [batch_size, num_heads, head_dim]
-    query_flashinfer = query.squeeze(2)  # Remove seq_len dimension
-
-    # Get paged KV cache for this layer
-    paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
-
-    # Run decode attention
-    attn_output = decode_wrapper.run(query_flashinfer, paged_kv_cache)
-
-    # Reshape output back to original format [batch_size, num_heads, 1, head_dim]
-    attn_output = attn_output.unsqueeze(2)
-
-    return attn_output, None  # FlashInfer doesn't return attention weights
-
-
+@use_kernelized_func(apply_rotary_pos_emb)
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -488,18 +251,13 @@ class LlamaAttention(nn.Module):
             config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
         )
 
-    @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: tuple[torch.Tensor, torch.Tensor],
-        attention_mask: Optional[torch.Tensor],
+        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
+        attention_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Cache] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        attention_mode: Optional[AttentionMode] = None,
-        page_table: Optional[PageTable] = None,
-        page_indices: Optional[list] = None,
-        last_page_len: Optional[int] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -510,61 +268,27 @@ class LlamaAttention(nn.Module):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         cos, sin = position_embeddings
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        # Choose attention implementation based on mode
-        if attention_mode == AttentionMode.PREFILL:
-            if page_table is None:
-                raise ValueError("PageTable must be provided for PREFILL attention mode")
+        if past_key_values is not None:
+            # sin and cos are specific to RoPE models; cache_position needed for the static cache
+            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-            # Apply RoPE manually using FlashInfer's functions before attention
-            query_states_rotated, key_states_rotated = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        attention_interface: Callable = eager_attention_forward
+        if self.config._attn_implementation != "eager":
+            attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
 
-            # Convert to NHD layout: [batch, num_heads, seq_len, head_dim] -> [batch, seq_len, num_heads, head_dim]
-            attn_output, attn_weights = flashinfer_prefill_attention_forward(
-                self,
-                query_states_rotated.transpose(1, 2),  # Rotated query in NHD layout
-                key_states_rotated.transpose(1, 2),    # Rotated key in NHD layout
-                value_states.transpose(1, 2),          # Unrotated value in NHD layout
-                attention_mask,
-                self.scaling,
-                page_table,
-                dropout=0.0 if not self.training else self.attention_dropout,
-                **kwargs,
-            )
-            # Return page indices for subsequent decode calls
-            pages_needed = (query_states.shape[2] + page_table.page_size - 1) // page_table.page_size
-            new_page_indices = list(range(len(page_table.allocated_pages) - pages_needed, len(page_table.allocated_pages)))
-            last_page_len = query_states.shape[2] % page_table.page_size
-            if last_page_len == 0 and query_states.shape[2] > 0:
-                last_page_len = page_table.page_size
-
-            # Store page info in kwargs for beam search to retrieve
-            kwargs['page_indices'] = new_page_indices
-            kwargs['last_page_len'] = last_page_len
-
-        elif attention_mode == AttentionMode.DECODE:
-            if page_table is None or page_indices is None:
-                raise ValueError("PageTable and page_indices must be provided for DECODE attention mode")
-
-            # Apply RoPE manually before FlashInfer attention
-            query_states_rotated, key_states_rotated = apply_rotary_pos_emb(query_states, key_states, cos, sin)
-
-            # Use FlashInfer decode kernel for token-by-token generation
-            attn_output, attn_weights = flashinfer_decode_attention_forward(
-                self,
-                query_states_rotated,  # Rotated query
-                key_states_rotated,    # Rotated key
-                value_states,          # Unrotated value
-                attention_mask,
-                self.scaling,
-                page_table,
-                page_indices,
-                last_page_len or 0,
-                dropout=0.0 if not self.training else self.attention_dropout,
-                **kwargs,
-            )
-        else:
-            raise ValueError(f"Invalid attention mode: {attention_mode}. Must be PREFILL or DECODE")
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            dropout=0.0 if not self.training else self.attention_dropout,
+            scaling=self.scaling,
+            **kwargs,
+        )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
@@ -582,7 +306,6 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-    @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -591,18 +314,11 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
         past_key_values: Optional[Cache] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-        # Extract FlashInfer parameters from kwargs to avoid duplicate arguments
-        attention_kwargs = kwargs.copy()
-        attention_mode = attention_kwargs.pop('attention_mode', None)
-        page_table = attention_kwargs.pop('page_table', None)
-        page_indices = attention_kwargs.pop('page_indices', None)
-        last_page_len = attention_kwargs.pop('last_page_len', None)
-
         # Self Attention
         hidden_states, _ = self.self_attn(
             hidden_states=hidden_states,
@@ -612,11 +328,7 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
-            attention_mode=attention_mode,
-            page_table=page_table,
-            page_indices=page_indices,
-            last_page_len=last_page_len,
-            **attention_kwargs,
+            **kwargs,
         )
         hidden_states = residual + hidden_states
 
@@ -665,7 +377,7 @@ class LlamaModel(LlamaPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @check_model_inputs()
+    @check_model_inputs
     @auto_docstring
     def forward(
         self,
@@ -689,8 +401,8 @@ class LlamaModel(LlamaPreTrainedModel):
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position: torch.Tensor = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+            cache_position: torch.Tensor = (
+                torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
             )
 
         if position_ids is None:
@@ -706,16 +418,17 @@ class LlamaModel(LlamaPreTrainedModel):
         )
 
         hidden_states = inputs_embeds
-        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        position_embeddings = self.rotary_emb(hidden_states, position_ids=position_ids)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,
+                position_embeddings=position_embeddings,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
+                use_cache=use_cache,
                 cache_position=cache_position,
-                position_embeddings=position_embeddings,
                 **kwargs,
             )
 
@@ -728,7 +441,7 @@ class LlamaModel(LlamaPreTrainedModel):
 
 @auto_docstring
 class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
-    _tied_weights_keys = ["lm_head.weight"]
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     _tp_plan = {"lm_head": "colwise_rep"}
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
 
