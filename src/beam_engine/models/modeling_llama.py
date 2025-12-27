@@ -237,16 +237,14 @@ def flashinfer_prefill_attention_forward(
         tokens_in_this_page = min(remaining_tokens, page_table.page_size)
 
         if tokens_in_this_page > 0:
-            # Extract tokens for this page
+            # Extract tokens for this page from NHD format [batch, seq_len, num_heads, head_dim]
             print(f"Debug: key shape before slice: {key.shape}")
-            page_key = key[0, :, current_pos:current_pos + tokens_in_this_page, :]  # [num_heads, tokens, head_dim]
-            page_value = value[0, :, current_pos:current_pos + tokens_in_this_page, :]
+            page_key = key[0, current_pos:current_pos + tokens_in_this_page, :, :]  # [tokens, num_heads, head_dim]
+            page_value = value[0, current_pos:current_pos + tokens_in_this_page, :, :]
             print(f"Debug: page_key shape after slice: {page_key.shape}")
 
-            # Transpose to match page table format [tokens, num_heads, head_dim]
-            page_key = page_key
-            page_value = page_value
-            print(f"Debug: page_key shape after transpose: {page_key.shape}")
+            # Already in correct format [tokens, num_heads, head_dim] for NHD
+            print(f"Debug: page_key shape (already NHD): {page_key.shape}")
 
             # Write to page table for this layer
             page_table.write_block(
@@ -301,10 +299,10 @@ def flashinfer_prefill_attention_forward(
     )
     print(f"Debug: Attention computation planned")
 
-    # Reshape query for FlashInfer: [batch_size * seq_len, num_heads, head_dim]
-    print(f"Debug: Reshaping query from {query.shape}")
-    query_flashinfer = query
-    print(f"Debug: Query reshaped to {query_flashinfer.shape}")
+    # Keep query in NHD format with batch dimension: [batch_size, seq_len, num_heads, head_dim]
+    print(f"Debug: Query shape for FlashInfer: {query.shape}")
+    query_flashinfer = query  # Keep as is for batched operation
+    print(f"Debug: Query ready for FlashInfer: {query_flashinfer.shape}")
 
     # Get paged KV cache for this layer
     paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
