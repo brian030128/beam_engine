@@ -297,7 +297,7 @@ def flashinfer_prefill_attention_forward(
     paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
 
     # Run prefill attention
-    attn_output = prefill_wrapper.run(query_flashinfer, paged_kv_cache, causal=True, sm_scale=scaling)
+    attn_output = prefill_wrapper.run(query_flashinfer, paged_kv_cache)
 
     # Reshape output back to original format
     attn_output = attn_output.reshape(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
@@ -389,7 +389,7 @@ def flashinfer_decode_attention_forward(
     paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
 
     # Run decode attention
-    attn_output = decode_wrapper.run(query_flashinfer, paged_kv_cache, causal=True, sm_scale=scaling)
+    attn_output = decode_wrapper.run(query_flashinfer, paged_kv_cache)
 
     # Reshape output back to original format [batch_size, num_heads, 1, head_dim]
     attn_output = attn_output.unsqueeze(2)
