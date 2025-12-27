@@ -524,6 +524,13 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
     ) -> torch.Tensor:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
+        # Extract FlashInfer parameters from kwargs to avoid duplicate arguments
+        attention_kwargs = kwargs.copy()
+        attention_mode = attention_kwargs.pop('attention_mode', None)
+        page_table = attention_kwargs.pop('page_table', None)
+        page_indices = attention_kwargs.pop('page_indices', None)
+        last_page_len = attention_kwargs.pop('last_page_len', None)
+
         # Self Attention
         hidden_states, _ = self.self_attn(
             hidden_states=hidden_states,
@@ -533,11 +540,11 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
-            attention_mode=kwargs.get('attention_mode'),
-            page_table=kwargs.get('page_table'),
-            page_indices=kwargs.get('page_indices'),
-            last_page_len=kwargs.get('last_page_len'),
-            **kwargs,
+            attention_mode=attention_mode,
+            page_table=page_table,
+            page_indices=page_indices,
+            last_page_len=last_page_len,
+            **attention_kwargs,
         )
         hidden_states = residual + hidden_states
 

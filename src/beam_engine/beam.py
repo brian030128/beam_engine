@@ -581,39 +581,12 @@ def demo_diverse_beam_search():
             print(f"{i}. {text}")
 
 
-def demo_vanilla_beam_search():
-    """Demonstrate vanilla (standard) beam search generation."""
-    print("\n=== Vanilla Beam Search Demo ===")
-
-    # Create vanilla beam search strategy
-    strategy = VanillaBeamSearchStrategy(
-        beam_size=4,           # Number of beams
-        length_penalty=1.1     # Slight preference for longer sequences
-    )
-
-    # Create generator
-    generator = BeamSearchGenerator(model, tokenizer, strategy)
-
-    prompt = "The secret to happiness is"
-    print(f"\nPrompt: '{prompt}'")
-    print("-" * 50)
-
-    generated_texts = generator.generate(
-        input_text=prompt,
-        max_length=25,
-        num_return_sequences=4,
-        temperature=0.9
-    )
-
-    for i, text in enumerate(generated_texts, 1):
-        print(f"{i}. {text}")
 
 
 if __name__ == "__main__":
     print("Loading model and tokenizer...")
 
     # Run demonstrations
-    demo_vanilla_beam_search()
     demo_diverse_beam_search()
 
     print("\n=== Strategy Comparison ===")
