@@ -487,6 +487,19 @@ class BeamSearchGenerator:
                 top_k = min(self.strategy.beam_size * 2, next_token_probs.shape[0])
                 top_probs, top_indices = torch.topk(next_token_probs, top_k)
 
+                # Debug: Print first token details (only on first iteration)
+                if is_prefill and len(active_candidates) == 1:
+                    print(f"\n=== PREFILL TOKEN GENERATION DEBUG ===")
+                    print(f"Input sequence: {candidate.sequence.tolist()}")
+                    print(f"Input text: '{self.tokenizer.decode(candidate.sequence.tolist(), skip_special_tokens=False)}'")
+                    print(f"Next token logits shape: {next_token_logits.shape}")
+                    print(f"Top {min(10, len(top_indices))} tokens:")
+                    for i, (prob, token_id) in enumerate(zip(top_probs[:10], top_indices[:10])):
+                        token_text = self.tokenizer.decode([token_id.item()], skip_special_tokens=False)
+                        print(f"  {i+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
+                    print(f"Selected top-{top_k} tokens for beam expansion")
+                    print("=" * 50)
+
                 for prob, token_id in zip(top_probs, top_indices):
                     # Create new trie node by adding the new token
                     new_node = candidate.trie_node.add_sequence([token_id.item()])
