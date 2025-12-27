@@ -304,9 +304,9 @@ def flashinfer_prefill_attention_forward(
     )
     print(f"Debug: Attention computation planned")
 
-    # Keep query in NHD format with batch dimension: [batch_size, seq_len, num_heads, head_dim]
+    # FlashInfer expects query without batch dimension: [seq_len, num_heads, head_dim]
     print(f"Debug: Query shape for FlashInfer: {query.shape}")
-    query_flashinfer = query  # Keep as is for batched operation
+    query_flashinfer = query[0]  # Remove batch dimension: [seq_len, num_heads, head_dim]
     print(f"Debug: Query ready for FlashInfer: {query_flashinfer.shape}")
 
     # Get paged KV cache for this layer
@@ -332,7 +332,8 @@ def flashinfer_prefill_attention_forward(
 
     # Reshape output back to original format
     print(f"Debug: Reshaping output back to original format")
-    attn_output = attn_output.reshape(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
+    # FlashInfer returns [seq_len, num_qo_heads, head_dim], we need [batch, num_heads, seq_len, head_dim]
+    attn_output = attn_output.unsqueeze(0).transpose(1, 2)  # Add batch dim and transpose to [batch, num_heads, seq_len, head_dim]
     print(f"Debug: Final output shape {attn_output.shape}")
 
     return attn_output, None  # FlashInfer doesn't return attention weights
