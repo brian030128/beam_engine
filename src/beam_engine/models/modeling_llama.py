@@ -323,7 +323,7 @@ def flashinfer_prefill_attention_forward(
     # Reshape output back to original format
     print(f"Debug: Reshaping output back to original format")
     # FlashInfer returns [seq_len, num_qo_heads, head_dim], we need [batch, num_heads, seq_len, head_dim]
-    attn_output = attn_output.unsqueeze(0).transpose(1, 2)  # Add batch dim and transpose to [batch, num_heads, seq_len, head_dim]
+    attn_output = attn_output.unsqueeze(0)
     print(f"Debug: Final output shape {attn_output.shape}")
 
     return attn_output, None  # FlashInfer doesn't return attention weights
