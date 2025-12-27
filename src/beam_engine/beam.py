@@ -406,74 +406,112 @@ class BeamSearchGenerator:
         # Initialize beam state
         beam_state = BeamState(self.strategy.beam_size, self.device)
 
-        # Create initial trie node with input sequence
-        input_tokens = input_ids[0].tolist()
-        initial_node = beam_state.root.add_sequence(input_tokens)
-
-        # Create initial beam candidate (no page info yet, will be set during prefill)
-        initial_candidate = BeamCandidate(
-            trie_node=initial_node,
-            score=0.0
-        )
-        beam_state.add_candidate(initial_candidate)
-
         # Generation loop
         step = 0
-        is_prefill = True  # First step is prefill, subsequent steps are decode
 
+        # PREFILL PHASE: Process the initial input sequence (no candidates yet)
+        if step == 0:
+            # Process the initial input sequence with prefill kernel
+            sequence = input_ids.to(self.device)  # [1, seq_len]
+
+            # PRE-ALLOCATE pages BEFORE calling the model
+            seq_len = sequence.shape[1]
+            pages_needed = (seq_len + self.page_size - 1) // self.page_size
+            page_indices = [self.page_table.allocate_block() for _ in range(pages_needed)]
+            last_page_len = seq_len % self.page_size
+            if last_page_len == 0 and seq_len > 0:
+                last_page_len = self.page_size
+
+            with torch.no_grad():
+                outputs = self.model(
+                    sequence,
+                    attention_mode=AttentionMode.PREFILL,
+                    page_table=self.page_table,
+                    page_indices=page_indices,
+                    last_page_len=last_page_len
+                )
+                logits = outputs.logits
+
+            # Get next token probabilities from the last position
+            next_token_logits = logits[0, -1, :]  # Last token logits
+
+            # Debug: Check what the model actually computed
+            print(f"Debug: Prefill - Model outputs shape: {outputs.logits.shape}")
+            print(f"Debug: Prefill - Next token logits stats - mean: {next_token_logits.mean().item():.4f}, std: {next_token_logits.std().item():.4f}")
+            print(f"Debug: Prefill - Logits range - min: {next_token_logits.min().item():.4f}, max: {next_token_logits.max().item():.4f}")
+
+            # Apply temperature
+            if temperature != 1.0:
+                next_token_logits = next_token_logits / temperature
+
+            # Get probabilities for next token
+            next_token_probs = F.log_softmax(next_token_logits, dim=-1)
+
+            # Generate initial beam candidates from top-k tokens
+            top_k = min(self.strategy.beam_size * 2, next_token_probs.shape[0])
+            top_probs, top_indices = torch.topk(next_token_probs, top_k)
+
+            # Debug: Print prefill token generation details
+            print(f"\n=== PREFILL TOKEN GENERATION DEBUG ===")
+            print(f"Input sequence: {input_ids[0].tolist()}")
+            print(f"Input text: '{self.tokenizer.decode(input_ids[0].tolist(), skip_special_tokens=False)}'")
+            print(f"Next token logits shape: {next_token_logits.shape}")
+            print(f"Top {min(10, len(top_indices))} tokens:")
+            for i, (prob, token_id) in enumerate(zip(top_probs[:10], top_indices[:10])):
+                token_text = self.tokenizer.decode([token_id.item()], skip_special_tokens=False)
+                print(f"  {i+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
+            print("=" * 50)
+
+            # Create initial beam candidates
+            input_tokens = input_ids[0].tolist()
+            initial_node = beam_state.root.add_sequence(input_tokens)
+
+            new_candidates = []
+            for prob, token_id in zip(top_probs, top_indices):
+                # Create new trie node by adding the new token
+                new_node = initial_node.add_sequence([token_id.item()])
+
+                # Check if sequence is finished
+                is_finished = token_id.item() == eos_token_id
+
+                # Create new candidate with prefill page info
+                new_candidate = BeamCandidate(
+                    trie_node=new_node,
+                    score=prob.item(),
+                    finished=is_finished,
+                    page_indices=page_indices.copy(),
+                    last_page_len=last_page_len
+                )
+                new_candidates.append(new_candidate)
+
+            # Let strategy select which candidates to keep
+            selected_candidates = self.strategy.select_candidates(beam_state, new_candidates, step)
+
+            # Debug: Show selected candidates after prefill
+            print(f"\n=== SELECTED CANDIDATES AFTER PREFILL ===")
+            print(f"Generated {len(new_candidates)} new candidates, selected {len(selected_candidates)}")
+            for i, candidate in enumerate(selected_candidates):
+                sequence = candidate.trie_node.get_full_sequence()
+                text = self.tokenizer.decode(sequence, skip_special_tokens=False)
+                print(f"  Candidate {i+1}: '{text}' (score: {candidate.score:.4f})")
+            print("=" * 50)
+
+            # Update beam state
+            beam_state.candidates = []
+            for candidate in selected_candidates:
+                beam_state.add_candidate(candidate)
+
+            step += 1
+
+        # DECODE PHASE: Process multiple beam candidates
         while not self.strategy.should_stop(beam_state, max_length, step):
             active_candidates = beam_state.get_active_candidates()
             if not active_candidates:
                 break
 
-            # For single-batch beam search, we process one candidate at a time
-            # This is simpler for FlashInfer integration
             new_candidates = []
 
             for candidate in active_candidates:
-                if is_prefill:
-                    # First step: use prefill kernel for the full input sequence
-                    sequence = candidate.sequence.unsqueeze(0).to(self.device)
-                    
-                    # PRE-ALLOCATE pages BEFORE calling the model
-                    seq_len = sequence.shape[1]
-                    pages_needed = (seq_len + self.page_size - 1) // self.page_size
-                    page_indices = [self.page_table.allocate_block() for _ in range(pages_needed)]
-                    last_page_len = seq_len % self.page_size
-                    if last_page_len == 0 and seq_len > 0:
-                        last_page_len = self.page_size
-
-                    with torch.no_grad():
-                        outputs = self.model(
-                            sequence,
-                            attention_mode=AttentionMode.PREFILL,
-                            page_table=self.page_table,
-                            page_indices=page_indices,        # <-- ADD THIS
-                            last_page_len=last_page_len       # <-- ADD THIS
-                        )
-                        logits = outputs.logits
-
-                    # Update candidate with the correct page info (already computed above)
-                    candidate.page_indices = page_indices  # Use the correctly allocated pages
-                    candidate.last_page_len = last_page_len
-
-                    # Get next token probabilities
-                    next_token_logits = logits[0, -1, :]  # Last token logits
-
-                    # Debug: Check what the model actually computed
-                    print(f"Debug: Model outputs shape: {outputs.logits.shape}")
-                    print(f"Debug: Hidden states after attention (sample): {outputs.logits[0, -1, :10]}")
-                    print(f"Debug: Next token logits stats - mean: {next_token_logits.mean().item():.4f}, std: {next_token_logits.std().item():.4f}")
-                    print(f"Debug: Logits range - min: {next_token_logits.min().item():.4f}, max: {next_token_logits.max().item():.4f}")
-
-                    # Let's also check a few positions to see if it's always predicting start-of-sentence
-                    for pos in [0, 3, 6]:  # Check beginning, middle, and end
-                        pos_logits = logits[0, pos, :]
-                        pos_probs = F.log_softmax(pos_logits, dim=-1)
-                        top_prob, top_token = torch.topk(pos_probs, 1)
-                        token_text = self.tokenizer.decode([top_token.item()], skip_special_tokens=False)
-                        print(f"Debug: Position {pos} top token: {top_token.item()} '{token_text}' (prob: {top_prob.item():.4f})")
-                else:
                     # Subsequent steps: use decode kernel for single token
                     # Get the last token of the sequence and add batch dimension
                     last_token = candidate.sequence[-1:].unsqueeze(0).to(self.device)
