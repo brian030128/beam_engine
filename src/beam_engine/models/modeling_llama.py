@@ -357,6 +357,8 @@ def flashinfer_decode_attention_forward(
     assert batch_size == 1, "Current implementation expects single sequence per call"
 
     print(f"Debug: Decode - input shapes query: {query.shape}, key: {key.shape}, value: {value.shape}")
+    print(f"Debug: Decode - page_indices received: {page_indices}")
+    print(f"Debug: Decode - last_page_len received: {last_page_len}")
 
     # First, append the new KV to the page table
     # Check if we need a new page
@@ -392,11 +394,12 @@ def flashinfer_decode_attention_forward(
     # Update last page length
     last_page_len += 1
 
-    # Prepare FlashInfer decode wrapper - single batch item
+    # Prepare FlashInfer decode wrapper - ALL pages for this sequence
+    # FlashInfer decode needs to see the ENTIRE KV history, not just current page
     device = query.device
-    kv_page_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
-    kv_page_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)  # Single sequence
-    kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)
+    kv_page_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)  # ALL pages
+    kv_page_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)  # Single sequence using all pages
+    kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)  # Length of final page
 
     print(f"Debug: Decode parameters:")
     print(f"Debug: kv_page_indices: {kv_page_indices}")
