@@ -345,6 +345,10 @@ def flashinfer_decode_attention_forward(
     """
     FlashInfer decode attention using BatchDecodeWithPagedKVCacheWrapper.
     Used for token-by-token generation where we only compute attention for the last token.
+
+    Based on FlashInfer decode example:
+    - Query: [batch_size, num_qo_heads, head_dim]
+    - Output: [batch_size, num_qo_heads, head_dim]
     """
     batch_size, num_heads, seq_len, head_dim = query.shape
 
@@ -352,9 +356,12 @@ def flashinfer_decode_attention_forward(
     assert seq_len == 1, "Decode attention expects single token input"
     assert batch_size == 1, "Current implementation expects single sequence per call"
 
-    # Append new KV to the last page or allocate new page if needed
+    print(f"Debug: Decode - input shapes query: {query.shape}, key: {key.shape}, value: {value.shape}")
+
+    # First, append the new KV to the page table
+    # Check if we need a new page
     if last_page_len >= page_table.page_size:
-        # Need to allocate a new page
+        # Allocate a new page
         new_page_idx = page_table.allocate_block()
         page_indices.append(new_page_idx)
         last_page_len = 0
@@ -362,68 +369,92 @@ def flashinfer_decode_attention_forward(
     # Get the current page to append to
     current_page_idx = page_indices[-1]
 
-    # Extract single token KV
-    token_key = key[0, :, 0, :].transpose(0, 1).unsqueeze(0)  # [1, num_heads, head_dim]
-    token_value = value[0, :, 0, :].transpose(0, 1).unsqueeze(0)  # [1, num_heads, head_dim]
+    # Extract the new token's KV data: [batch, num_kv_heads, 1, head_dim] -> [1, num_kv_heads, head_dim]
+    new_key = key[0, :, 0, :]      # [num_kv_heads, head_dim]
+    new_value = value[0, :, 0, :]  # [num_kv_heads, head_dim]
+
+    # Reshape for page table: [1, num_kv_heads, head_dim] (1 token)
+    new_key = new_key.unsqueeze(0)    # [1, num_kv_heads, head_dim]
+    new_value = new_value.unsqueeze(0) # [1, num_kv_heads, head_dim]
+
+    print(f"Debug: Appending to page {current_page_idx} at index {last_page_len}")
+    print(f"Debug: new_key shape: {new_key.shape}, new_value shape: {new_value.shape}")
 
     # Append to page table
     page_table.write_block(
         layer=module.layer_idx,
         page_idx=current_page_idx,
-        key=token_key,
-        value=token_value,
+        key=new_key,
+        value=new_value,
         index=last_page_len
     )
 
     # Update last page length
     last_page_len += 1
 
-    # Prepare FlashInfer batch decode - ensure all tensors are on the same device
+    # Prepare FlashInfer decode wrapper - single batch item
     device = query.device
-    paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
-    paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
-    paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)
+    kv_page_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
+    kv_page_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)  # Single sequence
+    kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)
+
+    print(f"Debug: Decode parameters:")
+    print(f"Debug: kv_page_indices: {kv_page_indices}")
+    print(f"Debug: kv_page_indptr: {kv_page_indptr}")
+    print(f"Debug: kv_last_page_len: {kv_last_page_len}")
 
     # Create workspace buffer
     workspace_size = 128 * 1024 * 1024  # 128MB
     workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
 
     # Initialize decode wrapper
-    decode_wrapper = flashinfer.decode.BatchDecodeWithPagedKVCacheWrapper(
+    decode_wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
         workspace_buffer,
         kv_layout="NHD"
     )
 
     # Plan the decode operation
-    # Extract correct head counts for Grouped Query Attention (GQA)
-    num_qo_heads = num_heads  # Query heads from query tensor
-    num_kv_heads = key.shape[1]  # KV heads from key tensor shape [batch, num_kv_heads, seq_len, head_dim]
+    num_qo_heads = num_heads  # Query heads (32)
+    num_kv_heads = key.shape[1]  # KV heads (8)
+
+    print(f"Debug: Planning decode - num_qo_heads: {num_qo_heads}, num_kv_heads: {num_kv_heads}")
 
     decode_wrapper.plan(
-        paged_kv_indptr,
-        paged_kv_indices,
-        paged_kv_last_page_len,
-        num_qo_heads,  # num_qo_heads (query heads)
-        num_kv_heads,  # num_kv_heads (key-value heads)
+        kv_page_indptr,
+        kv_page_indices,
+        kv_last_page_len,
+        num_qo_heads,
+        num_kv_heads,
         head_dim,
         page_table.page_size,
-        causal=True
-        # RoPE applied manually before calling FlashInfer
+        pos_encoding_mode="NONE",  # RoPE already applied
+        data_type=torch.float16
     )
 
-    # Reshape query for FlashInfer: [batch_size, num_heads, head_dim]
-    query_flashinfer = query.squeeze(2)  # Remove seq_len dimension
+    # Prepare query: [batch_size, num_heads, 1, head_dim] -> [batch_size, num_heads, head_dim]
+    query_decode = query.squeeze(2)  # Remove seq_len=1 dimension
+    print(f"Debug: Query for decode: {query_decode.shape}")
 
-    # Get paged KV cache for this layer
-    paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
+    # Get KV cache for this layer
+    kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
+    print(f"Debug: KV cache shape: {kv_cache.shape}")
 
     # Run decode attention
-    attn_output = decode_wrapper.run(query_flashinfer, paged_kv_cache)
+    print(f"Debug: Running decode attention...")
+    try:
+        attn_output = decode_wrapper.run(query_decode, kv_cache)
+        print(f"Debug: Decode attention completed, output shape: {attn_output.shape}")
+    except Exception as e:
+        print(f"Debug: Error in decode attention: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
-    # Reshape output back to original format [batch_size, num_heads, 1, head_dim]
-    attn_output = attn_output.unsqueeze(2)
+    # Reshape output back to [batch_size, num_heads, 1, head_dim] to match expected format
+    attn_output = attn_output.unsqueeze(2)  # Add seq_len=1 dimension back
+    print(f"Debug: Final decode output shape: {attn_output.shape}")
 
-    return attn_output, None  # FlashInfer doesn't return attention weights
+    return attn_output, None
 
 
 class LlamaAttention(nn.Module):
