@@ -310,7 +310,19 @@ def flashinfer_prefill_attention_forward(
 
     # Run prefill attention
     print(f"Debug: Running prefill attention")
-    attn_output = prefill_wrapper.run(query_flashinfer, paged_kv_cache)
+    print(f"Debug: query_flashinfer shape: {query_flashinfer.shape}, dtype: {query_flashinfer.dtype}")
+    print(f"Debug: paged_kv_cache shape: {paged_kv_cache.shape}, dtype: {paged_kv_cache.dtype}")
+    print(f"Debug: qo_indptr: {qo_indptr}")
+    print(f"Debug: paged_kv_indices: {paged_kv_indices}")
+    print(f"Debug: paged_kv_indptr: {paged_kv_indptr}")
+    print(f"Debug: paged_kv_last_page_len: {paged_kv_last_page_len}")
+
+    try:
+        attn_output = prefill_wrapper.run(query_flashinfer, paged_kv_cache)
+    except Exception as e:
+        print(f"Debug: Error in prefill_wrapper.run: {e}")
+        print(f"Debug: Error type: {type(e)}")
+        raise
     print(f"Debug: Prefill attention completed, output shape {attn_output.shape}")
 
     # Reshape output back to original format
