@@ -514,62 +514,68 @@ class BeamSearchGenerator:
             print(f"\n=== DECODE STEP {step} ===")
             print(f"Processing {len(active_candidates)} active candidates")
 
-            # For each active candidate, we need to:
-            # 1. Get the last token from its sequence
-            # 2. Call the model in DECODE mode (which will append to KV cache)
-            # 3. Generate new candidates from the top-k next tokens
+            # Prepare batch input for all active candidates
+            batch_size = len(active_candidates)
 
-            new_candidates = []
+            # Get the last token from each candidate for batch processing
+            last_tokens = []
+            batch_page_indices = []
+            batch_last_page_lens = []
 
-            for candidate_idx, candidate in enumerate(active_candidates):
-                # Get the candidate's current sequence and extract the last token
+            for candidate in active_candidates:
                 sequence = candidate.trie_node.get_full_sequence()
                 last_token = sequence[-1] if sequence else 0
+                last_tokens.append(last_token)
 
-                # Create input tensor for this candidate [1, 1]
-                candidate_input = torch.tensor([[last_token]], device=self.device)
+                # Copy page state since decode modifies it in place
+                batch_page_indices.append(candidate.page_indices.copy())
+                batch_last_page_lens.append(candidate.last_page_len)
 
-                print(f"Debug: Candidate {candidate_idx}")
-                print(f"  Sequence: {sequence}")
-                print(f"  Last token: {last_token}")
-                print(f"  Page indices: {candidate.page_indices}")
-                print(f"  Last page len: {candidate.last_page_len}")
+            # Create batch input tensor [batch_size, 1] for decode step
+            batch_input = torch.tensor(last_tokens, device=self.device).unsqueeze(1)  # [batch_size, 1]
 
-                # Call model in DECODE mode - this will update the KV cache
-                # IMPORTANT: We need to copy page state since decode modifies it in place
-                candidate_page_indices = candidate.page_indices.copy()
-                candidate_last_page_len = candidate.last_page_len
+            print(f"Debug: Batch input shape: {batch_input.shape}")
+            print(f"Debug: Batch input tokens: {batch_input.flatten().tolist()}")
+            print(f"Debug: Batch page indices: {batch_page_indices}")
+            print(f"Debug: Batch last page lens: {batch_last_page_lens}")
 
-                with torch.no_grad():
-                    outputs = self.model(
-                        candidate_input,
-                        attention_mode=AttentionMode.DECODE,
-                        page_table=self.page_table,
-                        page_indices=candidate_page_indices,  # This will be modified by decode
-                        last_page_len=candidate_last_page_len  # This will be modified by decode
-                    )
-                    logits = outputs.logits
+            # Call model with true batch decode
+            with torch.no_grad():
+                outputs = self.model(
+                    batch_input,  # [batch_size, 1]
+                    attention_mode=AttentionMode.DECODE,
+                    page_table=self.page_table,
+                    batch_page_indices=batch_page_indices,  # List of page_indices for each sequence
+                    batch_last_page_lens=batch_last_page_lens  # List of last_page_lens for each sequence
+                )
+                logits = outputs.logits
 
-                # Get next token logits [1, 1, vocab_size] -> [vocab_size]
-                next_token_logits = logits[0, -1, :]
+            # Extract logits [batch_size, 1, vocab_size] -> [batch_size, vocab_size]
+            batch_logits = logits[:, -1, :]
 
-                # Apply temperature
-                if temperature != 1.0:
-                    next_token_logits = next_token_logits / temperature
+            print(f"Debug: Batch logits shape: {batch_logits.shape}")
 
-                # Get probabilities
-                next_token_probs = F.log_softmax(next_token_logits, dim=-1)
+            # Apply temperature
+            if temperature != 1.0:
+                batch_logits = batch_logits / temperature
 
+            # Get probabilities for next tokens
+            batch_probs = F.log_softmax(batch_logits, dim=-1)  # [batch_size, vocab_size]
+
+            # Generate new candidates for each active candidate
+            new_candidates = []
+
+            for candidate_idx, (candidate, next_token_probs) in enumerate(zip(active_candidates, batch_probs)):
                 # Get top-k tokens for this candidate
                 top_k = min(self.strategy.beam_size, next_token_probs.shape[0])
                 top_probs, top_indices = torch.topk(next_token_probs, top_k)
 
-                print(f"  Top {min(5, len(top_indices))} next tokens:")
+                print(f"Debug: Candidate {candidate_idx} top tokens:")
                 for j, (prob, token_id) in enumerate(zip(top_probs[:5], top_indices[:5])):
                     token_text = self.tokenizer.decode([token_id.item()], skip_special_tokens=False)
-                    print(f"    {j+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
+                    print(f"  {j+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
 
-                # Create new candidates by extending this candidate
+                # Create new candidates by extending current candidate
                 for prob, token_id in zip(top_probs, top_indices):
                     # Create new trie node by adding the new token
                     new_node = candidate.trie_node.add_sequence([token_id.item()])
@@ -577,19 +583,10 @@ class BeamSearchGenerator:
                     # Check if sequence is finished
                     is_finished = token_id.item() == eos_token_id
 
-                    # Calculate updated page state after decode
-                    # The decode function already updated candidate_page_indices and candidate_last_page_len
-                    # We need to create separate copies for each new candidate since they diverge here
-                    new_page_indices = candidate_page_indices.copy()
-                    new_last_page_len = candidate_last_page_len
-
-                    # But wait - the decode function appended the LAST token, not this new token
-                    # We need to account for the fact that each new candidate will have different next tokens
-                    # So we need separate KV cache states...
-                    # Actually, this is where we need TRUE batching or separate forward passes
-
-                    # For now, let's use the updated state from the decode call
-                    # This assumes each candidate will be processed separately in subsequent steps
+                    # Use updated page state from batch decode call
+                    # The batch decode function updated batch_page_indices and batch_last_page_lens in place
+                    new_page_indices = batch_page_indices[candidate_idx].copy()
+                    new_last_page_len = batch_last_page_lens[candidate_idx]
 
                     # Create new candidate with combined score
                     new_score = candidate.score + prob.item()
