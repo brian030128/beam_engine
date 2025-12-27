@@ -433,14 +433,23 @@ class BeamSearchGenerator:
             for candidate in active_candidates:
                 if is_prefill:
                     # First step: use prefill kernel for the full input sequence
-                    # Add batch dimension (batch_size=1 for single sequence)
                     sequence = candidate.sequence.unsqueeze(0).to(self.device)
+                    
+                    # PRE-ALLOCATE pages BEFORE calling the model
+                    seq_len = sequence.shape[1]
+                    pages_needed = (seq_len + self.page_size - 1) // self.page_size
+                    page_indices = [self.page_table.allocate_block() for _ in range(pages_needed)]
+                    last_page_len = seq_len % self.page_size
+                    if last_page_len == 0 and seq_len > 0:
+                        last_page_len = self.page_size
 
                     with torch.no_grad():
                         outputs = self.model(
                             sequence,
                             attention_mode=AttentionMode.PREFILL,
-                            page_table=self.page_table
+                            page_table=self.page_table,
+                            page_indices=page_indices,        # <-- ADD THIS
+                            last_page_len=last_page_len       # <-- ADD THIS
                         )
                         logits = outputs.logits
 

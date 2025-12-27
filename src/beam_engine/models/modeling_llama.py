@@ -196,7 +196,6 @@ def eager_attention_forward(
 
     return attn_output, attn_weights
 
-
 def flashinfer_prefill_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -205,31 +204,21 @@ def flashinfer_prefill_attention_forward(
     attention_mask: Optional[torch.Tensor],
     scaling: float,
     page_table: PageTable,
+    page_indices: list,      # <-- ADD THIS PARAMETER
+    last_page_len: int,      # <-- ADD THIS PARAMETER  
     dropout: float = 0.0,
     **kwargs: Unpack[TransformersKwargs],
 ):
     """
     FlashInfer prefill attention using batch prefill with paged KV cache.
-    Used for initial prompt processing where we compute attention for full sequences.
+    page_indices must be pre-allocated BEFORE calling this function.
     """
-    batch_size, seq_len, num_heads, head_dim = query.shape  # NHD format: [batch, seq_len, num_heads, head_dim]
-    print("origin query shape",query.shape)
-    print(f"Parsed dimensions: batch={batch_size}, seq_len={seq_len}, num_heads={num_heads}, head_dim={head_dim}")
+    batch_size, seq_len, num_heads, head_dim = query.shape
 
-    # Store KV states in page table
-    # Handle single batch (beam search handles batching at higher level)
     assert batch_size == 1, "Current implementation expects single sequence per call"
 
-    # Calculate number of pages needed for this sequence
-    pages_needed = (seq_len + page_table.page_size - 1) // page_table.page_size
-
-    # Allocate pages for this sequence
-    page_indices = []
-    for _ in range(pages_needed):
-        page_idx = page_table.allocate_block()
-        page_indices.append(page_idx)
-
-    # Write KV states to allocated pages
+    # DON'T allocate pages here - use the pre-allocated page_indices
+    # Write KV states to the pre-allocated pages for THIS LAYER
     remaining_tokens = seq_len
     current_pos = 0
 
@@ -237,55 +226,30 @@ def flashinfer_prefill_attention_forward(
         tokens_in_this_page = min(remaining_tokens, page_table.page_size)
 
         if tokens_in_this_page > 0:
-            # Extract tokens for this page from NHD format [batch, seq_len, num_heads, head_dim]
-            print(f"Debug: key shape before slice: {key.shape}")
-            page_key = key[0, current_pos:current_pos + tokens_in_this_page, :, :]  # [tokens, num_heads, head_dim]
+            page_key = key[0, current_pos:current_pos + tokens_in_this_page, :, :]
             page_value = value[0, current_pos:current_pos + tokens_in_this_page, :, :]
-            print(f"Debug: page_key shape after slice: {page_key.shape}")
 
-            # Already in correct format [tokens, num_heads, head_dim] for NHD
-            print(f"Debug: page_key shape (already NHD): {page_key.shape}")
-
-            # Debug: Check what we're storing - ALL tokens
-            print(f"Debug: Storing in page {page_idx}, layer {module.layer_idx}")
-            print(f"Debug: tokens_in_this_page={tokens_in_this_page}, page_key.shape={page_key.shape}")
-            for t in range(min(tokens_in_this_page, 7)):  # Show all tokens
-                print(f"Debug: Key token {t}: {page_key[t, 0, :5]}")
-
-            # Write to page table for this layer
+            # Determine the write index for this page
+            write_index = 0 if i < len(page_indices) - 1 else 0  # Always start at 0 for prefill
+            
             page_table.write_block(
                 layer=module.layer_idx,
                 page_idx=page_idx,
                 key=page_key,
                 value=page_value,
-                index=0
+                index=write_index
             )
-
-            # Debug: Verify what was stored - check the full range
-            stored_kv = page_table.kv_cache_at_layer[module.layer_idx][page_idx]
-            print(f"Debug: After storage, checking first {tokens_in_this_page} positions:")
-            for t in range(min(tokens_in_this_page, 7)):
-                print(f"Debug: Stored token {t}: {stored_kv[0, t, 0, :5]}")
-
-            # Also check what's in positions we didn't write to
-            if tokens_in_this_page < page_table.page_size:
-                print(f"Debug: Unwritten position {tokens_in_this_page}: {stored_kv[0, tokens_in_this_page, 0, :5]}")
 
         current_pos += tokens_in_this_page
         remaining_tokens -= tokens_in_this_page
 
-    # Prepare FlashInfer batch prefill - ensure all tensors are on the same device
-    print(f"Debug: Preparing FlashInfer tensors, seq_len={seq_len}")
+    # Prepare FlashInfer - use the passed page_indices
     device = query.device
     qo_indptr = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
     paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
     paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
+    paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)
 
-    # Calculate last page length
-    last_page_len_val = seq_len % page_table.page_size
-    if last_page_len_val == 0 and seq_len > 0:
-        last_page_len_val = page_table.page_size
-    paged_kv_last_page_len = torch.tensor([last_page_len_val], dtype=torch.int32, device=device)
     print(f"Debug: Created index tensors")
 
     # Create workspace buffer (128MB recommended)
@@ -513,34 +477,24 @@ class LlamaAttention(nn.Module):
 
         # Choose attention implementation based on mode
         if attention_mode == AttentionMode.PREFILL:
-            if page_table is None:
-                raise ValueError("PageTable must be provided for PREFILL attention mode")
+            if page_table is None or page_indices is None:
+                raise ValueError("PageTable and page_indices must be provided for PREFILL attention mode")
 
-            # Apply RoPE manually using FlashInfer's functions before attention
             query_states_rotated, key_states_rotated = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-            # Convert to NHD layout: [batch, num_heads, seq_len, head_dim] -> [batch, seq_len, num_heads, head_dim]
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
-                query_states_rotated.transpose(1, 2),  # Rotated query in NHD layout
-                key_states_rotated.transpose(1, 2),    # Rotated key in NHD layout
-                value_states.transpose(1, 2),          # Unrotated value in NHD layout
+                query_states_rotated.transpose(1, 2),
+                key_states_rotated.transpose(1, 2),
+                value_states.transpose(1, 2),
                 attention_mask,
                 self.scaling,
                 page_table,
+                page_indices,      # <-- Pass through
+                last_page_len,     # <-- Pass through
                 dropout=0.0 if not self.training else self.attention_dropout,
                 **kwargs,
             )
-            # Return page indices for subsequent decode calls
-            pages_needed = (query_states.shape[2] + page_table.page_size - 1) // page_table.page_size
-            new_page_indices = list(range(len(page_table.allocated_pages) - pages_needed, len(page_table.allocated_pages)))
-            last_page_len = query_states.shape[2] % page_table.page_size
-            if last_page_len == 0 and query_states.shape[2] > 0:
-                last_page_len = page_table.page_size
-
-            # Store page info in kwargs for beam search to retrieve
-            kwargs['page_indices'] = new_page_indices
-            kwargs['last_page_len'] = last_page_len
 
         elif attention_mode == AttentionMode.DECODE:
             if page_table is None or page_indices is None:
