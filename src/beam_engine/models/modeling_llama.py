@@ -44,8 +44,8 @@ from transformers.utils import TransformersKwargs, auto_docstring, can_return_tu
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.utils.generic import check_model_inputs
 from .configuration_llama import LlamaConfig
-from ..attention_mode import AttentionMode
-from ..page_table import PageTable
+from attention_mode import AttentionMode
+from page_table import PageTable
 import flashinfer
 
 
