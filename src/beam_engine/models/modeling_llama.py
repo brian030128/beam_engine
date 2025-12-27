@@ -300,16 +300,23 @@ def flashinfer_prefill_attention_forward(
     print(f"Debug: Attention computation planned")
 
     # Reshape query for FlashInfer: [batch_size * seq_len, num_heads, head_dim]
+    print(f"Debug: Reshaping query from {query.shape}")
     query_flashinfer = query.reshape(-1, num_heads, head_dim)
+    print(f"Debug: Query reshaped to {query_flashinfer.shape}")
 
     # Get paged KV cache for this layer
     paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
+    print(f"Debug: Got paged KV cache shape {paged_kv_cache.shape}")
 
     # Run prefill attention
+    print(f"Debug: Running prefill attention")
     attn_output = prefill_wrapper.run(query_flashinfer, paged_kv_cache)
+    print(f"Debug: Prefill attention completed, output shape {attn_output.shape}")
 
     # Reshape output back to original format
+    print(f"Debug: Reshaping output back to original format")
     attn_output = attn_output.reshape(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
+    print(f"Debug: Final output shape {attn_output.shape}")
 
     return attn_output, None  # FlashInfer doesn't return attention weights
 
