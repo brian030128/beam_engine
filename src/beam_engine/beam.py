@@ -523,6 +523,16 @@ class BeamSearchGenerator:
             # Let strategy select which candidates to keep
             selected_candidates = self.strategy.select_candidates(beam_state, new_candidates, step)
 
+            # Debug: Show selected candidates after first step
+            if is_prefill:
+                print(f"\n=== SELECTED CANDIDATES AFTER PREFILL ===")
+                print(f"Generated {len(new_candidates)} new candidates, selected {len(selected_candidates)}")
+                for i, candidate in enumerate(selected_candidates):
+                    sequence = candidate.trie_node.get_full_sequence()
+                    text = self.tokenizer.decode(sequence, skip_special_tokens=False)
+                    print(f"  Candidate {i+1}: '{text}' (score: {candidate.score:.4f})")
+                print("=" * 50)
+
             # Update beam state
             beam_state.candidates = []
             for candidate in selected_candidates:
