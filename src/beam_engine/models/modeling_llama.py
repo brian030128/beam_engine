@@ -213,6 +213,7 @@ def flashinfer_prefill_attention_forward(
     Used for initial prompt processing where we compute attention for full sequences.
     """
     batch_size, num_heads, seq_len, head_dim = query.shape
+    print("origin query shape",query.shape)
 
     # Store KV states in page table
     # Handle single batch (beam search handles batching at higher level)
@@ -301,7 +302,7 @@ def flashinfer_prefill_attention_forward(
 
     # Reshape query for FlashInfer: [batch_size * seq_len, num_heads, head_dim]
     print(f"Debug: Reshaping query from {query.shape}")
-    query_flashinfer = query.reshape(-1, num_heads, head_dim)
+    query_flashinfer = query
     print(f"Debug: Query reshaped to {query_flashinfer.shape}")
 
     # Get paged KV cache for this layer
