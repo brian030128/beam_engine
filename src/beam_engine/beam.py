@@ -461,7 +461,7 @@ class BeamSearchGenerator:
                 else:
                     # Subsequent steps: use decode kernel for single token
                     # Get the last token of the sequence and add batch dimension
-                    last_token = candidate.sequence[-1:].unsqueeze(0)
+                    last_token = candidate.sequence[-1:].unsqueeze(0).to(self.device)
 
                     with torch.no_grad():
                         outputs = self.model(
