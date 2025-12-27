@@ -246,6 +246,12 @@ def flashinfer_prefill_attention_forward(
             # Already in correct format [tokens, num_heads, head_dim] for NHD
             print(f"Debug: page_key shape (already NHD): {page_key.shape}")
 
+            # Debug: Check what we're storing
+            print(f"Debug: Storing in page {page_idx}, layer {module.layer_idx}")
+            print(f"Debug: Key data sample: {page_key[0, 0, :5]}")  # First head, first token, first 5 dims
+            if tokens_in_this_page > 1:
+                print(f"Debug: Key data sample token 1: {page_key[1, 0, :5]}")
+
             # Write to page table for this layer
             page_table.write_block(
                 layer=module.layer_idx,
@@ -254,6 +260,10 @@ def flashinfer_prefill_attention_forward(
                 value=page_value,
                 index=0
             )
+
+            # Debug: Verify what was stored
+            stored_kv = page_table.kv_cache_at_layer[module.layer_idx][page_idx]
+            print(f"Debug: Stored key sample: {stored_kv[0, :tokens_in_this_page, 0, :5]}")  # First 5 dims of first head
 
         current_pos += tokens_in_this_page
         remaining_tokens -= tokens_in_this_page
