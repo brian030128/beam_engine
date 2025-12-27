@@ -453,16 +453,8 @@ class BeamSearchGenerator:
                         )
                         logits = outputs.logits
 
-                    # Compute page info based on sequence length
-                    seq_len = sequence.shape[1]
-                    pages_needed = (seq_len + self.page_size - 1) // self.page_size
-                    page_indices = list(range(len(self.page_table.allocated_pages) - pages_needed, len(self.page_table.allocated_pages)))
-                    last_page_len = seq_len % self.page_size
-                    if last_page_len == 0 and seq_len > 0:
-                        last_page_len = self.page_size
-
-                    # Update candidate with page info
-                    candidate.page_indices = page_indices
+                    # Update candidate with the correct page info (already computed above)
+                    candidate.page_indices = page_indices  # Use the correctly allocated pages
                     candidate.last_page_len = last_page_len
 
                     # Get next token probabilities
@@ -486,15 +478,34 @@ class BeamSearchGenerator:
                     # Get the last token of the sequence and add batch dimension
                     last_token = candidate.sequence[-1:].unsqueeze(0).to(self.device)
 
+                    # Make copies since decode might modify these
+                    current_page_indices = candidate.page_indices.copy()
+                    current_last_page_len = candidate.last_page_len
+
                     with torch.no_grad():
                         outputs = self.model(
                             last_token,
                             attention_mode=AttentionMode.DECODE,
                             page_table=self.page_table,
-                            page_indices=candidate.page_indices,
-                            last_page_len=candidate.last_page_len
+                            page_indices=current_page_indices,
+                            last_page_len=current_last_page_len
                         )
                         logits = outputs.logits
+
+                    # The decode function updates page_indices and last_page_len if new pages are allocated
+                    # We need to retrieve these updated values back from the model call
+                    # For now, manually compute what should happen:
+                    if current_last_page_len >= self.page_size:
+                        # A new page should have been allocated
+                        new_page = self.page_table.allocated_pages[-1]  # Last allocated page
+                        current_page_indices.append(new_page)
+                        current_last_page_len = 1  # New token goes to position 0 of new page
+                    else:
+                        current_last_page_len += 1  # Just increment position in current page
+
+                    # Update the candidate with the new page info
+                    candidate.page_indices = current_page_indices
+                    candidate.last_page_len = current_last_page_len
 
                     # Get next token probabilities
                     next_token_logits = logits[0, -1, :]  # Last token logits
@@ -531,15 +542,13 @@ class BeamSearchGenerator:
                     # Check if sequence is finished
                     is_finished = token_id.item() == eos_token_id
 
-                    # Create new candidate with updated page info
-                    new_last_page_len = candidate.last_page_len + 1 if candidate.last_page_len is not None else None
-
+                    # Create new candidate with the current page info (already updated above)
                     new_candidate = BeamCandidate(
                         trie_node=new_node,
                         score=new_score,
                         finished=is_finished,
                         page_indices=candidate.page_indices.copy() if candidate.page_indices else None,
-                        last_page_len=new_last_page_len
+                        last_page_len=candidate.last_page_len  # Use the updated last_page_len
                     )
                     new_candidates.append(new_candidate)
 
