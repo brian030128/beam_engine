@@ -212,9 +212,9 @@ def flashinfer_prefill_attention_forward(
     FlashInfer prefill attention using batch prefill with paged KV cache.
     Used for initial prompt processing where we compute attention for full sequences.
     """
-    batch_size, num_heads, seq_len, head_dim = query.shape
+    batch_size, seq_len, num_heads, head_dim = query.shape  # NHD format: [batch, seq_len, num_heads, head_dim]
     print("origin query shape",query.shape)
-    print(f"Parsed dimensions: batch={batch_size}, num_heads={num_heads}, seq_len={seq_len}, head_dim={head_dim}")
+    print(f"Parsed dimensions: batch={batch_size}, seq_len={seq_len}, num_heads={num_heads}, head_dim={head_dim}")
 
     # Store KV states in page table
     # Handle single batch (beam search handles batching at higher level)
@@ -483,11 +483,12 @@ class LlamaAttention(nn.Module):
                 raise ValueError("PageTable must be provided for PREFILL attention mode")
 
             # Use FlashInfer prefill kernel for initial prompt processing
+            # Convert to NHD layout: [batch, num_heads, seq_len, head_dim] -> [batch, seq_len, num_heads, head_dim]
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
-                query_states,
-                key_states,
-                value_states,
+                query_states.transpose(1, 2),  # Convert to NHD layout
+                key_states.transpose(1, 2),    # Convert to NHD layout
+                value_states.transpose(1, 2),  # Convert to NHD layout
                 attention_mask,
                 self.scaling,
                 page_table,
