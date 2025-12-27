@@ -458,6 +458,20 @@ class BeamSearchGenerator:
 
                     # Get next token probabilities
                     next_token_logits = logits[0, -1, :]  # Last token logits
+
+                    # Debug: Check what the model actually computed
+                    print(f"Debug: Model outputs shape: {outputs.logits.shape}")
+                    print(f"Debug: Hidden states after attention (sample): {outputs.logits[0, -1, :10]}")
+                    print(f"Debug: Next token logits stats - mean: {next_token_logits.mean().item():.4f}, std: {next_token_logits.std().item():.4f}")
+                    print(f"Debug: Logits range - min: {next_token_logits.min().item():.4f}, max: {next_token_logits.max().item():.4f}")
+
+                    # Let's also check a few positions to see if it's always predicting start-of-sentence
+                    for pos in [0, 3, 6]:  # Check beginning, middle, and end
+                        pos_logits = logits[0, pos, :]
+                        pos_probs = F.log_softmax(pos_logits, dim=-1)
+                        top_prob, top_token = torch.topk(pos_probs, 1)
+                        token_text = self.tokenizer.decode([top_token.item()], skip_special_tokens=False)
+                        print(f"Debug: Position {pos} top token: {top_token.item()} '{token_text}' (prob: {top_prob.item():.4f})")
                 else:
                     # Subsequent steps: use decode kernel for single token
                     # Get the last token of the sequence and add batch dimension
