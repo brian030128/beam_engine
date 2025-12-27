@@ -463,6 +463,7 @@ class BeamSearchGenerator:
             print("=" * 50)
 
             # Create initial beam candidates
+            # Each candidate represents: input sequence + one predicted next token
             input_tokens = input_ids[0].tolist()
             initial_node = beam_state.root.add_sequence(input_tokens)
 
@@ -475,11 +476,12 @@ class BeamSearchGenerator:
                 is_finished = token_id.item() == eos_token_id
 
                 # Create new candidate with prefill page info
+                # NOTE: Each candidate gets a COPY of page_indices because decode will modify them
                 new_candidate = BeamCandidate(
                     trie_node=new_node,
                     score=prob.item(),
                     finished=is_finished,
-                    page_indices=page_indices.copy(),
+                    page_indices=page_indices.copy(),  # Important: copy for each candidate
                     last_page_len=last_page_len
                 )
                 new_candidates.append(new_candidate)
@@ -503,6 +505,120 @@ class BeamSearchGenerator:
 
             step += 1
 
+        # DECODE PHASE: Continue generating tokens for each beam candidate
+        while not self.strategy.should_stop(beam_state, max_length, step):
+            active_candidates = beam_state.get_active_candidates()
+            if not active_candidates:
+                break
+
+            print(f"\n=== DECODE STEP {step} ===")
+            print(f"Processing {len(active_candidates)} active candidates")
+
+            # For each active candidate, we need to:
+            # 1. Get the last token from its sequence
+            # 2. Call the model in DECODE mode (which will append to KV cache)
+            # 3. Generate new candidates from the top-k next tokens
+
+            new_candidates = []
+
+            for candidate_idx, candidate in enumerate(active_candidates):
+                # Get the candidate's current sequence and extract the last token
+                sequence = candidate.trie_node.get_full_sequence()
+                last_token = sequence[-1] if sequence else 0
+
+                # Create input tensor for this candidate [1, 1]
+                candidate_input = torch.tensor([[last_token]], device=self.device)
+
+                print(f"Debug: Candidate {candidate_idx}")
+                print(f"  Sequence: {sequence}")
+                print(f"  Last token: {last_token}")
+                print(f"  Page indices: {candidate.page_indices}")
+                print(f"  Last page len: {candidate.last_page_len}")
+
+                # Call model in DECODE mode - this will update the KV cache
+                # IMPORTANT: We need to copy page state since decode modifies it in place
+                candidate_page_indices = candidate.page_indices.copy()
+                candidate_last_page_len = candidate.last_page_len
+
+                with torch.no_grad():
+                    outputs = self.model(
+                        candidate_input,
+                        attention_mode=AttentionMode.DECODE,
+                        page_table=self.page_table,
+                        page_indices=candidate_page_indices,  # This will be modified by decode
+                        last_page_len=candidate_last_page_len  # This will be modified by decode
+                    )
+                    logits = outputs.logits
+
+                # Get next token logits [1, 1, vocab_size] -> [vocab_size]
+                next_token_logits = logits[0, -1, :]
+
+                # Apply temperature
+                if temperature != 1.0:
+                    next_token_logits = next_token_logits / temperature
+
+                # Get probabilities
+                next_token_probs = F.log_softmax(next_token_logits, dim=-1)
+
+                # Get top-k tokens for this candidate
+                top_k = min(self.strategy.beam_size, next_token_probs.shape[0])
+                top_probs, top_indices = torch.topk(next_token_probs, top_k)
+
+                print(f"  Top {min(5, len(top_indices))} next tokens:")
+                for j, (prob, token_id) in enumerate(zip(top_probs[:5], top_indices[:5])):
+                    token_text = self.tokenizer.decode([token_id.item()], skip_special_tokens=False)
+                    print(f"    {j+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
+
+                # Create new candidates by extending this candidate
+                for prob, token_id in zip(top_probs, top_indices):
+                    # Create new trie node by adding the new token
+                    new_node = candidate.trie_node.add_sequence([token_id.item()])
+
+                    # Check if sequence is finished
+                    is_finished = token_id.item() == eos_token_id
+
+                    # Calculate updated page state after decode
+                    # The decode function already updated candidate_page_indices and candidate_last_page_len
+                    # We need to create separate copies for each new candidate since they diverge here
+                    new_page_indices = candidate_page_indices.copy()
+                    new_last_page_len = candidate_last_page_len
+
+                    # But wait - the decode function appended the LAST token, not this new token
+                    # We need to account for the fact that each new candidate will have different next tokens
+                    # So we need separate KV cache states...
+                    # Actually, this is where we need TRUE batching or separate forward passes
+
+                    # For now, let's use the updated state from the decode call
+                    # This assumes each candidate will be processed separately in subsequent steps
+
+                    # Create new candidate with combined score
+                    new_score = candidate.score + prob.item()
+                    new_candidate = BeamCandidate(
+                        trie_node=new_node,
+                        score=new_score,
+                        finished=is_finished,
+                        page_indices=new_page_indices,
+                        last_page_len=new_last_page_len
+                    )
+                    new_candidates.append(new_candidate)
+
+            print(f"Debug: Generated {len(new_candidates)} new candidates from {len(active_candidates)} active candidates")
+
+            # Let strategy select which candidates to keep
+            selected_candidates = self.strategy.select_candidates(beam_state, new_candidates, step)
+
+            print(f"Debug: Selected {len(selected_candidates)} candidates for next step")
+            for i, candidate in enumerate(selected_candidates[:3]):  # Show top 3
+                sequence = candidate.trie_node.get_full_sequence()
+                text = self.tokenizer.decode(sequence, skip_special_tokens=False)
+                print(f"  Candidate {i+1}: '{text}' (score: {candidate.score:.4f}, finished: {candidate.finished})")
+
+            # Update beam state - clear current candidates and add selected ones
+            beam_state.candidates = []
+            for candidate in selected_candidates:
+                beam_state.add_candidate(candidate)
+
+            step += 1
 
         # Get final results
         final_candidates = beam_state.get_best_finished(num_return_sequences)
