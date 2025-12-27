@@ -261,22 +261,48 @@ def flashinfer_prefill_attention_forward(
     # Prepare FlashInfer batch prefill - ensure all tensors are on the same device
     print(f"Debug: Preparing FlashInfer tensors, seq_len={seq_len}")
     device = query.device
-    qo_indptr = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
-    paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
-    paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
-    print(f"Debug: Created index tensors")
 
-    # Calculate last page length
-    last_page_len_val = seq_len % page_table.page_size
-    if last_page_len_val == 0 and seq_len > 0:
-        last_page_len_val = page_table.page_size
-    paged_kv_last_page_len = torch.tensor([last_page_len_val], dtype=torch.int32, device=device)
+    # For causal attention, each query position should have different KV lengths
+    # Position i should attend to positions 0...i (i+1 tokens)
+    # We'll treat this as seq_len separate "sequences" of length 1, 2, ..., seq_len
+    qo_indptr = torch.arange(0, seq_len + 1, dtype=torch.int32, device=device)  # [0, 1, 2, 3, 4, 5, 6, 7]
+
+    # Each query position gets its own set of pages up to that position
+    paged_kv_indices_list = []
+    paged_kv_indptr_list = [0]
+    paged_kv_last_page_len_list = []
+
+    for pos in range(seq_len):
+        # Position pos needs access to tokens 0..pos (pos+1 tokens total)
+        tokens_needed = pos + 1
+        pages_for_pos = (tokens_needed + page_table.page_size - 1) // page_table.page_size
+
+        # Add the pages needed for this position
+        for page_i in range(pages_for_pos):
+            paged_kv_indices_list.append(page_indices[page_i])
+
+        paged_kv_indptr_list.append(len(paged_kv_indices_list))
+
+        # Last page length for this position
+        last_len = tokens_needed % page_table.page_size
+        if last_len == 0 and tokens_needed > 0:
+            last_len = page_table.page_size
+        paged_kv_last_page_len_list.append(last_len)
+
+    paged_kv_indices = torch.tensor(paged_kv_indices_list, dtype=torch.int32, device=device)
+    paged_kv_indptr = torch.tensor(paged_kv_indptr_list, dtype=torch.int32, device=device)
+    paged_kv_last_page_len = torch.tensor(paged_kv_last_page_len_list, dtype=torch.int32, device=device)
+    print(f"Debug: Created index tensors with causal masking")
 
     # Debug: Show what positions we're telling FlashInfer about
-    print(f"Debug: Sequence positions - seq_len={seq_len}, page_size={page_table.page_size}")
-    print(f"Debug: Page allocation - pages_needed={len(page_indices)}, page_indices={page_indices}")
-    print(f"Debug: Position mapping - tokens 0-{seq_len-1} stored in pages {page_indices}")
-    print(f"Debug: FlashInfer will see positions: 0-{last_page_len_val-1} in final page")
+    print(f"Debug: Causal attention structure:")
+    print(f"Debug: qo_indptr: {qo_indptr.tolist()}")
+    print(f"Debug: paged_kv_indices: {paged_kv_indices.tolist()}")
+    print(f"Debug: paged_kv_indptr: {paged_kv_indptr.tolist()}")
+    print(f"Debug: paged_kv_last_page_len: {paged_kv_last_page_len.tolist()}")
+    print(f"Debug: Each position's attention scope:")
+    for i in range(seq_len):
+        print(f"  Position {i}: can attend to {i+1} tokens (0..{i})")
 
     # Create workspace buffer (128MB recommended)
     workspace_size = 128 * 1024 * 1024  # 128MB
