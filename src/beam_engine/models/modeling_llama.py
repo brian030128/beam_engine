@@ -306,10 +306,8 @@ def flashinfer_prefill_attention_forward(
         num_kv_heads,  # num_kv_heads (key-value heads)
         head_dim,
         page_table.page_size,
-        causal=True,
-        pos_encoding_mode="ROPE_LLAMA",  # Enable LLaMA-style RoPE
-        rope_scale=1.0,
-        rope_theta=10000.0  # Standard RoPE theta for LLaMA
+        causal=True
+        # RoPE applied manually before calling FlashInfer
     )
     print(f"Debug: Attention computation planned")
 
@@ -426,10 +424,8 @@ def flashinfer_decode_attention_forward(
         num_kv_heads,  # num_kv_heads (key-value heads)
         head_dim,
         page_table.page_size,
-        causal=True,
-        pos_encoding_mode="ROPE_LLAMA",  # Enable LLaMA-style RoPE
-        rope_scale=1.0,
-        rope_theta=10000.0  # Standard RoPE theta for LLaMA
+        causal=True
+        # RoPE applied manually before calling FlashInfer
     )
 
     # Reshape query for FlashInfer: [batch_size, num_heads, head_dim]
@@ -501,13 +497,15 @@ class LlamaAttention(nn.Module):
             if page_table is None:
                 raise ValueError("PageTable must be provided for PREFILL attention mode")
 
-            # FlashInfer handles RoPE internally, so pass unrotated tensors
+            # Apply RoPE manually using FlashInfer's functions before attention
+            query_states_rotated, key_states_rotated = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
             # Convert to NHD layout: [batch, num_heads, seq_len, head_dim] -> [batch, seq_len, num_heads, head_dim]
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
-                query_states.transpose(1, 2),  # Unrotated query in NHD layout
-                key_states.transpose(1, 2),    # Unrotated key in NHD layout
-                value_states.transpose(1, 2),  # Unrotated value in NHD layout
+                query_states_rotated.transpose(1, 2),  # Rotated query in NHD layout
+                key_states_rotated.transpose(1, 2),    # Rotated key in NHD layout
+                value_states.transpose(1, 2),          # Unrotated value in NHD layout
                 attention_mask,
                 self.scaling,
                 page_table,
@@ -529,13 +527,15 @@ class LlamaAttention(nn.Module):
             if page_table is None or page_indices is None:
                 raise ValueError("PageTable and page_indices must be provided for DECODE attention mode")
 
-            # FlashInfer handles RoPE internally, so pass unrotated tensors
+            # Apply RoPE manually before FlashInfer attention
+            query_states_rotated, key_states_rotated = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
             # Use FlashInfer decode kernel for token-by-token generation
             attn_output, attn_weights = flashinfer_decode_attention_forward(
                 self,
-                query_states,  # Unrotated query
-                key_states,    # Unrotated key
-                value_states,  # Unrotated value
+                query_states_rotated,  # Rotated query
+                key_states_rotated,    # Rotated key
+                value_states,          # Unrotated value
                 attention_mask,
                 self.scaling,
                 page_table,
