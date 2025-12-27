@@ -255,20 +255,21 @@ def flashinfer_prefill_attention_forward(
         current_pos += tokens_in_this_page
         remaining_tokens -= tokens_in_this_page
 
-    # Prepare FlashInfer batch prefill
-    qo_indptr = torch.tensor([0, seq_len], dtype=torch.int32, device=query.device)
-    paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=query.device)
-    paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=query.device)
+    # Prepare FlashInfer batch prefill - ensure all tensors are on the same device
+    device = query.device
+    qo_indptr = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
+    paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
+    paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
 
     # Calculate last page length
-    last_page_len = seq_len % page_table.page_size
-    if last_page_len == 0 and seq_len > 0:
-        last_page_len = page_table.page_size
-    paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=query.device)
+    last_page_len_val = seq_len % page_table.page_size
+    if last_page_len_val == 0 and seq_len > 0:
+        last_page_len_val = page_table.page_size
+    paged_kv_last_page_len = torch.tensor([last_page_len_val], dtype=torch.int32, device=device)
 
     # Create workspace buffer (128MB recommended)
     workspace_size = 128 * 1024 * 1024  # 128MB
-    workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=query.device)
+    workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
 
     # Initialize prefill wrapper
     prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
@@ -353,14 +354,15 @@ def flashinfer_decode_attention_forward(
     # Update last page length
     last_page_len += 1
 
-    # Prepare FlashInfer batch decode
-    paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=query.device)
-    paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=query.device)
-    paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=query.device)
+    # Prepare FlashInfer batch decode - ensure all tensors are on the same device
+    device = query.device
+    paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
+    paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
+    paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)
 
     # Create workspace buffer
     workspace_size = 128 * 1024 * 1024  # 128MB
-    workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=query.device)
+    workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
 
     # Initialize decode wrapper
     decode_wrapper = flashinfer.decode.BatchDecodeWithPagedKVCacheWrapper(
