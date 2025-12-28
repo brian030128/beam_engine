@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict, Optional
 
 from transformers import AutoTokenizer
-#from models.modeling_llama import LlamaForCausalLM
+from models.modeling_llama import LlamaForCausalLM
 from page_table import PageTable
 from attention_mode import AttentionMode
 
