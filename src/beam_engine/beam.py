@@ -261,13 +261,11 @@ def demo_diverse_beam_search(model, tokenizer):
 
     # Create diverse beam search strategy
     strategy = DiverseBeamSearchStrategy(
-        beam_size=4,           # Total number of beams
         num_groups=2,          # Divide beams into 2 groups for diversity
         diversity_penalty=0.5, # Penalty for generating similar tokens
         length_penalty=1.1     # Slight preference for longer sequences
     )
 
-    # Create generator
     generator = BeamSearchGenerator(model, tokenizer, strategy)
 
     # Example prompts
