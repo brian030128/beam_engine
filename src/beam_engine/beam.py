@@ -306,7 +306,7 @@ if __name__ == "__main__":
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     # Run demonstrations
-    demo_diverse_beam_search()
+    demo_diverse_beam_search(model, tokenizer)
 
     print("\n=== Strategy Comparison ===")
     print("Vanilla beam search: Selects candidates purely by score - simple and fast.")
