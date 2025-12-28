@@ -42,7 +42,7 @@ class BeamSearchGenerator:
             store_dtype=torch.float16  # Use half precision for memory efficiency
         )
 
-    def generate(self, input_text: str, max_length: int = 50, num_return_sequences: int = 1,
+    def generate(self, input_text: str,beam_size: int = 4, max_length: int = 50, num_return_sequences: int = 1,
                  temperature: float = 1.0, pad_token_id: Optional[int] = None,
                  eos_token_id: Optional[int] = None) -> List[str]:
         """
@@ -71,7 +71,7 @@ class BeamSearchGenerator:
         input_tokens = input_ids[0].tolist()
 
         # Initialize beam state
-        beam_state = BeamState(self.strategy.beam_size, self.page_table)
+        beam_state = BeamState(beam_size, self.page_table)
 
         # PRE-ALLOCATE pages BEFORE calling the model
         new_nodes = beam_state.add_root_sequence(input_tokens)
@@ -103,7 +103,7 @@ class BeamSearchGenerator:
         next_token_probs = F.log_softmax(next_token_logits, dim=-1)
 
         # Generate initial beam candidates from top-k tokens
-        top_k = min(beam_state.beam_size * 2, next_token_probs.shape[0])
+        top_k = min(beam_size * 2, next_token_probs.shape[0])
         top_probs, top_indices = torch.topk(next_token_probs, top_k)
 
         # Debug: Print prefill token generation details
@@ -187,7 +187,7 @@ class BeamSearchGenerator:
 
             for candidate_idx, (candidate, next_token_probs) in enumerate(zip(active_candidates, batch_probs)):
                 # Get top-k tokens for this candidate
-                top_k = min(self.strategy.beam_size, next_token_probs.shape[0])
+                top_k = min(beam_size, next_token_probs.shape[0])
                 top_probs, top_indices = torch.topk(next_token_probs, top_k)
 
                 print(f"Debug: Candidate {candidate_idx} top tokens:")
