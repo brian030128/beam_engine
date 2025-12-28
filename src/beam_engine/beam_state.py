@@ -46,32 +46,25 @@ class BeamState:
     def __init__(self, beam_size: int, page_table: PageTable):
         self.beam_size = beam_size
         self.page_table = page_table
-        self.root = TrieNode(page_size=page_table.page_size)
+        self.root = None
         self.candidates: List[BeamCandidate] = []
         self.finished_candidates: List[BeamCandidate] = []
 
     def add_root_sequence(self, sequence: List[int]) -> List[TrieNode]:
         """ returns created nodes as their creation order"""
-        assert len(node.children) == 0, f"can only add sequence to leaf nodes"
-        node = self.root
-        self.candidates.append(BeamCandidate(node, 0, False))
-        # below code works for every leaf node, for simplicity, we only support adding multiple tokens to root node now.
-        space = self.page_table.page_size - len(node.tokens)
-        node.tokens.extend(sequence[:space])
-        if len(sequence) <= space:
-            return
-        node.tokens.extend(sequence[:])
-        ptr = space
-        current_node = node
+        ptr = 0
+        current_node = None
         created = []
         while ptr < len(sequence):
             # the higher bound of this page, use min to ensure in bound
             he = min(len(sequence), ptr + self.page_table.page_size)
             # allocate a new block for this node
             page_id = self.page_table.allocate_block()
+           
             new_node = TrieNode(sequence[ptr:he], page_id, current_node)
             created.append(new_node)
-            current_node.add_children(new_node)
+            if current_node is not None:
+                current_node.add_children(new_node)
             current_node = new_node
             ptr += self.page_table.page_size
         return created
