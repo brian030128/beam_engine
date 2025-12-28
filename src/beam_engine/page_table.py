@@ -24,7 +24,7 @@ class PageTable:
     def __init__(
         self,
         layer_num: int,
-        page_size: int = 64,
+        page_size: int = 8,
         max_num_pages: int = 1024,
         head_num: int = 32,
         head_dim: int = 128,

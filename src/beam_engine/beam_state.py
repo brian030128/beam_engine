@@ -65,8 +65,12 @@ class BeamState:
             created.append(new_node)
             if current_node is not None:
                 current_node.add_children(new_node)
+            else:
+                root = new_node
             current_node = new_node
             ptr += self.page_table.page_size
+        
+        self.candidates.append(BeamCandidate(current_node, 0, False))
         return created
 
     
