@@ -2,349 +2,15 @@ import torch
 import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict, Optional
-from dataclasses import dataclass
+
 from transformers import AutoTokenizer
-from models.modeling_llama import LlamaForCausalLM
-from page_table import PageTable
-from attention_mode import AttentionMode
+#from models.modeling_llama import LlamaForCausalLM
+from .page_table import PageTable
+from .attention_mode import AttentionMode
 
 
-class TrieNode:
-    """
-    Node in the prefix trie for storing beam search sequences.
-
-    Each node can store multiple tokens up to max_tokens_per_node.
-    When max length is reached, a new child node is created even if sequences don't diverge.
-    """
-
-    def __init__(self, tokens: Optional[List[int]] = None, parent: Optional['TrieNode'] = None,
-                 max_tokens_per_node: int = 32):
-        self.tokens = tokens or []  # List of tokens stored in this node
-        self.parent = parent
-        self.children: Dict[tuple, 'TrieNode'] = {}  # Key is tuple of tokens leading to child
-        self.max_tokens_per_node = max_tokens_per_node
-
-        # Calculate total depth (total tokens from root to this node)
-        self.total_tokens = (parent.total_tokens if parent else 0) + len(self.tokens)
-
-    def add_sequence(self, new_tokens: List[int]) -> 'TrieNode':
-        """
-        Add a sequence of tokens, creating nodes as needed.
-
-        Returns the final node containing the sequence.
-        """
-        if not new_tokens:
-            return self
-
-        current_node = self
-        remaining_tokens = new_tokens[:]
-
-        while remaining_tokens:
-            # Determine how many tokens to store in the next node
-            tokens_for_node = remaining_tokens[:self.max_tokens_per_node]
-            remaining_tokens = remaining_tokens[self.max_tokens_per_node:]
-
-            # Use tuple as key for children dict
-            tokens_key = tuple(tokens_for_node)
-
-            # Check if child with these tokens already exists
-            if tokens_key not in current_node.children:
-                current_node.children[tokens_key] = TrieNode(
-                    tokens=list(tokens_for_node),
-                    parent=current_node,
-                    max_tokens_per_node=self.max_tokens_per_node
-                )
-
-            current_node = current_node.children[tokens_key]
-
-        return current_node
-
-    def get_full_sequence(self) -> List[int]:
-        """Reconstruct the full sequence from root to this node."""
-        sequence = []
-        current = self
-        path = []
-
-        # Collect all nodes from this node back to root
-        while current is not None:
-            path.append(current)
-            current = current.parent
-
-        # Reverse to go from root to current node, and collect tokens
-        path.reverse()
-        for node in path:
-            sequence.extend(node.tokens)
-
-        return sequence
-
-    def get_sequence_tensor(self) -> torch.Tensor:
-        """Get the full sequence as a PyTorch tensor."""
-        tokens = self.get_full_sequence()
-        return torch.tensor(tokens) if tokens else torch.tensor([])
-
-    def __repr__(self):
-        return f"TrieNode(tokens={self.tokens}, total_tokens={self.total_tokens}, children={len(self.children)})"
-
-
-@dataclass
-class BeamCandidate:
-    """Represents a single beam candidate with its sequence and score."""
-    trie_node: TrieNode              # Reference to trie node containing the sequence
-    score: float                     # Log probability score
-    finished: bool = False           # Whether sequence has ended (EOS token)
-    page_indices: Optional[List[int]] = None  # Page indices in the page table for this candidate
-    last_page_len: Optional[int] = None       # Length of the last page for this candidate
-
-    @property
-    def sequence(self) -> torch.Tensor:
-        """Get the full sequence as a tensor."""
-        return self.trie_node.get_sequence_tensor()
-
-    @property
-    def length(self) -> int:
-        """Get the total length of the sequence."""
-        return self.trie_node.total_tokens
-
-class BeamState:
-    """Manages the current state of all beam candidates using a trie structure."""
-
-    def __init__(self, beam_size: int, device: torch.device, max_tokens_per_node: int = 32):
-        self.beam_size = beam_size
-        self.device = device
-        self.max_tokens_per_node = max_tokens_per_node
-        self.root = TrieNode(max_tokens_per_node=max_tokens_per_node)
-        self.candidates: List[BeamCandidate] = []
-        self.finished_candidates: List[BeamCandidate] = []
-
-    def add_candidate(self, candidate: BeamCandidate):
-        """Add a new beam candidate."""
-        if candidate.finished:
-            self.finished_candidates.append(candidate)
-        else:
-            self.candidates.append(candidate)
-
-    def get_active_candidates(self) -> List[BeamCandidate]:
-        """Get all active (non-finished) candidates."""
-        return [c for c in self.candidates if not c.finished]
-
-    def get_best_finished(self, num_return: int) -> List[BeamCandidate]:
-        """Get the best finished candidates, normalized by length."""
-        if not self.finished_candidates:
-            # If no finished candidates, return best active ones
-            sorted_active = sorted(self.candidates, key=lambda x: x.score / x.length, reverse=True)
-            return sorted_active[:num_return]
-
-        # Sort by normalized score (score / length) to avoid length bias
-        sorted_finished = sorted(self.finished_candidates, key=lambda x: x.score / x.length, reverse=True)
-        return sorted_finished[:num_return]
-
-
-class BeamStrategy(ABC):
-    """Abstract base class for beam search strategies."""
-
-    @abstractmethod
-    def select_candidates(self, beam_state: BeamState, new_candidates: List[BeamCandidate],
-                         step: int) -> List[BeamCandidate]:
-        """
-        Select which candidates to keep for the next step.
-
-        Args:
-            beam_state: Current beam state
-            new_candidates: All newly generated candidates
-            step: Current generation step
-
-        Returns:
-            List of candidates to keep (should be <= beam_size)
-        """
-        pass
-
-    @abstractmethod
-    def should_stop(self, beam_state: BeamState, max_length: int, step: int) -> bool:
-        """
-        Decide whether to stop generation.
-
-        Args:
-            beam_state: Current beam state
-            max_length: Maximum sequence length
-            step: Current generation step
-
-        Returns:
-            True if generation should stop
-        """
-        pass
-
-
-class VanillaBeamSearchStrategy(BeamStrategy):
-    """
-    Standard beam search strategy that selects candidates purely by score.
-
-    This is the classic beam search implementation that simply keeps the
-    top-k candidates with the highest scores at each step.
-    """
-
-    def __init__(self, beam_size: int, length_penalty: float = 1.0):
-        """
-        Args:
-            beam_size: Number of beams to maintain
-            length_penalty: Length normalization penalty (>1 favors longer sequences)
-        """
-        self.beam_size = beam_size
-        self.length_penalty = length_penalty
-
-    def select_candidates(self, beam_state: BeamState, new_candidates: List[BeamCandidate],
-                         step: int) -> List[BeamCandidate]:
-        """Select top candidates by score."""
-        if not new_candidates:
-            return []
-
-        # Sort by score (with optional length penalty)
-        def get_score(candidate):
-            if self.length_penalty == 1.0:
-                return candidate.score
-            else:
-                return candidate.score / (candidate.length ** self.length_penalty)
-
-        sorted_candidates = sorted(new_candidates, key=get_score, reverse=True)
-        return sorted_candidates[:self.beam_size]
-
-    def should_stop(self, beam_state: BeamState, max_length: int, step: int) -> bool:
-        """Stop when max length reached or all beams finished."""
-        active_candidates = beam_state.get_active_candidates()
-
-        # Stop if no active candidates or max length reached
-        if not active_candidates or step >= max_length:
-            return True
-
-        # Stop if we have enough finished candidates and they're better than active ones
-        if len(beam_state.finished_candidates) >= self.beam_size:
-            best_finished_score = max(c.score / c.length for c in beam_state.finished_candidates)
-            best_active_score = max(c.score / c.length for c in active_candidates) if active_candidates else 0
-            return best_finished_score > best_active_score
-
-        return False
-
-
-
-
-class DiverseBeamSearchStrategy(BeamStrategy):
-    """
-    Implements diverse beam search strategy.
-
-    Diverse beam search encourages diversity by:
-    1. Grouping beams and ensuring diversity within groups
-    2. Applying diversity penalties to similar sequences
-    3. Balancing exploration vs exploitation
-
-    This strategy manages its own grouping logic internally without
-    polluting the general BeamCandidate structure.
-    """
-
-    def __init__(self, beam_size: int, num_groups: int = 2, diversity_penalty: float = 0.5,
-                 length_penalty: float = 1.0):
-        """
-        Args:
-            beam_size: Total number of beams
-            num_groups: Number of diverse groups to maintain
-            diversity_penalty: Penalty for generating similar tokens to other groups
-            length_penalty: Length normalization penalty (>1 favors longer sequences)
-        """
-        self.beam_size = beam_size
-        self.num_groups = num_groups
-        self.group_size = beam_size // num_groups
-        self.diversity_penalty = diversity_penalty
-        self.length_penalty = length_penalty
-
-        # Internal state for tracking candidate groups
-        self._candidate_to_group: Dict[int, int] = {}  # Maps candidate id to group id
-
-        if beam_size % num_groups != 0:
-            raise ValueError(f"beam_size ({beam_size}) must be divisible by num_groups ({num_groups})")
-
-    def select_candidates(self, beam_state: BeamState, new_candidates: List[BeamCandidate],
-                         step: int) -> List[BeamCandidate]:
-        """Select diverse candidates using group-based selection."""
-        if not new_candidates:
-            return []
-
-        # Sort all candidates by score
-        all_candidates = sorted(new_candidates, key=lambda x: x.score, reverse=True)
-
-        # Initialize groups for tracking diverse candidates
-        selected_groups: List[List[BeamCandidate]] = [[] for _ in range(self.num_groups)]
-        selected_tokens_by_group = [set() for _ in range(self.num_groups)]
-
-        # Clear previous candidate to group mapping for new step
-        self._candidate_to_group.clear()
-
-        # Assign candidates to groups with diversity penalty
-        for candidate in all_candidates:
-            if sum(len(group) for group in selected_groups) >= self.beam_size:
-                break
-
-            # Get the last token of this candidate
-            last_token = candidate.sequence[-1].item() if candidate.sequence.numel() > 0 else None
-
-            # Find the best group for this candidate
-            best_group_idx = self._find_best_group(
-                candidate, selected_groups, selected_tokens_by_group, last_token
-            )
-
-            if best_group_idx is not None and len(selected_groups[best_group_idx]) < self.group_size:
-                # Track which group this candidate belongs to
-                self._candidate_to_group[id(candidate)] = best_group_idx
-                selected_groups[best_group_idx].append(candidate)
-                if last_token is not None:
-                    selected_tokens_by_group[best_group_idx].add(last_token)
-
-        # Flatten selected candidates
-        selected_candidates = []
-        for group in selected_groups:
-            selected_candidates.extend(group)
-
-        return selected_candidates[:self.beam_size]
-
-    def _find_best_group(self, candidate: BeamCandidate, selected_groups: List[List[BeamCandidate]],
-                        selected_tokens_by_group: List[set], last_token: Optional[int]) -> Optional[int]:
-        """Find the best group for a candidate considering diversity."""
-        best_group_idx = None
-        best_score = float('-inf')
-
-        for group_idx, group in enumerate(selected_groups):
-            if len(group) >= self.group_size:
-                continue
-
-            # Calculate diversity penalty
-            diversity_penalty = 0.0
-            if last_token is not None:
-                # Penalty for using tokens already used by other groups
-                for other_group_idx, other_tokens in enumerate(selected_tokens_by_group):
-                    if other_group_idx != group_idx and last_token in other_tokens:
-                        diversity_penalty += self.diversity_penalty
-
-            # Adjusted score with diversity penalty
-            adjusted_score = candidate.score - diversity_penalty
-
-            if adjusted_score > best_score:
-                best_score = adjusted_score
-                best_group_idx = group_idx
-
-        return best_group_idx
-
-    def should_stop(self, beam_state: BeamState, max_length: int, step: int) -> bool:
-        """Stop if all beams are finished or max length reached."""
-        active_candidates = beam_state.get_active_candidates()
-
-        # Stop if no active candidates or max length reached
-        if not active_candidates or step >= max_length:
-            return True
-
-        # Stop if we have enough finished candidates and they're better than active ones
-        if len(beam_state.finished_candidates) >= self.beam_size:
-            best_finished_score = max(c.score / c.length for c in beam_state.finished_candidates)
-            best_active_score = max(c.score / c.length for c in active_candidates) if active_candidates else 0
-            return best_finished_score > best_active_score
-
-        return False
+from beam_state import BeamState, TrieNode, BeamScoreItem, BeamCandidate
+from beam_strategy import BeamStrategy, DiverseBeamSearchStrategy
 
 
 class BeamSearchGenerator:
@@ -402,108 +68,62 @@ class BeamSearchGenerator:
         # Tokenize input
         inputs = self.tokenizer(input_text, return_tensors="pt")
         input_ids = inputs.input_ids.to(self.device)
+        input_tokens = input_ids[0].tolist()
 
         # Initialize beam state
-        beam_state = BeamState(self.strategy.beam_size, self.device)
+        beam_state = BeamState(self.strategy.beam_size, self.page_table)
 
-        # Generation loop
-        step = 0
+        # PRE-ALLOCATE pages BEFORE calling the model
+        new_nodes = beam_state.add_root_sequence(input_tokens)
+        page_indices = [ n.page_id for n in new_nodes]
 
-        # PREFILL PHASE: Process the initial input sequence (no candidates yet)
-        if step == 0:
-            # Process the initial input sequence with prefill kernel
-            sequence = input_ids.to(self.device)  # [1, seq_len]
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids,
+                attention_mode=AttentionMode.PREFILL,
+                page_table=self.page_table,
+                page_indices=page_indices,
+                last_page_len=len(new_nodes[len(new_nodes) - 1].tokens)
+            )
+            logits = outputs.logits
 
-            # PRE-ALLOCATE pages BEFORE calling the model
-            seq_len = sequence.shape[1]
-            pages_needed = (seq_len + self.page_size - 1) // self.page_size
-            page_indices = [self.page_table.allocate_block() for _ in range(pages_needed)]
-            last_page_len = seq_len % self.page_size
-            if last_page_len == 0 and seq_len > 0:
-                last_page_len = self.page_size
+        # Get next token probabilities from the last position
+        next_token_logits = logits[0, -1, :]  # Last token logits
 
-            with torch.no_grad():
-                outputs = self.model(
-                    sequence,
-                    attention_mode=AttentionMode.PREFILL,
-                    page_table=self.page_table,
-                    page_indices=page_indices,
-                    last_page_len=last_page_len
-                )
-                logits = outputs.logits
+        # Debug: Check what the model actually computed
+        print(f"Debug: Prefill - Model outputs shape: {outputs.logits.shape}")
+        print(f"Debug: Prefill - Next token logits stats - mean: {next_token_logits.mean().item():.4f}, std: {next_token_logits.std().item():.4f}")
+        print(f"Debug: Prefill - Logits range - min: {next_token_logits.min().item():.4f}, max: {next_token_logits.max().item():.4f}")
 
-            # Get next token probabilities from the last position
-            next_token_logits = logits[0, -1, :]  # Last token logits
+        # Apply temperature
+        if temperature != 1.0:
+            next_token_logits = next_token_logits / temperature
 
-            # Debug: Check what the model actually computed
-            print(f"Debug: Prefill - Model outputs shape: {outputs.logits.shape}")
-            print(f"Debug: Prefill - Next token logits stats - mean: {next_token_logits.mean().item():.4f}, std: {next_token_logits.std().item():.4f}")
-            print(f"Debug: Prefill - Logits range - min: {next_token_logits.min().item():.4f}, max: {next_token_logits.max().item():.4f}")
+        # Get probabilities for next token
+        next_token_probs = F.log_softmax(next_token_logits, dim=-1)
 
-            # Apply temperature
-            if temperature != 1.0:
-                next_token_logits = next_token_logits / temperature
+        # Generate initial beam candidates from top-k tokens
+        top_k = min(beam_state.beam_size * 2, next_token_probs.shape[0])
+        top_probs, top_indices = torch.topk(next_token_probs, top_k)
 
-            # Get probabilities for next token
-            next_token_probs = F.log_softmax(next_token_logits, dim=-1)
+        # Debug: Print prefill token generation details
+        print(f"\n=== PREFILL TOKEN GENERATION DEBUG ===")
+        print(f"Input sequence: {input_ids[0].tolist()}")
+        print(f"Input text: '{self.tokenizer.decode(input_ids[0].tolist(), skip_special_tokens=False)}'")
+        print(f"Next token logits shape: {next_token_logits.shape}")
+        print(f"Top {min(10, len(top_indices))} tokens:")
+        for i, (prob, token_id) in enumerate(zip(top_probs[:10], top_indices[:10])):
+            token_text = self.tokenizer.decode([token_id.item()], skip_special_tokens=False)
+            print(f"  {i+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
+        print("=" * 50)
 
-            # Generate initial beam candidates from top-k tokens
-            top_k = min(self.strategy.beam_size * 2, next_token_probs.shape[0])
-            top_probs, top_indices = torch.topk(next_token_probs, top_k)
 
-            # Debug: Print prefill token generation details
-            print(f"\n=== PREFILL TOKEN GENERATION DEBUG ===")
-            print(f"Input sequence: {input_ids[0].tolist()}")
-            print(f"Input text: '{self.tokenizer.decode(input_ids[0].tolist(), skip_special_tokens=False)}'")
-            print(f"Next token logits shape: {next_token_logits.shape}")
-            print(f"Top {min(10, len(top_indices))} tokens:")
-            for i, (prob, token_id) in enumerate(zip(top_probs[:10], top_indices[:10])):
-                token_text = self.tokenizer.decode([token_id.item()], skip_special_tokens=False)
-                print(f"  {i+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
-            print("=" * 50)
-
-            # Create initial beam candidates
-            # Each candidate represents: input sequence + one predicted next token
-            input_tokens = input_ids[0].tolist()
-            initial_node = beam_state.root.add_sequence(input_tokens)
-
-            new_candidates = []
-            for prob, token_id in zip(top_probs, top_indices):
-                # Create new trie node by adding the new token
-                new_node = initial_node.add_sequence([token_id.item()])
-
-                # Check if sequence is finished
-                is_finished = token_id.item() == eos_token_id
-
-                # Create new candidate with prefill page info
-                # NOTE: Each candidate gets a COPY of page_indices because decode will modify them
-                new_candidate = BeamCandidate(
-                    trie_node=new_node,
-                    score=prob.item(),
-                    finished=is_finished,
-                    page_indices=page_indices.copy(),  # Important: copy for each candidate
-                    last_page_len=last_page_len
-                )
-                new_candidates.append(new_candidate)
-
-            # Let strategy select which candidates to keep
-            selected_candidates = self.strategy.select_candidates(beam_state, new_candidates, step)
-
-            # Debug: Show selected candidates after prefill
-            print(f"\n=== SELECTED CANDIDATES AFTER PREFILL ===")
-            print(f"Generated {len(new_candidates)} new candidates, selected {len(selected_candidates)}")
-            for i, candidate in enumerate(selected_candidates):
-                sequence = candidate.trie_node.get_full_sequence()
-                text = self.tokenizer.decode(sequence, skip_special_tokens=False)
-                print(f"  Candidate {i+1}: '{text}' (score: {candidate.score:.4f})")
-            print("=" * 50)
-
-            # Update beam state
-            beam_state.candidates = []
-            for candidate in selected_candidates:
-                beam_state.add_candidate(candidate)
-
-            step += 1
+        for prob, token_id in zip(top_probs, top_indices):
+            # Create new trie node by adding the new token
+            beam_state.create_diverge(beam_state.root, token_id, prob)
+        
+        ## prefilling complete, now decoding
+        step = 1
 
         # DECODE PHASE: Continue generating tokens for each beam candidate
         while not self.strategy.should_stop(beam_state, max_length, step):
@@ -632,17 +252,10 @@ class BeamSearchGenerator:
         return results
 
 
-# Model and tokenizer setup
-device = torch.device("cuda:5") if torch.cuda.is_available() else torch.device("cpu")
-model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B",dtype=torch.float16).to(device)
-tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
-
-# Set pad token if not set
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
 
 
-def demo_diverse_beam_search():
+
+def demo_diverse_beam_search(model, tokenizer):
     """Demonstrate diverse beam search generation."""
     print("=== Diverse Beam Search Demo ===")
 
@@ -684,7 +297,14 @@ def demo_diverse_beam_search():
 
 if __name__ == "__main__":
     print("Loading model and tokenizer...")
+# Model and tokenizer setup
+    device = torch.device("cuda:5") if torch.cuda.is_available() else torch.device("cpu")
+    model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B",dtype=torch.float16).to(device)
+    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
 
+    # Set pad token if not set
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
     # Run demonstrations
     demo_diverse_beam_search()
 
