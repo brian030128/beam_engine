@@ -122,6 +122,7 @@ class BeamSearchGenerator:
             # Create new trie node by adding the new token
             beam_state.create_diverge(beam_state.root, token_id, prob)
         
+        return 
         ## prefilling complete, now decoding
         step = 1
 
