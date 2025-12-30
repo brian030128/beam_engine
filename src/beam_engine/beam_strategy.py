@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Tuple, Dict, Optional, List, Set
-from beam_state import BeamState, BeamCandidate, BeamScoreItem, TrieNode
+from beam_state import BeamState, BeamCandidate, TrieNode, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
+from dataclasses import dataclass
 
 
 
@@ -8,18 +9,18 @@ class BeamStrategy(ABC):
     """Abstract base class for beam search strategies."""
 
     @abstractmethod
-    def select_candidates(self, beam_state: BeamState, new_candidates: List[BeamScoreItem],
-                         step: int) -> List[BeamScoreItem]:
+    def select_candidates(self, beam_state: BeamState, new_candidates: List[BeamGenerateInput],
+                         step: int) -> List[BeamGenerateResult]:
         """
         Select which candidates to keep for the next step.
 
         Args:
             beam_state: Current beam state
-            new_candidates: All newly generated candidates
+            new_candidates: All newly generated candidates with their raw log probabilities
             step: Current generation step
 
         Returns:
-            List of candidates to keep (should be <= beam_size)
+            List of candidates with accumulated scores after penalties (same size as input)
         """
         pass
 
@@ -150,33 +151,13 @@ class DiverseBeamSearchStrategy(BeamStrategy):
             return score
         return score / (length ** self.length_penalty)
 
-    def _group_candidates_by_parent(
-        self,
-        candidates: List[BeamScoreItem],
-    ) -> Dict[int, List[BeamScoreItem]]:
-        """
-        Group candidates by their parent beam for efficient processing.
-
-        Args:
-            candidates: List of all candidates
-
-        Returns:
-            Dictionary mapping parent node id to candidates
-        """
-        grouped: Dict[int, List[BeamScoreItem]] = {}
-        for cand in candidates:
-            parent_id = id(cand.candidate.trie_node)
-            if parent_id not in grouped:
-                grouped[parent_id] = []
-            grouped[parent_id].append(cand)
-        return grouped
 
     def select_candidates(
         self,
         beam_state: BeamState,
-        new_candidates: List[BeamScoreItem],
+        new_candidates: List[BeamGenerateInput],
         step: int,
-    ) -> List[BeamScoreItem]:
+    ) -> List[BeamGenerateResult]:
         """
         Select candidates using Diverse Beam Search algorithm.
 
@@ -186,79 +167,131 @@ class DiverseBeamSearchStrategy(BeamStrategy):
 
         Args:
             beam_state: Current beam state
-            new_candidates: All newly generated candidates with scores
+            new_candidates: List of BeamGenerateInput with candidate and raw log probabilities
             step: Current generation step
 
         Returns:
-            List of selected candidates (size <= beam_size)
+            List of BeamGenerateResult with accumulated scores after penalties (same size as input)
         """
         if not new_candidates:
             return []
 
         beam_size = beam_state.beam_size
         beams_per_group = max(1, beam_size // self.num_groups)
-        
+
         # Track what's been selected across all groups
         selected_tokens_at_step: Set[int] = set()
         selected_sequences: List[List[int]] = []
-        all_selected: List[BeamScoreItem] = []
 
-        # Sort candidates by score initially
-        sorted_candidates = sorted(new_candidates, key=lambda x: x.score, reverse=True)
+        # Flatten all token choices from all candidates for processing
+        # Each item is (BeamGenerateInput, BeamTokenCandidate, parent_sequence)
+        all_token_choices: List[Tuple[BeamGenerateInput, BeamTokenCandidate, List[int]]] = []
+
+        for beam_input in new_candidates:
+            parent_sequence = self._get_sequence_from_node(beam_input.candidate.trie_node)
+            for token_candidate in beam_input.children:
+                all_token_choices.append((beam_input, token_candidate, parent_sequence))
+
+        # Sort by log probability initially
+        all_token_choices.sort(key=lambda x: x[1].log_prob, reverse=True)
+
+        # Track selected token choices for each group
+        selected_choices: List[Tuple[BeamGenerateInput, BeamTokenCandidate]] = []
 
         for group_idx in range(self.num_groups):
-            group_selected: List[BeamScoreItem] = []
             remaining_slots = beams_per_group
 
-            # Create a copy of candidates with diversity-adjusted scores
-            adjusted_candidates: List[Tuple[BeamScoreItem, float]] = []
+            # Create candidates with diversity-adjusted scores
+            adjusted_choices: List[Tuple[BeamGenerateInput, BeamTokenCandidate, float]] = []
 
-            for cand in sorted_candidates:
-                if cand in all_selected:
+            for beam_input, token_candidate, parent_sequence in all_token_choices:
+                # Skip if this exact choice was already selected
+                if any(bi == beam_input and tc.token_id == token_candidate.token_id for bi, tc in selected_choices):
                     continue
 
-                # Get the sequence for cumulative diversity
-                parent_sequence = self._get_sequence_from_node(cand.candidate.trie_node)
-                candidate_sequence = parent_sequence + [cand.token]
+                candidate_sequence = parent_sequence + [token_candidate.token_id]
                 sequence_length = len(candidate_sequence)
 
                 # Calculate diversity penalty
                 if self.diversity_type == "hamming":
                     diversity_penalty = self._compute_hamming_diversity(
-                        cand.token, selected_tokens_at_step
+                        token_candidate.token_id, selected_tokens_at_step
                     )
                 else:  # cumulative
                     diversity_penalty = self._compute_cumulative_diversity(
                         candidate_sequence, selected_sequences
                     )
 
-                # Apply diversity penalty to score
-                adjusted_score = cand.score - diversity_penalty
+                # Apply diversity penalty to log probability
+                adjusted_score = token_candidate.log_prob - diversity_penalty
 
                 # Apply length penalty
                 adjusted_score = self._apply_length_penalty(adjusted_score, sequence_length)
 
-                adjusted_candidates.append((cand, adjusted_score))
+                adjusted_choices.append((beam_input, token_candidate, adjusted_score))
 
             # Sort by adjusted score
-            adjusted_candidates.sort(key=lambda x: x[1], reverse=True)
+            adjusted_choices.sort(key=lambda x: x[2], reverse=True)
 
-            # Select top candidates for this group
-            for cand, adj_score in adjusted_candidates:
+            # Select top choices for this group
+            for beam_input, token_candidate, adj_score in adjusted_choices:
                 if remaining_slots <= 0:
                     break
 
-                group_selected.append(cand)
-                all_selected.append(cand)
+                selected_choices.append((beam_input, token_candidate))
                 remaining_slots -= 1
 
                 # Update tracking for subsequent groups
-                selected_tokens_at_step.add(cand.token)
-                parent_sequence = self._get_sequence_from_node(cand.candidate.trie_node)
-                selected_sequences.append(parent_sequence + [cand.token])
+                selected_tokens_at_step.add(token_candidate.token_id)
+                parent_sequence = self._get_sequence_from_node(beam_input.candidate.trie_node)
+                selected_sequences.append(parent_sequence + [token_candidate.token_id])
 
-        # Ensure we don't exceed beam_size
-        return all_selected[:beam_size]
+        # Group selected choices back by their parent BeamGenerateInput
+        result_map: Dict[id, List[BeamToken]] = {}
+
+        # Initialize all candidates with empty children lists
+        for beam_input in new_candidates:
+            result_id = id(beam_input)
+            result_map[result_id] = []
+
+        # Add selected choices to their parent candidates with accumulated scores
+        for beam_input, token_candidate in selected_choices:
+            result_id = id(beam_input)
+
+            # Calculate accumulated score: parent's score + token's log probability
+            accumulated_score = beam_input.candidate.score + token_candidate.log_prob
+
+            beam_token = BeamToken(
+                token_id=token_candidate.token_id,
+                accumulated_score=accumulated_score
+            )
+            result_map[result_id].append(beam_token)
+
+        # Create new BeamGenerateResult objects with filtered children, maintaining original order
+        final_results = []
+        for beam_input in new_candidates:
+            result_id = id(beam_input)
+            filtered_children = result_map[result_id]
+
+            new_result = BeamGenerateResult(
+                candidate=beam_input.candidate,
+                children=filtered_children  # May be empty if all children were filtered out
+            )
+            final_results.append(new_result)
+
+        # Ensure we don't exceed beam_size total tokens across all candidates
+        total_tokens = sum(len(result.children) for result in final_results)
+        if total_tokens > beam_size:
+            # Truncate by removing tokens from the end of each result
+            tokens_to_remove = total_tokens - beam_size
+            for result in reversed(final_results):
+                while tokens_to_remove > 0 and result.children:
+                    result.children.pop()
+                    tokens_to_remove -= 1
+                if tokens_to_remove <= 0:
+                    break
+
+        return final_results
 
     def should_stop(
         self,

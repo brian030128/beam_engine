@@ -72,6 +72,7 @@ class PageTable:
 
         logger.info(f"Initialized PageTable: {layer_num} layers, {max_num_pages} pages of size {page_size}")
 
+
     def allocate_block(self) -> int:
         """
         Allocate a page block and return its index.
@@ -90,6 +91,20 @@ class PageTable:
 
         logger.debug(f"Allocated page {page_idx}")
         return page_idx
+
+    def copy_block(self, page_idx: int, length: int) -> int:
+        if length > self.page_size:
+            raise "length cannot be larger than page size"
+        if page_idx > self.max_num_pages:
+            raise "page idx out of bound"
+        new_page = self.allocate_block()
+        for layer in range(self.layer_num):
+            kv = self.kv_cache_at_layer[layer]
+            kv[new_page, :, :length].copy_(kv[page_idx, :, :length])
+        logger.debug(f"Copied page {page_idx} to {new_page}")
+        return new_page
+
+
 
     def free_block(self, page_idx: int):
         """

@@ -9,7 +9,7 @@ from page_table import PageTable
 from attention_mode import AttentionMode
 
 
-from beam_state import BeamState, TrieNode, BeamScoreItem, BeamCandidate
+from beam_state import BeamState, TrieNode, BeamCandidate, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
 from beam_strategy import BeamStrategy, DiverseBeamSearchStrategy
 
 
@@ -196,29 +196,20 @@ class BeamSearchGenerator:
                     token_text = self.tokenizer.decode([token_id.item()], skip_special_tokens=False)
                     print(f"  {j+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
 
-                # Create new candidates by extending current candidate
+                # Create BeamGenerateInput with all possible token choices for this candidate
+                children = []
                 for prob, token_id in zip(top_probs, top_indices):
-                    # Create new trie node by adding the new token
-                    new_node = candidate.trie_node.add_sequence([token_id.item()])
-
-                    # Check if sequence is finished
-                    is_finished = token_id.item() == eos_token_id
-
-                    # Use updated page state from batch decode call
-                    # The batch decode function updated batch_page_indices and batch_last_page_lens in place
-                    new_page_indices = batch_page_indices[candidate_idx].copy()
-                    new_last_page_len = batch_last_page_lens[candidate_idx]
-
-                    # Create new candidate with combined score
-                    new_score = candidate.score + prob.item()
-                    new_candidate = BeamCandidate(
-                        trie_node=new_node,
-                        score=new_score,
-                        finished=is_finished,
-                        page_indices=new_page_indices,
-                        last_page_len=new_last_page_len
+                    token_candidate = BeamTokenCandidate(
+                        token_id=token_id.item(),
+                        log_prob=prob.item()
                     )
-                    new_candidates.append(new_candidate)
+                    children.append(token_candidate)
+
+                beam_generate_input = BeamGenerateInput(
+                    candidate=candidate,
+                    children=children
+                )
+                new_candidates.append(beam_generate_input)
 
             print(f"Debug: Generated {len(new_candidates)} new candidates from {len(active_candidates)} active candidates")
 
