@@ -185,11 +185,32 @@ def test_cascade_input():
         last_len_match = paged_kv_last_page_len[level_idx].tolist() == expected_kv_last_page_len[level_idx]
         print(f"Match: {'YES' if last_len_match else 'NO'}")
 
-    print(f"\n--- Query Tensor ---")
+    print(f"\n--- Query Token IDs ---")
     print(f"Shape: {q.shape}")
-    print(f"Expected shape: [8, 32, 128]")
-    shape_match = list(q.shape) == [8, 32, 128]
-    print(f"Match: {'YES' if shape_match else 'NO'}")
+    print(f"Token IDs: {q.tolist()}")
+
+    # Expected query token IDs in cascade order (last token from each candidate's leaf node)
+    # Based on the tree structure:
+    # - Seq 0 (leaf_0): last token = 51
+    # - Seq 1 (leaf_1_1): last token = 52
+    # - Seq 2 (leaf_2): last token = 36
+    # - Seq 3 (leaf_3): last token = 37
+    # - Seq 4 (leaf_4): last token = 38
+    # - Seq 5 (leaf_5): last token = 42
+    # - Seq 6 (leaf_6): last token = 46
+    # - Seq 7 (leaf_7): last token = 50
+    expected_query_tokens = [51, 52, 36, 37, 38, 42, 46, 50]
+
+    print(f"Expected token IDs: {expected_query_tokens}")
+
+    # Check shape
+    expected_shape = [8]
+    shape_match = list(q.shape) == expected_shape
+    print(f"Shape match: {'YES' if shape_match else 'NO'}")
+
+    # Check token IDs match expected positions
+    tokens_match = q.tolist() == expected_query_tokens
+    print(f"Token IDs match: {'YES' if tokens_match else 'NO'}")
 
     print("\n" + "=" * 80)
 

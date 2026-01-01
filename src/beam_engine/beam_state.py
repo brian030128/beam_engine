@@ -175,18 +175,15 @@ class BeamState:
     def get_cascade_input(self):
         """
         Prepare cascade attention input data for multi-level KV cache access.
-
-        In cascade attention, we organize the trie structure into multiple levels,
-        where each level corresponds to layers between branching points in the tree.
-        The same output queries are reorganized differently at each cascade level.
+        Optimized implementation: O(N*L) complexity.
 
         Returns:
             Tuple containing:
-            - qo_indptr_arr: List[torch.Tensor] - qo indptr for each cascade level
-            - paged_kv_indptr_arr: List[torch.Tensor] - KV indptr for each cascade level
-            - paged_kv_indices_arr: List[torch.Tensor] - KV page indices for each cascade level
-            - paged_kv_last_page_len: List[torch.Tensor] - Last page lengths for each cascade level
-            - q: torch.Tensor - Query tensor [total_outputs, num_qo_heads, head_dim]
+            - qo_indptr_arr: List[torch.Tensor]
+            - paged_kv_indptr_arr: List[torch.Tensor]
+            - paged_kv_indices_arr: List[torch.Tensor]
+            - paged_kv_last_page_len: List[torch.Tensor]
+            - q: torch.Tensor
         """
         import torch
         from collections import defaultdict
@@ -194,21 +191,43 @@ class BeamState:
         if not self.candidates:
             return ([], [], [], [], torch.empty(0, 0, 0))
 
-        # Helper function to count branching ancestors of a node
-        def count_branching_ancestors(node):
-            """Count how many ancestors of this node have multiple children."""
-            count = 0
-            current = node.parent
-            while current is not None:
-                if len(current.children) > 1:
-                    count += 1
-                current = current.parent
-            return count
+        # ------------------------------------------------------------------
+        # Phase 1: Compute Branching Levels (Memoized)
+        # ------------------------------------------------------------------
+        # node_id -> branching_level
+        memo_level = {}
 
-        # Step 1: Build candidate info
-        # In beam search, each candidate generates exactly 1 output token
-        candidate_info = []  # List of (cand_idx, candidate, path)
-        total_outputs = len(self.candidates)  # One output per candidate
+        def get_node_level(node: TrieNode) -> int:
+            """Recursive memoized level computation."""
+            nid = id(node)
+            if nid in memo_level:
+                return memo_level[nid]
+            
+            if node.parent is None:
+                # Root is always level 0
+                memo_level[nid] = 0
+                return 0
+            
+            parent_level = get_node_level(node.parent)
+            
+            # Check if parent is a branching point
+            # Note: This logic matches the original implementation where
+            # ANY multiple children (even dead ones) trigger a level increment.
+            is_branching = len(node.parent.children) > 1
+            
+            level = parent_level + (1 if is_branching else 0)
+            memo_level[nid] = level
+            return level
+
+        # ------------------------------------------------------------------
+        # Phase 2: Build Paths and Group by Level
+        # ------------------------------------------------------------------
+        # Structure: groups_by_level[level][rep_node_id] = list of (cand_idx, cand, nodes_at_level)
+        groups_by_level = defaultdict(lambda: defaultdict(list))
+        max_cascade_level = 0
+        
+        # Store paths for query token generation step
+        candidate_paths = []
 
         for cand_idx, candidate in enumerate(self.candidates):
             # Build path from leaf to root
@@ -217,79 +236,68 @@ class BeamState:
             while current is not None:
                 path.append(current)
                 current = current.parent
-            path.reverse()  # root to leaf
+            path.reverse() # root to leaf
+            
+            candidate_paths.append((cand_idx, candidate, path))
 
-            candidate_info.append((cand_idx, candidate, path))
-
-        # Step 2: Determine max cascade level
-        max_cascade_level = 0
-        for _, _, path in candidate_info:
+            # Segment path nodes by their computed level
+            nodes_in_current_path_by_level = defaultdict(list)
             for node in path:
-                level = count_branching_ancestors(node)
-                max_cascade_level = max(max_cascade_level, level)
+                lvl = get_node_level(node)
+                nodes_in_current_path_by_level[lvl].append(node)
+                if lvl > max_cascade_level:
+                    max_cascade_level = lvl
+            
+            # Add to global grouping
+            for lvl, nodes in nodes_in_current_path_by_level.items():
+                # The "representative" node for this candidate at this level 
+                # is the last node (deepest) in the chain for this level.
+                rep_node = nodes[-1]
+                groups_by_level[lvl][id(rep_node)].append((cand_idx, candidate, nodes))
 
-        # Step 3: For each cascade level, organize candidates into groups
+        # ------------------------------------------------------------------
+        # Phase 3: Construct Output Tensors
+        # ------------------------------------------------------------------
         qo_indptr_arr = []
         paged_kv_indptr_arr = []
         paged_kv_indices_arr = []
         paged_kv_last_page_len = []
 
         for cascade_level in range(max_cascade_level + 1):
-            # Group candidates by their last node at this cascade level
-            node_groups = defaultdict(list)  # node_id -> list of (cand_idx, candidate, path, nodes_at_level)
+            level_groups = groups_by_level[cascade_level]
+            
+            # Sort groups by the first candidate index to ensure deterministic order
+            # item structure: (rep_node_id, list_of_tuples)
+            # list_of_tuples[0] is the first candidate added to this group
+            # tuple[0] is cand_idx
+            sorted_groups = sorted(level_groups.items(), key=lambda x: x[1][0][0])
 
-            for cand_idx, candidate, path in candidate_info:
-                # Find nodes in this path that belong to this cascade level
-                nodes_at_level = [node for node in path if count_branching_ancestors(node) == cascade_level]
-
-                if nodes_at_level:
-                    # Group by the last node at this level (furthest from root)
-                    grouping_node = nodes_at_level[-1]
-                    node_groups[id(grouping_node)].append((cand_idx, candidate, path, nodes_at_level))
-
-            # Step 4: Build indptr and indices for this level
             qo_indptr = [0]
             kv_indptr = [0]
             kv_indices = []
             kv_last_page_lens = []
 
-            # Sort groups by the first candidate index for deterministic ordering
-            sorted_groups = sorted(node_groups.items(), key=lambda x: x[1][0][0])  # Sort by first cand_idx
+            for _, group_candidates in sorted_groups:
+                # All candidates in this group share the same nodes at this level
+                # We pick the first one to extract Page IDs
+                _, example_candidate, example_nodes = group_candidates[0]
 
-            for node_id, group_candidates in sorted_groups:
-                # Extract nodes at this level for this group
-                example_cand_idx, example_candidate, example_path, example_nodes_at_level = group_candidates[0]
-
-                # At each cascade level, we need to include pages for the KV cache at this level
-                # This includes both newly allocated pages AND pages reused from parents
-                # (because current tokens' KV will be stored in those reused pages)
-
-                # For each candidate in this group, we need to determine which pages to include
-                # Since all candidates in a group share the same nodes at this level, we use the example
-
-                # Collect all unique pages from nodes at this level
-                pages_at_level = []
+                # Collect unique pages (maintaining order)
                 seen_pages = set()
-
-                for node in example_nodes_at_level:
+                for node in example_nodes:
                     if node.page_id not in seen_pages:
-                        pages_at_level.append(node.page_id)
+                        kv_indices.append(node.page_id)
                         seen_pages.add(node.page_id)
 
-                # Add these pages for this group
-                kv_indices.extend(pages_at_level)
-
-                # Last page length: number of tokens in the last page's KV cache
-                # At the leaf level (final node of the candidate), exclude the current query token
-                # since it hasn't been added to the KV cache yet
-                if example_nodes_at_level:
-                    last_node = example_nodes_at_level[-1]
+                # Determine last page length
+                if example_nodes:
+                    last_node = example_nodes[-1]
                     token_count = len(last_node.tokens)
-
-                    # Check if this is the leaf node (final level for this candidate)
+                    
+                    # Logic: subtract 1 only if this node is the absolute leaf of the candidate
+                    # (meaning the query token is in this node and hasn't been KV-cached yet)
                     is_leaf = (last_node == example_candidate.trie_node)
-
-                    # Only subtract 1 at the leaf level (where query tokens are)
+                    
                     if is_leaf:
                         kv_last_page_lens.append(max(0, token_count - 1))
                     else:
@@ -297,29 +305,42 @@ class BeamState:
                 else:
                     kv_last_page_lens.append(0)
 
+                # Update indptrs
                 kv_indptr.append(len(kv_indices))
-
-                # Count total outputs for this group (1 output per candidate)
+                
+                # Each candidate contributes 1 query
                 total_group_outputs = len(group_candidates)
                 qo_indptr.append(qo_indptr[-1] + total_group_outputs)
 
-            # Convert to tensors
+            # Convert to Tensors
             qo_indptr_arr.append(torch.tensor(qo_indptr, dtype=torch.int32))
             paged_kv_indptr_arr.append(torch.tensor(kv_indptr, dtype=torch.int32))
             paged_kv_indices_arr.append(torch.tensor(kv_indices, dtype=torch.int32))
             paged_kv_last_page_len.append(torch.tensor(kv_last_page_lens, dtype=torch.int32))
 
-        # Step 5: Build query tensor (one query per output token)
-        num_qo_heads = self.page_table.head_num
-        head_dim = self.page_table.head_dim
+        # ------------------------------------------------------------------
+        # Phase 4: Construct Query Token IDs
+        # ------------------------------------------------------------------
+        # We need to order query tokens based on the grouping at the FINAL cascade level
+        query_token_ids = []
+        
+        if max_cascade_level in groups_by_level:
+            final_level_groups = groups_by_level[max_cascade_level]
+            sorted_final_groups = sorted(final_level_groups.items(), key=lambda x: x[1][0][0])
+            
+            for _, group_candidates in sorted_final_groups:
+                for _, candidate, _ in group_candidates:
+                    leaf = candidate.trie_node
+                    if leaf.tokens:
+                        query_token_ids.append(leaf.tokens[-1])
+                    else:
+                        query_token_ids.append(0)
+        
+        query_token_ids_tensor = torch.tensor(query_token_ids, dtype=torch.long, 
+                                            device=self.page_table.device)
 
-        # Create placeholder queries (one per output token)
-        q = torch.zeros(total_outputs, num_qo_heads, head_dim,
-                       dtype=self.page_table.store_dtype,
-                       device=self.page_table.device)
-
-        return (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr, paged_kv_last_page_len, q)
-
+        return (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr, 
+                paged_kv_last_page_len, query_token_ids_tensor)
     def get_best_finished(self, num_return: int) -> List[BeamCandidate]:
         """Get the best finished candidates, normalized by length."""
         if not self.finished_candidates:

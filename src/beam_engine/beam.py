@@ -117,131 +117,89 @@ class BeamSearchGenerator:
             print(f"  {i+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
         print("=" * 50)
 
+        # After add_root_sequence, beam_state has 1 root candidate
+        if not beam_state.candidates:
+            raise RuntimeError("Expected root candidate after add_root_sequence")
 
-        for prob, token_id in zip(top_probs, top_indices):
-            # Create new trie node by adding the new token
-            beam_state.create_diverge(beam_state.candidates[0], token_id, prob)
-        return
+        root_candidate = beam_state.candidates[0]
 
-        ## prefilling complete, now decoding
-        step = 1
+        # Create initial beam branches from prefill top-k tokens
+        initial_tokens = []
+        for i in range(min(beam_size, len(top_indices))):
+            token_id = top_indices[i].item()
+            log_prob = top_probs[i].item()
+            initial_tokens.append(BeamToken(token_id=token_id, accumulated_score=log_prob))
 
-        # DECODE PHASE: Continue generating tokens for each beam candidate
-        while not self.strategy.should_stop(beam_state, max_length, step):
-            active_candidates = beam_state.get_active_candidates()
-            if not active_candidates:
+        initial_result = BeamGenerateResult(candidate=root_candidate, children=initial_tokens)
+        beam_state.add_filtered_results([initial_result])
+        print(f"\nExpanded root into {len(beam_state.candidates)} beam candidates")
+
+        # Decode loop
+        for step in range(max_length - len(input_tokens)):
+            print(f"\n=== Decode Step {step + 1} ===")
+
+            if self.strategy.should_stop(beam_state, max_length, step):
+                print("Stopping condition met")
                 break
 
-            print(f"\n=== DECODE STEP {step} ===")
-            print(f"Processing {len(active_candidates)} active candidates")
+            # Get cascade input including query token IDs
+            (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
+             paged_kv_last_page_len_arr, query_token_ids) = beam_state.get_cascade_input()
 
-            # Prepare batch input for all active candidates
-            batch_size = len(active_candidates)
+            print(f"Cascade levels: {len(qo_indptr_arr)}, Candidates: {len(beam_state.candidates)}, Query tokens: {len(query_token_ids)}")
 
-            # Get the last token from each candidate for batch processing
-            last_tokens = []
-            batch_page_indices = []
-            batch_last_page_lens = []
+            # query_token_ids are already in correct cascade order, just reshape for model
+            decode_input_ids = query_token_ids.unsqueeze(0)  # [1, num_candidates]
 
-            for candidate in active_candidates:
-                sequence = candidate.trie_node.get_full_sequence()
-                last_token = sequence[-1] if sequence else 0
-                last_tokens.append(last_token)
-
-                # Copy page state since decode modifies it in place
-                batch_page_indices.append(candidate.page_indices.copy())
-                batch_last_page_lens.append(candidate.last_page_len)
-
-            # Create batch input tensor [batch_size, 1] for decode step
-            batch_input = torch.tensor(last_tokens, device=self.device).unsqueeze(1)  # [batch_size, 1]
-
-            print(f"Debug: Batch input shape: {batch_input.shape}")
-            print(f"Debug: Batch input tokens: {batch_input.flatten().tolist()}")
-            print(f"Debug: Batch page indices: {batch_page_indices}")
-            print(f"Debug: Batch last page lens: {batch_last_page_lens}")
-
-            # Call model with true batch decode
+            # Run model with cascade decode
             with torch.no_grad():
                 outputs = self.model(
-                    batch_input,  # [batch_size, 1]
+                    decode_input_ids,
                     attention_mode=AttentionMode.DECODE,
                     page_table=self.page_table,
-                    batch_page_indices=batch_page_indices,  # List of page_indices for each sequence
-                    batch_last_page_lens=batch_last_page_lens  # List of last_page_lens for each sequence
+                    cascade_qo_indptr_arr=qo_indptr_arr,
+                    cascade_kv_indptr_arr=paged_kv_indptr_arr,
+                    cascade_kv_indices_arr=paged_kv_indices_arr,
+                    cascade_kv_last_page_len_arr=paged_kv_last_page_len_arr,
                 )
-                logits = outputs.logits
+                logits = outputs.logits  # [1, num_candidates, vocab_size]
 
-            # Extract logits [batch_size, 1, vocab_size] -> [batch_size, vocab_size]
-            batch_logits = logits[:, -1, :]
+            # Create BeamGenerateInput for each candidate
+            generate_inputs = []
+            for cand_idx, candidate in enumerate(beam_state.candidates):
+                candidate_logits = logits[0, cand_idx, :]
 
-            print(f"Debug: Batch logits shape: {batch_logits.shape}")
+                if temperature != 1.0:
+                    candidate_logits = candidate_logits / temperature
 
-            # Apply temperature
-            if temperature != 1.0:
-                batch_logits = batch_logits / temperature
+                candidate_probs = F.log_softmax(candidate_logits, dim=-1)
 
-            # Get probabilities for next tokens
-            batch_probs = F.log_softmax(batch_logits, dim=-1)  # [batch_size, vocab_size]
+                top_k = min(beam_size * 2, candidate_probs.shape[0])
+                top_probs, top_indices = torch.topk(candidate_probs, top_k)
 
-            # Generate new candidates for each active candidate
-            new_candidates = []
+                token_candidates = []
+                for k in range(len(top_indices)):
+                    token_id = top_indices[k].item()
+                    log_prob = top_probs[k].item()
+                    token_candidates.append(BeamTokenCandidate(token_id=token_id, log_prob=log_prob))
 
-            for candidate_idx, (candidate, next_token_probs) in enumerate(zip(active_candidates, batch_probs)):
-                # Get top-k tokens for this candidate
-                top_k = min(beam_size, next_token_probs.shape[0])
-                top_probs, top_indices = torch.topk(next_token_probs, top_k)
+                generate_inputs.append(BeamGenerateInput(candidate=candidate, children=token_candidates))
 
-                print(f"Debug: Candidate {candidate_idx} top tokens:")
-                for j, (prob, token_id) in enumerate(zip(top_probs[:5], top_indices[:5])):
-                    token_text = self.tokenizer.decode([token_id.item()], skip_special_tokens=False)
-                    print(f"  {j+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
+            # Use strategy to select candidates
+            filtered_results = self.strategy.select_candidates(beam_state, generate_inputs, step)
+            beam_state.add_filtered_results(filtered_results)
+            print(f"After filtering: {len(beam_state.candidates)} candidates")
 
-                # Create BeamGenerateInput with all possible token choices for this candidate
-                children = []
-                for prob, token_id in zip(top_probs, top_indices):
-                    token_candidate = BeamTokenCandidate(
-                        token_id=token_id.item(),
-                        log_prob=prob.item()
-                    )
-                    children.append(token_candidate)
+        # Get final sequences
+        final_sequences = self.strategy.get_final_sequences(beam_state, num_return_sequences)
 
-                beam_generate_input = BeamGenerateInput(
-                    candidate=candidate,
-                    children=children
-                )
-                new_candidates.append(beam_generate_input)
+        generated_texts = []
+        for tokens, score in final_sequences:
+            text = self.tokenizer.decode(tokens, skip_special_tokens=True)
+            generated_texts.append(text)
+            print(f"Final (score={score:.4f}): {text}")
 
-            print(f"Debug: Generated {len(new_candidates)} new candidates from {len(active_candidates)} active candidates")
-
-            # Let strategy select which candidates to keep
-            selected_candidates = self.strategy.select_candidates(beam_state, new_candidates, step)
-
-            print(f"Debug: Selected {len(selected_candidates)} candidates for next step")
-            for i, candidate in enumerate(selected_candidates[:3]):  # Show top 3
-                sequence = candidate.trie_node.get_full_sequence()
-                text = self.tokenizer.decode(sequence, skip_special_tokens=False)
-                print(f"  Candidate {i+1}: '{text}' (score: {candidate.score:.4f}, finished: {candidate.finished})")
-
-            # Update beam state - clear current candidates and add selected ones
-            beam_state.candidates = []
-            for candidate in selected_candidates:
-                beam_state.add_candidate(candidate)
-
-            step += 1
-
-        # Get final results
-        final_candidates = beam_state.get_best_finished(num_return_sequences)
-
-        # Decode sequences
-        results = []
-        for candidate in final_candidates:
-            # Get full sequence and remove input tokens
-            full_sequence = candidate.trie_node.get_full_sequence()
-            generated_tokens = full_sequence[len(input_tokens):]  # Remove input portion
-            generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-            results.append(generated_text)
-
-        return results
+        return generated_texts
 
 
 
