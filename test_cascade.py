@@ -4,6 +4,7 @@ Test file for BeamState.get_cascade_input() using the exact example from cascade
 
 import torch
 import sys
+import time
 from pathlib import Path
 
 # Add src directory to path
@@ -126,11 +127,15 @@ def test_cascade_input():
     print(f"\nCreated tree with {len(beam_state.candidates)} candidates")
     print(f"Root: {beam_state.root}")
 
-    # Call get_cascade_input
+    # Call get_cascade_input with timing
+    start_time = time.perf_counter()
     (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
      paged_kv_last_page_len, q) = beam_state.get_cascade_input()
+    end_time = time.perf_counter()
+    elapsed_ms = (end_time - start_time) * 1000
 
-    print(f"\nNumber of cascade levels: {len(qo_indptr_arr)}")
+    print(f"\nget_cascade_input() took {elapsed_ms:.4f} ms")
+    print(f"Number of cascade levels: {len(qo_indptr_arr)}")
 
     # Expected values from cascade.md
     expected_qo_indptr = [

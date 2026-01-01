@@ -1,7 +1,10 @@
 from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
-from .page_table import PageTable
 
+import torch
+from collections import defaultdict
+
+from .page_table import PageTable
 class TrieNode:
     """
     Pure data structure for storing beam search sequence tree.
@@ -185,8 +188,7 @@ class BeamState:
             - paged_kv_last_page_len: List[torch.Tensor]
             - q: torch.Tensor
         """
-        import torch
-        from collections import defaultdict
+
 
         if not self.candidates:
             return ([], [], [], [], torch.empty(0, 0, 0))
@@ -341,6 +343,7 @@ class BeamState:
 
         return (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr, 
                 paged_kv_last_page_len, query_token_ids_tensor)
+
     def get_best_finished(self, num_return: int) -> List[BeamCandidate]:
         """Get the best finished candidates, normalized by length."""
         if not self.finished_candidates:
