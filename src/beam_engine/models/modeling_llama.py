@@ -329,165 +329,6 @@ def flashinfer_prefill_attention_forward(
     return attn_output, None  # FlashInfer doesn't return attention weights
 
 
-def flashinfer_decode_attention_forward(
-    module: nn.Module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
-    scaling: float,
-    page_table: PageTable,
-    batch_page_indices: list,  # List of page_indices for each sequence in batch
-    batch_last_page_lens: list,  # List of last_page_len for each sequence in batch
-    dropout: float = 0.0,
-    **kwargs: Unpack[TransformersKwargs],
-):
-    """
-    FlashInfer batch decode attention using BatchDecodeWithPagedKVCacheWrapper.
-
-    Args:
-        query: [batch_size, num_heads, 1, head_dim]
-        key: [batch_size, num_kv_heads, 1, head_dim] - new tokens to append
-        value: [batch_size, num_kv_heads, 1, head_dim] - new tokens to append
-        batch_page_indices: List of page_indices for each sequence
-        batch_last_page_lens: List of last_page_len for each sequence
-
-    Returns:
-        attn_output: [batch_size, num_heads, 1, head_dim]
-    """
-    batch_size, num_heads, seq_len, head_dim = query.shape
-
-    # For decode, we expect seq_len = 1 (single new token)
-    assert seq_len == 1, "Decode attention expects single token input"
-
-    print(f"Debug: Batch Decode - input shapes query: {query.shape}, key: {key.shape}, value: {value.shape}")
-    print(f"Debug: Batch size: {batch_size}")
-    print(f"Debug: Batch page indices: {batch_page_indices}")
-    print(f"Debug: Batch last page lens: {batch_last_page_lens}")
-
-    device = query.device
-
-    # First, append new KV tokens to page table for each sequence in batch
-    updated_page_indices = []
-    updated_last_page_lens = []
-
-    for seq_idx in range(batch_size):
-        page_indices = batch_page_indices[seq_idx].copy()
-        last_page_len = batch_last_page_lens[seq_idx]
-
-        # Check if we need a new page for this sequence
-        if last_page_len >= page_table.page_size:
-            new_page_idx = page_table.allocate_block()
-            page_indices.append(new_page_idx)
-            last_page_len = 0
-
-        # Get current page to append to
-        current_page_idx = page_indices[-1]
-
-        # Extract the new token's KV data for this sequence
-        new_key = key[seq_idx, :, 0, :]      # [num_kv_heads, head_dim]
-        new_value = value[seq_idx, :, 0, :]  # [num_kv_heads, head_dim]
-
-        # Reshape for page table: [1, num_kv_heads, head_dim] (1 token)
-        new_key = new_key.unsqueeze(0)    # [1, num_kv_heads, head_dim]
-        new_value = new_value.unsqueeze(0) # [1, num_kv_heads, head_dim]
-
-        print(f"Debug: Seq {seq_idx} - appending to page {current_page_idx} at index {last_page_len}")
-
-        # Append to page table
-        page_table.write_block(
-            layer=module.layer_idx,
-            page_idx=current_page_idx,
-            key=new_key,
-            value=new_value,
-            index=last_page_len
-        )
-
-        # Update last page length
-        last_page_len += 1
-
-        # Store updated state
-        updated_page_indices.append(page_indices)
-        updated_last_page_lens.append(last_page_len)
-
-    # Prepare batch FlashInfer parameters following the example format
-    # Build kv_page_indices and kv_page_indptr for the entire batch
-    all_page_indices = []
-    kv_page_indptr = [0]  # CSR format pointers
-
-    for seq_idx in range(batch_size):
-        page_indices = updated_page_indices[seq_idx]
-        all_page_indices.extend(page_indices)
-        kv_page_indptr.append(len(all_page_indices))
-
-    # Convert to tensors
-    kv_page_indices = torch.tensor(all_page_indices, dtype=torch.int32, device=device)
-    kv_page_indptr = torch.tensor(kv_page_indptr, dtype=torch.int32, device=device)
-    kv_last_page_len = torch.tensor(updated_last_page_lens, dtype=torch.int32, device=device)
-
-    print(f"Debug: Batch decode parameters:")
-    print(f"Debug: kv_page_indices shape: {kv_page_indices.shape}, values: {kv_page_indices}")
-    print(f"Debug: kv_page_indptr shape: {kv_page_indptr.shape}, values: {kv_page_indptr}")
-    print(f"Debug: kv_last_page_len shape: {kv_last_page_len.shape}, values: {kv_last_page_len}")
-
-    # Create workspace buffer
-    workspace_size = 128 * 1024 * 1024  # 128MB
-    workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
-
-    # Initialize batch decode wrapper
-    decode_wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
-        workspace_buffer,
-        kv_layout="NHD"
-    )
-
-    # Plan the batch decode operation
-    num_qo_heads = num_heads
-    num_kv_heads = key.shape[1]
-
-    print(f"Debug: Planning batch decode - num_qo_heads: {num_qo_heads}, num_kv_heads: {num_kv_heads}")
-
-    decode_wrapper.plan(
-        kv_page_indptr,
-        kv_page_indices,
-        kv_last_page_len,
-        num_qo_heads,
-        num_kv_heads,
-        head_dim,
-        page_table.page_size,
-        pos_encoding_mode="NONE",  # RoPE already applied
-        data_type=torch.float16
-    )
-
-    # Prepare query: [batch_size, num_heads, 1, head_dim] -> [batch_size, num_heads, head_dim]
-    query_decode = query.squeeze(2)  # Remove seq_len=1 dimension
-    print(f"Debug: Query for batch decode: {query_decode.shape}")
-
-    # Get KV cache for this layer - this is the paged KV cache tensor
-    kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
-    print(f"Debug: KV cache shape: {kv_cache.shape}")
-
-    # Run batch decode attention - only pass query and kv_cache (no separate k, v tensors)
-    print(f"Debug: Running batch decode attention...")
-    try:
-        attn_output = decode_wrapper.run(query_decode, kv_cache)
-        print(f"Debug: Batch decode attention completed, output shape: {attn_output.shape}")
-    except Exception as e:
-        print(f"Debug: Error in batch decode attention: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
-
-    # Reshape output back to [batch_size, num_heads, 1, head_dim] to match expected format
-    attn_output = attn_output.unsqueeze(2)  # Add seq_len=1 dimension back
-    print(f"Debug: Final batch decode output shape: {attn_output.shape}")
-
-    # Update the input page indices and last page lens (in-place modification)
-    for seq_idx in range(batch_size):
-        batch_page_indices[seq_idx][:] = updated_page_indices[seq_idx]
-        batch_last_page_lens[seq_idx] = updated_last_page_lens[seq_idx]
-
-    return attn_output, None
-
 
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
@@ -515,6 +356,81 @@ class LlamaAttention(nn.Module):
             config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
         )
 
+    def _cascade_decode_attention(
+        self,
+        query: torch.Tensor,
+        page_table: PageTable,
+        qo_indptr_arr: list[torch.Tensor],
+        paged_kv_indptr_arr: list[torch.Tensor],
+        paged_kv_indices_arr: list[torch.Tensor],
+        paged_kv_last_page_len_arr: list[torch.Tensor],
+    ) -> torch.Tensor:
+        """
+        Cascade decode attention using FlashInfer's MultiLevelCascadeAttentionWrapper.
+
+        Handles beam search decode where sequences share prefixes in a hierarchical structure.
+
+        Note: kv_last_page_len excludes the current query token for the attention kernel,
+        but we still store the query's K/V in the page table for the next iteration.
+
+        Args:
+            query: Query tensor [batch=1, seq_len, num_qo_heads, head_dim] (RoPE applied)
+            page_table: PageTable with KV cache
+            qo_indptr_arr: QO index pointers per cascade level
+            paged_kv_indptr_arr: KV index pointers per cascade level
+            paged_kv_indices_arr: Page indices per cascade level
+            paged_kv_last_page_len_arr: Last page lengths per cascade level
+
+        Returns:
+            Attention output tensor
+        """
+        device = query.device
+        num_qo_heads = self.config.num_attention_heads
+        num_kv_heads = self.config.num_key_value_heads
+        head_dim = self.head_dim
+
+        # TODO: Store current token's K/V in page table for next iteration
+
+        # Create workspace buffer
+        workspace_size = 128 * 1024 * 1024  # 128MB
+        workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
+
+        # Initialize cascade wrapper
+        cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
+            workspace_buffer,
+            kv_layout="NHD"
+        )
+
+        # Plan cascade attention
+        cascade_wrapper.plan(
+            qo_indptr_arr=qo_indptr_arr,
+            paged_kv_indptr_arr=paged_kv_indptr_arr,
+            paged_kv_indices_arr=paged_kv_indices_arr,
+            paged_kv_last_page_len=paged_kv_last_page_len_arr,
+            num_qo_heads=num_qo_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            page_size=page_table.page_size,
+            causal=True,
+            pos_encoding_mode='NONE',  # RoPE already applied
+            sm_scale=self.scaling,
+            q_data_type=query.dtype
+        )
+
+        # Prepare query: [batch, seq_len, num_heads, head_dim] -> [seq_len, num_heads, head_dim]
+        query_flashinfer = query.squeeze(0)
+
+        # Get KV cache for this layer
+        paged_kv_cache = page_table.kv_cache_at_layer[self.layer_idx]
+
+        # Run cascade attention
+        attn_output = cascade_wrapper.run(query_flashinfer, paged_kv_cache)
+
+        # Add batch dimension back
+        attn_output = attn_output.unsqueeze(0)
+
+        return attn_output
+
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
@@ -529,6 +445,11 @@ class LlamaAttention(nn.Module):
         last_page_len: Optional[int] = None,
         batch_page_indices: Optional[list] = None,  # List of page_indices for batch decode
         batch_last_page_lens: Optional[list] = None,  # List of last_page_lens for batch decode
+        # Cascade decode parameters
+        cascade_qo_indptr_arr: Optional[list[torch.Tensor]] = None,
+        cascade_kv_indptr_arr: Optional[list[torch.Tensor]] = None,
+        cascade_kv_indices_arr: Optional[list[torch.Tensor]] = None,
+        cascade_kv_last_page_len_arr: Optional[list[torch.Tensor]] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -562,26 +483,28 @@ class LlamaAttention(nn.Module):
             )
 
         elif attention_mode == AttentionMode.DECODE:
-            if page_table is None or batch_page_indices is None or batch_last_page_lens is None:
-                raise ValueError("PageTable, batch_page_indices, and batch_last_page_lens must be provided for DECODE attention mode")
+            # Validate cascade decode parameters
+            if page_table is None:
+                raise ValueError("PageTable must be provided for DECODE attention mode")
+            if cascade_qo_indptr_arr is None or cascade_kv_indptr_arr is None or \
+               cascade_kv_indices_arr is None or cascade_kv_last_page_len_arr is None:
+                raise ValueError("Cascade parameters must be provided for DECODE attention mode")
 
-            # Apply RoPE manually before FlashInfer attention
-            query_states_rotated, key_states_rotated = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+            # Apply RoPE to query states
+            query_states_rotated, _ = apply_rotary_pos_emb(query_states, None, cos, sin)
 
-            # Use FlashInfer batch decode kernel
-            attn_output, attn_weights = flashinfer_decode_attention_forward(
-                self,
-                query_states_rotated,  # Rotated query
-                key_states_rotated,    # Rotated key
-                value_states,          # Unrotated value
-                attention_mask,
-                self.scaling,
+            # Run cascade decode attention
+            attn_output = self._cascade_decode_attention(
+                query_states_rotated.transpose(1, 2),  # [batch, num_heads, seq, head_dim] -> [batch, seq, num_heads, head_dim]
                 page_table,
-                batch_page_indices,    # List of page_indices for each sequence
-                batch_last_page_lens,  # List of last_page_lens for each sequence
-                dropout=0.0 if not self.training else self.attention_dropout,
-                **kwargs,
+                cascade_qo_indptr_arr,
+                cascade_kv_indptr_arr,
+                cascade_kv_indices_arr,
+                cascade_kv_last_page_len_arr,
             )
+
+            attn_weights = None
+
         else:
             raise ValueError(f"Invalid attention mode: {attention_mode}. Must be PREFILL or DECODE")
 

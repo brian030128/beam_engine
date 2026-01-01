@@ -48,7 +48,7 @@ The input consists of variations of a sentence with hierarchical structure:
 
 ### Level 1 View
 ```
-| forces journey | infinite possibilities existence | essence journey moment you |
+| forces journey infinite possibilities | existence  essence | journey moment you |
 ```
 
 ### Level 2 View
