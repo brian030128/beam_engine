@@ -451,6 +451,8 @@ class LlamaAttention(nn.Module):
         cascade_kv_indptr_arr: Optional[list[torch.Tensor]] = None,
         cascade_kv_indices_arr: Optional[list[torch.Tensor]] = None,
         cascade_kv_last_page_len_arr: Optional[list[torch.Tensor]] = None,
+        cascade_write_page_indices: Optional[list] = None,  # Page IDs to write K/V for each candidate
+        cascade_write_positions: Optional[list] = None,  # Positions within page to write K/V
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -489,6 +491,33 @@ class LlamaAttention(nn.Module):
             if cascade_qo_indptr_arr is None or cascade_kv_indptr_arr is None or \
                cascade_kv_indices_arr is None or cascade_kv_last_page_len_arr is None:
                 raise ValueError("Cascade parameters must be provided for DECODE attention mode")
+            if cascade_write_page_indices is None or cascade_write_positions is None:
+                raise ValueError("cascade_write_page_indices and cascade_write_positions must be provided for DECODE attention mode")
+
+            # Apply RoPE to key states before writing to KV cache
+            key_states, _ = apply_rotary_pos_emb(key_states, key_states, cos, sin)
+
+            # Write current token's K/V to page table for each candidate
+            # key_states: [batch=1, seq_len=num_candidates, num_kv_heads, head_dim]
+            # value_states: [batch=1, seq_len=num_candidates, num_kv_heads, head_dim]
+            num_candidates = key_states.shape[1]
+
+            for cand_idx in range(num_candidates):
+                page_id = cascade_write_page_indices[cand_idx]
+                write_pos = cascade_write_positions[cand_idx]
+
+                # Extract K/V for this candidate [1, num_kv_heads, head_dim]
+                key_to_write = key_states[0, cand_idx:cand_idx+1, :, :]
+                value_to_write = value_states[0, cand_idx:cand_idx+1, :, :]
+
+                # Write to page table at this layer
+                page_table.write_block(
+                    layer=self.layer_idx,
+                    page_idx=page_id,
+                    key=key_to_write,
+                    value=value_to_write,
+                    index=write_pos
+                )
 
             # Run cascade decode attention
             attn_output = self._cascade_decode_attention(
