@@ -158,7 +158,7 @@ class BeamState:
                 first, rest = children[0], children[1:]
 
                 for child in rest:
-                    new_page = self.page_table.copy_block(node)
+                    new_page = self.page_table.copy_block(node.page_id, len(node.tokens))
                     new_node = TrieNode(
                         tokens=[*tokens, child.token_id],
                         page_id=new_page,
