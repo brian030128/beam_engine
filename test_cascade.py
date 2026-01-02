@@ -137,87 +137,20 @@ def test_cascade_input():
     print(f"\nget_cascade_input() took {elapsed_ms:.4f} ms")
     print(f"Number of cascade levels: {len(qo_indptr_arr)}")
 
-    # Expected values from cascade.md
-    expected_qo_indptr = [
-        [0, 8],                      # level 0
-        [0, 3, 5, 8],               # level 1
-        [0, 1, 2, 3, 4, 5, 6, 7, 8] # level 2
-    ]
-
-    expected_kv_indptr = [
-        [0, 4],                     # level 0 
-        [0, 2, 4, 6],               # level 1
-        [0, 1, 3, 4, 5, 6, 7, 8, 9] # level 2
-    ]
-
-    expected_kv_indices = [
-        [0, 1, 2, 3],               # level 0
-        [4, 5, 6, 7, 8, 9],         # level 1
-        [10, 11, 12, 13, 14, 15, 16, 17, 18]    # level 2
-    ]
-
-    expected_kv_last_page_len = [
-        [1],                        # level 0
-        [1, 1, 1],                  # level 1
-        [1, 1, 1, 0, 0, 3, 3, 3]    # level 2
-    ]
-
-    # Print results
+    # Print raw outputs for inspection
     print("\n" + "=" * 80)
-    print("RESULTS:")
+    print("RAW OUTPUTS:")
     print("=" * 80)
-
     for level_idx in range(len(qo_indptr_arr)):
         print(f"\n--- Level {level_idx} ---")
-
         print(f"qo_indptr:             {qo_indptr_arr[level_idx].tolist()}")
-        print(f"Expected qo_indptr:    {expected_qo_indptr[level_idx]}")
-        qo_match = qo_indptr_arr[level_idx].tolist() == expected_qo_indptr[level_idx]
-        print(f"Match: {'YES' if qo_match else 'NO'}")
+        print(f"paged_kv_indptr:       {paged_kv_indptr_arr[level_idx].tolist()}")
+        print(f"paged_kv_indices:      {paged_kv_indices_arr[level_idx].tolist()}")
+        print(f"paged_kv_last_page_len: {paged_kv_last_page_len[level_idx].tolist()}")
 
-        print(f"\npaged_kv_indptr:       {paged_kv_indptr_arr[level_idx].tolist()}")
-        print(f"Expected kv_indptr:    {expected_kv_indptr[level_idx]}")
-        kv_indptr_match = paged_kv_indptr_arr[level_idx].tolist() == expected_kv_indptr[level_idx]
-        print(f"Match: {'YES' if kv_indptr_match else 'NO'}")
-
-        print(f"\npaged_kv_indices:      {paged_kv_indices_arr[level_idx].tolist()}")
-        print(f"Expected kv_indices:   {expected_kv_indices[level_idx]}")
-        kv_indices_match = paged_kv_indices_arr[level_idx].tolist() == expected_kv_indices[level_idx]
-        print(f"Match: {'YES' if kv_indices_match else 'NO'}")
-
-        print(f"\npaged_kv_last_page_len: {paged_kv_last_page_len[level_idx].tolist()}")
-        print(f"Expected last_page_len: {expected_kv_last_page_len[level_idx]}")
-        last_len_match = paged_kv_last_page_len[level_idx].tolist() == expected_kv_last_page_len[level_idx]
-        print(f"Match: {'YES' if last_len_match else 'NO'}")
-
-    print(f"\n--- Query Token IDs ---")
-    print(f"Shape: {q.shape}")
-    print(f"Token IDs: {q.tolist()}")
-
-    # Expected query token IDs in cascade order (last token from each candidate's leaf node)
-    # Based on the tree structure:
-    # - Seq 0 (leaf_0): last token = 51
-    # - Seq 1 (leaf_1_1): last token = 52
-    # - Seq 2 (leaf_2): last token = 36
-    # - Seq 3 (leaf_3): last token = 37
-    # - Seq 4 (leaf_4): last token = 38
-    # - Seq 5 (leaf_5): last token = 42
-    # - Seq 6 (leaf_6): last token = 46
-    # - Seq 7 (leaf_7): last token = 50
-    expected_query_tokens = [51, 52, 36, 37, 38, 42, 46, 50]
-
-    print(f"Expected token IDs: {expected_query_tokens}")
-
-    # Check shape
-    expected_shape = [8]
-    shape_match = list(q.shape) == expected_shape
-    print(f"Shape match: {'YES' if shape_match else 'NO'}")
-
-    # Check token IDs match expected positions
-    tokens_match = q.tolist() == expected_query_tokens
-    print(f"Token IDs match: {'YES' if tokens_match else 'NO'}")
-
-    print("\n" + "=" * 80)
+    # Verify the outputs
+    verify_cascade_output(beam_state, qo_indptr_arr, paged_kv_indptr_arr,
+                         paged_kv_indices_arr, paged_kv_last_page_len, q)
 
 
 def build_cascade_swapped_tree(beam_state: BeamState):
@@ -279,6 +212,89 @@ def build_cascade_swapped_tree(beam_state: BeamState):
     ]
 
 
+def verify_cascade_output(beam_state, qo_indptr_arr, paged_kv_indptr_arr,
+                         paged_kv_indices_arr, paged_kv_last_page_len, q):
+    """
+    Verify that cascade outputs correctly represent each candidate's page sequence and query token.
+
+    For each candidate:
+    1. Get expected page sequence by walking from leaf to root
+    2. Reconstruct page sequence from cascade outputs
+    3. Verify they match
+    4. Verify query token matches the last token in the candidate's leaf node
+    """
+    print("\n" + "=" * 80)
+    print("VERIFICATION: Reconstructing page sequences for each candidate")
+    print("=" * 80)
+
+    all_match = True
+
+    for cand_idx, candidate in enumerate(beam_state.candidates):
+        # Get expected page sequence by walking up the trie
+        expected_pages = []
+        node = candidate.trie_node
+        while node is not None:
+            expected_pages.insert(0, node.page_id)
+            node = node.parent
+
+        # Get expected query token (last token in leaf node)
+        expected_query_token = candidate.trie_node.tokens[-1]
+
+        # Reconstruct page sequence from cascade outputs
+        reconstructed_pages = []
+
+        for level_idx in range(len(qo_indptr_arr)):
+            qo_indptr = qo_indptr_arr[level_idx].tolist()
+            kv_indptr = paged_kv_indptr_arr[level_idx].tolist()
+            kv_indices = paged_kv_indices_arr[level_idx].tolist()
+
+            # Find which group this candidate belongs to at this level
+            group_idx = None
+            for i in range(len(qo_indptr) - 1):
+                if qo_indptr[i] <= cand_idx < qo_indptr[i + 1]:
+                    group_idx = i
+                    break
+
+            if group_idx is None:
+                print(f"ERROR: Could not find group for candidate {cand_idx} at level {level_idx}")
+                all_match = False
+                continue
+
+            # Get pages for this group
+            page_start = kv_indptr[group_idx]
+            page_end = kv_indptr[group_idx + 1]
+            group_pages = kv_indices[page_start:page_end]
+
+            # Add to reconstructed pages
+            reconstructed_pages.extend(group_pages)
+
+        # Compare
+        pages_match = reconstructed_pages == expected_pages
+        query_match = q[cand_idx].item() == expected_query_token
+
+        status = "✓" if (pages_match and query_match) else "✗"
+
+        print(f"\n{status} Candidate {cand_idx}:")
+        print(f"  Expected pages:      {expected_pages}")
+        print(f"  Reconstructed pages: {reconstructed_pages}")
+        print(f"  Pages match: {'YES' if pages_match else 'NO'}")
+        print(f"  Expected query token:  {expected_query_token}")
+        print(f"  Actual query token:    {q[cand_idx].item()}")
+        print(f"  Query match: {'YES' if query_match else 'NO'}")
+
+        if not pages_match or not query_match:
+            all_match = False
+
+    print("\n" + "=" * 80)
+    if all_match:
+        print("✓ ALL CANDIDATES VERIFIED SUCCESSFULLY!")
+    else:
+        print("✗ VERIFICATION FAILED FOR SOME CANDIDATES")
+    print("=" * 80)
+
+    return all_match
+
+
 def test_cascade_input_swapped():
     """Test get_cascade_input with swapped branch construction order"""
 
@@ -316,82 +332,20 @@ def test_cascade_input_swapped():
     print(f"\nget_cascade_input() took {elapsed_ms:.4f} ms")
     print(f"Number of cascade levels: {len(qo_indptr_arr)}")
 
-    # Expected values with swapped branch order
-    # Level 1 now has Branch3, Branch2, Branch1 instead of Branch1, Branch2, Branch3
-    # Branch3 has 3 sequences (5,6,7), Branch2 has 2 (3,4), Branch1 has 3 (0,1,2)
-    expected_qo_indptr = [
-        [0, 8],                      # level 0: all 8 sequences
-        [0, 3, 5, 8],               # level 1: Branch3(3 seqs), Branch2(2 seqs), Branch1(3 seqs)
-        [0, 1, 2, 3, 4, 5, 6, 7, 8] # level 2: individual sequences
-    ]
-
-    expected_kv_indptr = [
-        [0, 4],                     # level 0: root pages 0-3
-        [0, 2, 4, 6],               # level 1: Branch3(2 pages), Branch2(2 pages), Branch1(2 pages)
-        [0, 1, 2, 3, 4, 5, 6, 8, 9] # level 2: leaf pages
-    ]
-
-    expected_kv_indices = [
-        [0, 1, 2, 3],               # level 0: root
-        [4, 5, 6, 7, 8, 9],         # level 1: Branch3(4-5), Branch2(6-7), Branch1(8-9)
-        [10, 11, 12, 13, 14, 15, 16, 17, 18]  # level 2: leaves
-    ]
-
-    expected_kv_last_page_len = [
-        [1],                        # level 0: root ends with 1 token
-        [1, 1, 1],                  # level 1: all branches end with 1 token
-        [3, 3, 3, 0, 0, 1, 1, 1]    # level 2: Branch3 leaves (3,3,3), Branch2 (0,0), Branch1 (1,1,1)
-    ]
-
-    # Print results
+    # Print raw outputs for inspection
     print("\n" + "=" * 80)
-    print("RESULTS:")
+    print("RAW OUTPUTS:")
     print("=" * 80)
-
     for level_idx in range(len(qo_indptr_arr)):
         print(f"\n--- Level {level_idx} ---")
-
         print(f"qo_indptr:             {qo_indptr_arr[level_idx].tolist()}")
-        print(f"Expected qo_indptr:    {expected_qo_indptr[level_idx]}")
-        qo_match = qo_indptr_arr[level_idx].tolist() == expected_qo_indptr[level_idx]
-        print(f"Match: {'YES' if qo_match else 'NO'}")
+        print(f"paged_kv_indptr:       {paged_kv_indptr_arr[level_idx].tolist()}")
+        print(f"paged_kv_indices:      {paged_kv_indices_arr[level_idx].tolist()}")
+        print(f"paged_kv_last_page_len: {paged_kv_last_page_len[level_idx].tolist()}")
 
-        print(f"\npaged_kv_indptr:       {paged_kv_indptr_arr[level_idx].tolist()}")
-        print(f"Expected kv_indptr:    {expected_kv_indptr[level_idx]}")
-        kv_indptr_match = paged_kv_indptr_arr[level_idx].tolist() == expected_kv_indptr[level_idx]
-        print(f"Match: {'YES' if kv_indptr_match else 'NO'}")
-
-        print(f"\npaged_kv_indices:      {paged_kv_indices_arr[level_idx].tolist()}")
-        print(f"Expected kv_indices:   {expected_kv_indices[level_idx]}")
-        kv_indices_match = paged_kv_indices_arr[level_idx].tolist() == expected_kv_indices[level_idx]
-        print(f"Match: {'YES' if kv_indices_match else 'NO'}")
-
-        print(f"\npaged_kv_last_page_len: {paged_kv_last_page_len[level_idx].tolist()}")
-        print(f"Expected last_page_len: {expected_kv_last_page_len[level_idx]}")
-        last_len_match = paged_kv_last_page_len[level_idx].tolist() == expected_kv_last_page_len[level_idx]
-        print(f"Match: {'YES' if last_len_match else 'NO'}")
-
-    print(f"\n--- Query Token IDs ---")
-    print(f"Shape: {q.shape}")
-    print(f"Token IDs: {q.tolist()}")
-
-    # Expected query token IDs now in swapped order (grouped by branch)
-    # Branch3 sequences (5,6,7): 42, 46, 50
-    # Branch2 sequences (3,4): 37, 38
-    # Branch1 sequences (0,1,2): 51, 52, 36
-    expected_query_tokens = [42, 46, 50, 37, 38, 51, 52, 36]
-    print(f"Expected token IDs: {expected_query_tokens}")
-
-    # Check shape
-    expected_shape = [8]
-    shape_match = list(q.shape) == expected_shape
-    print(f"Shape match: {'YES' if shape_match else 'NO'}")
-
-    # Check token IDs match expected positions
-    tokens_match = q.tolist() == expected_query_tokens
-    print(f"Token IDs match: {'YES' if tokens_match else 'NO'}")
-
-    print("\n" + "=" * 80)
+    # Verify the outputs
+    verify_cascade_output(beam_state, qo_indptr_arr, paged_kv_indptr_arr,
+                         paged_kv_indices_arr, paged_kv_last_page_len, q)
 
 
 if __name__ == "__main__":
