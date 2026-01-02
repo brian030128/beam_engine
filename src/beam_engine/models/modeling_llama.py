@@ -495,7 +495,7 @@ class LlamaAttention(nn.Module):
                 raise ValueError("cascade_write_page_indices and cascade_write_positions must be provided for DECODE attention mode")
 
             # Apply RoPE to key states before writing to KV cache
-            key_states, _ = apply_rotary_pos_emb(key_states, key_states, cos, sin)
+            #key_states, _ = apply_rotary_pos_emb(key_states, key_states, cos, sin)
 
             # Write current token's K/V to page table for each candidate
             # key_states: [batch=1, seq_len=num_candidates, num_kv_heads, head_dim]
