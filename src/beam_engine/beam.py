@@ -327,8 +327,8 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
     # Example prompts
     prompts = [
         "The future of artificial intelligence is",
-        #"Once upon a time in a magical forest,",
-        #"The best way to solve climate change is"
+        "Once upon a time in a magical forest,",
+        "The best way to solve climate change is"
     ]
 
     for prompt in prompts:
@@ -354,7 +354,7 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
         generated_texts = generator.generate(
             input_text=prompt,
             beam_size=4,
-            max_length=30,
+            max_length=50,
             num_return_sequences=4,
             temperature=0.8
         )
