@@ -509,7 +509,7 @@ class LlamaAttention(nn.Module):
 
             for cand_idx in range(num_candidates):
                 page_id = cascade_write_page_indices[cand_idx]
-                write_pos = cascade_write_positions[cand_idx]
+                write_pos = cascade_write_positions[cand_idx] + 1
 
                 # Extract K/V for this candidate [num_kv_heads, head_dim]
                 key_to_write = key_states[cand_idx:cand_idx+1, :, :]

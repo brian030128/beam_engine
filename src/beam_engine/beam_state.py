@@ -393,3 +393,41 @@ class BeamState:
         sorted_finished = sorted(self.finished_candidates, key=lambda x: x.score / x.length, reverse=True)
         return sorted_finished[:num_return]
 
+    def get_final_sequences(self, num_return: int, length_penalty: float = 1.0) -> List[Tuple[List[int], float]]:
+        """
+        Get final sequences from both alive and finished candidates.
+
+        Args:
+            num_return: Number of sequences to return
+            length_penalty: Penalty for sequence length (score = log_prob / length^penalty)
+
+        Returns:
+            List of (sequence, score) tuples sorted by score
+        """
+        # Combine alive and finished candidates
+        all_candidates = self.finished_candidates + self.candidates
+
+        if not all_candidates:
+            return []
+
+        # Extract sequences and apply length penalty
+        results: List[Tuple[List[int], float]] = []
+        for candidate in all_candidates:
+            # Reconstruct sequence from trie
+            sequence = []
+            node = candidate.trie_node
+            while node is not None:
+                sequence = node.tokens + sequence
+                node = node.parent
+
+            # Apply length penalty
+            score = candidate.score
+            if length_penalty != 0 and len(sequence) > 1:
+                score = score / (len(sequence) ** length_penalty)
+
+            results.append((sequence, score))
+
+        # Sort by score (descending) and return top num_return
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results[:num_return]
+

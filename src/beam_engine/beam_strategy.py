@@ -39,6 +39,24 @@ class BeamStrategy(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_final_sequences(
+        self,
+        beam_state: BeamState,
+        num_return: Optional[int] = None,
+    ) -> List[Tuple[List[int], float]]:
+        """
+        Get the final sequences after search completion.
+
+        Args:
+            beam_state: Final beam state
+            num_return: Number of sequences to return (default: beam_size)
+
+        Returns:
+            List of (sequence, score) tuples, sorted by score
+        """
+        pass
+
 class DiverseBeamSearchStrategy(BeamStrategy):
     """
     Implements Diverse Beam Search (DBS) strategy.
@@ -338,7 +356,7 @@ class DiverseBeamSearchStrategy(BeamStrategy):
         num_return: Optional[int] = None,
     ) -> List[Tuple[List[int], float]]:
         """
-        Get the final diverse sequences after search completion.
+        Get the final diverse sequences with length penalty applied.
 
         Args:
             beam_state: Final beam state
@@ -350,19 +368,7 @@ class DiverseBeamSearchStrategy(BeamStrategy):
         if num_return is None:
             num_return = beam_state.beam_size
 
-        # Combine finished and active candidates
-        all_candidates = beam_state.finished_candidates + beam_state.candidates
-
-        # Extract sequences and scores
-        results: List[Tuple[List[int], float]] = []
-        for candidate in all_candidates:
-            sequence = self._get_sequence_from_node(candidate.trie_node)
-            score = self._apply_length_penalty(candidate.score, len(sequence))
-            results.append((sequence, score))
-
-        # Sort by score and return top results
-        results.sort(key=lambda x: x[1], reverse=True)
-        return results[:num_return]
+        return beam_state.get_final_sequences(num_return, self.length_penalty)
 
     def get_diverse_groups(
         self,
@@ -509,6 +515,26 @@ class VanillaBeamSearchStrategy(BeamStrategy):
             return True
 
         return False
+
+    def get_final_sequences(
+        self,
+        beam_state: BeamState,
+        num_return: Optional[int] = None,
+    ) -> List[Tuple[List[int], float]]:
+        """
+        Get the final sequences with length penalty applied.
+
+        Args:
+            beam_state: Final beam state
+            num_return: Number of sequences to return (default: beam_size)
+
+        Returns:
+            List of (sequence, score) tuples, sorted by score
+        """
+        if num_return is None:
+            num_return = beam_state.beam_size
+
+        return beam_state.get_final_sequences(num_return, self.length_penalty)
 
     def finalize_scores(self, candidates: List[BeamCandidate], step: int) -> List[Tuple[BeamCandidate, float]]:
         """
