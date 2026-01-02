@@ -280,8 +280,8 @@ def flashinfer_prefill_attention_forward(
         num_kv_heads,  # num_kv_heads (key-value heads)
         head_dim,
         page_table.page_size,
-        causal=True
-        # RoPE applied manually before calling FlashInfer
+        causal=True,
+        pos_encoding_mode="ROPE_LLAMA"
     )
     print(f"Debug: Attention computation planned")
 
@@ -455,9 +455,9 @@ class LlamaAttention(nn.Module):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
-        query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        query_states = self.q_proj(hidden_states).view(hidden_shape)
+        key_states = self.k_proj(hidden_states).view(hidden_shape)
+        value_states = self.v_proj(hidden_states).view(hidden_shape)
 
         cos, sin = position_embeddings
 
@@ -466,13 +466,12 @@ class LlamaAttention(nn.Module):
             if page_table is None or page_indices is None:
                 raise ValueError("PageTable and page_indices must be provided for PREFILL attention mode")
 
-            query_states_rotated, key_states_rotated = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
-                query_states_rotated.transpose(1, 2),
-                key_states_rotated.transpose(1, 2),
-                value_states.transpose(1, 2),
+                query_states,
+                key_states,
+                value_states,
                 attention_mask,
                 self.scaling,
                 page_table,
