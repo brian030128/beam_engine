@@ -315,7 +315,7 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
             output_scores=True,
             repetition_penalty = 0.5,
             length_penalty = 1.1,
-            
+
         )
 
     generated_texts = []
@@ -337,7 +337,7 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
 
     # Create diverse beam search strategy
     strategy = DiverseBeamSearchStrategy(
-        num_groups=2,          # Divide beams into 2 groups for diversity
+        num_groups=1,          # Divide beams into 2 groups for diversity
         diversity_penalty=0.5, # Penalty for generating similar tokens
         length_penalty=1.1     # Slight preference for longer sequences
     )
