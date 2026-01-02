@@ -413,7 +413,7 @@ class LlamaAttention(nn.Module):
             head_dim=head_dim,
             page_size=page_table.page_size,
             causal=True,
-            pos_encoding_mode='ROPE_LLAMA',  # RoPE already applied
+            pos_encoding_mode='None',
             sm_scale=self.scaling,
             q_data_type=query.dtype
         )
@@ -436,6 +436,7 @@ class LlamaAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
+        position_ids: Optional[torch.Tensor],
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[Cache] = None,
@@ -469,7 +470,6 @@ class LlamaAttention(nn.Module):
             if page_table is None or page_indices is None:
                 raise ValueError("PageTable and page_indices must be provided for PREFILL attention mode")
 
-
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
                 query_states,
@@ -485,6 +485,8 @@ class LlamaAttention(nn.Module):
             )
 
         elif attention_mode == AttentionMode.DECODE:
+            
+
             # Validate cascade decode parameters
             if page_table is None:
                 raise ValueError("PageTable must be provided for DECODE attention mode")
@@ -501,6 +503,8 @@ class LlamaAttention(nn.Module):
             # key_states: [batch=1, seq_len=num_candidates, num_kv_heads, head_dim]
             # value_states: [batch=1, seq_len=num_candidates, num_kv_heads, head_dim]
             num_candidates = key_states.shape[1]
+
+            flashinfer.rope.apply_llama31_rope_pos_ids_inplace(query_states, key_states, position_ids)
 
             for cand_idx in range(num_candidates):
                 page_id = cascade_write_page_indices[cand_idx]

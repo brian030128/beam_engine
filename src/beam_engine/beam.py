@@ -170,8 +170,24 @@ class BeamSearchGenerator:
             cascade_write_page_indices = [candidate.trie_node.page_id for candidate in beam_state.candidates]
             cascade_write_positions = [len(candidate.trie_node.tokens) - 1 for candidate in beam_state.candidates]
 
+            # Compute position IDs for each candidate's query token
+            # Position ID = total sequence length - 1 (0-indexed position of current query token)
+            position_ids_list = []
+            for candidate in beam_state.candidates:
+                # Walk up the trie to count total tokens
+                total_tokens = 0
+                node = candidate.trie_node
+                while node is not None:
+                    total_tokens += len(node.tokens)
+                    node = node.parent
+                # Current query token is at position (total_tokens - 1)
+                position_ids_list.append(total_tokens - 1)
+
+            position_ids = torch.tensor([position_ids_list], dtype=torch.long, device=self.device)  # [1, num_candidates]
+
             print(f"[DECODE INPUT] Write page indices: {cascade_write_page_indices}")
             print(f"[DECODE INPUT] Write positions: {cascade_write_positions}")
+            print(f"[DECODE INPUT] Position IDs: {position_ids_list}")
 
             # query_token_ids are already in correct cascade order, just reshape for model
             decode_input_ids = query_token_ids.unsqueeze(0)  # [1, num_candidates]
@@ -180,6 +196,7 @@ class BeamSearchGenerator:
             with torch.no_grad():
                 outputs = self.model(
                     decode_input_ids,
+                    position_ids=position_ids,
                     attention_mode=AttentionMode.DECODE,
                     page_table=self.page_table,
                     cascade_qo_indptr_arr=qo_indptr_arr,
