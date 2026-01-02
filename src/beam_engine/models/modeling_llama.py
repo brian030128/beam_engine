@@ -412,7 +412,7 @@ class LlamaAttention(nn.Module):
             head_dim=head_dim,
             page_size=page_table.page_size,
             causal=True,
-            pos_encoding_mode='NONE',  # RoPE already applied
+            pos_encoding_mode='ROPE_LLAMA',  # RoPE already applied
             sm_scale=self.scaling,
             q_data_type=query.dtype
         )
@@ -489,12 +489,9 @@ class LlamaAttention(nn.Module):
                cascade_kv_indices_arr is None or cascade_kv_last_page_len_arr is None:
                 raise ValueError("Cascade parameters must be provided for DECODE attention mode")
 
-            # Apply RoPE to query states
-            query_states_rotated, _ = apply_rotary_pos_emb(query_states, None, cos, sin)
-
             # Run cascade decode attention
             attn_output = self._cascade_decode_attention(
-                query_states_rotated.transpose(1, 2),  # [batch, num_heads, seq, head_dim] -> [batch, seq, num_heads, head_dim]
+                query_states,  # [batch, num_heads, seq, head_dim] -> [batch, seq, num_heads, head_dim]
                 page_table,
                 cascade_qo_indptr_arr,
                 cascade_kv_indptr_arr,
