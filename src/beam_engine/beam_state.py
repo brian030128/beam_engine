@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import torch
 from collections import defaultdict
 
-from .page_table import PageTable
+from page_table import PageTable
 class TrieNode:
     """
     Pure data structure for storing beam search sequence tree.

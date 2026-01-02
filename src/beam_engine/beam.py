@@ -4,13 +4,13 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict, Optional
 
 from transformers import AutoTokenizer
-#from models.modeling_llama import LlamaForCausalLM
-from .page_table import PageTable
-from .attention_mode import AttentionMode
+from models.modeling_llama import LlamaForCausalLM
+from page_table import PageTable
+from attention_mode import AttentionMode
 
 
-from .beam_state import BeamState, TrieNode, BeamCandidate, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
-from .beam_strategy import BeamStrategy, DiverseBeamSearchStrategy
+from beam_state import BeamState, TrieNode, BeamCandidate, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
+from beam_strategy import BeamStrategy, DiverseBeamSearchStrategy
 
 
 class BeamSearchGenerator:
