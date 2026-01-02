@@ -10,7 +10,7 @@ from attention_mode import AttentionMode
 
 
 from beam_state import BeamState, TrieNode, BeamCandidate, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
-from beam_strategy import BeamStrategy, DiverseBeamSearchStrategy
+from beam_strategy import BeamStrategy, DiverseBeamSearchStrategy, VanillaBeamSearchStrategy
 
 
 class BeamSearchGenerator:
@@ -313,8 +313,8 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
             early_stopping=True,
             return_dict_in_generate=True,
             output_scores=True,
-            repetition_penalty = 0.5,
-            length_penalty = 1.1,
+            repetition_penalty = 1,
+            length_penalty = 1,
 
         )
 
@@ -336,13 +336,13 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
     print("=== Diverse Beam Search Demo ===")
 
     # Create diverse beam search strategy
-    strategy = DiverseBeamSearchStrategy(
-        num_groups=1,          # Divide beams into 2 groups for diversity
-        diversity_penalty=0.5, # Penalty for generating similar tokens
-        length_penalty=1.1     # Slight preference for longer sequences
-    )
+    # strategy = DiverseBeamSearchStrategy(
+    #     num_groups=1,          # Divide beams into 2 groups for diversity
+    #     diversity_penalty=0.5, # Penalty for generating similar tokens
+    #     length_penalty=1.1     # Slight preference for longer sequences
+    # )
 
-    generator = BeamSearchGenerator(model, tokenizer, strategy)
+    generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy())
 
     # Example prompts
     prompts = [

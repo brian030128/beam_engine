@@ -392,3 +392,136 @@ class DiverseBeamSearchStrategy(BeamStrategy):
                 groups.append(all_candidates[start_idx:end_idx])
 
         return groups
+    
+
+class VanillaBeamSearchStrategy(BeamStrategy):
+    """
+    Implements standard (Vanilla) Beam Search strategy.
+    
+    This strategy selects the top-K candidates based purely on their 
+    accumulated log-probabilities, with an optional length penalty.
+    """
+
+    def __init__(
+        self,
+        length_penalty: float = 1.0,
+        early_stopping: bool = True,
+    ):
+        """
+        Initialize Vanilla Beam Search.
+
+        Args:
+            length_penalty: Exponential penalty for sequence length. 
+                           score = log_prob / (length ** length_penalty)
+            early_stopping: If True, stop when beam_size finished sequences are found.
+        """
+        self.length_penalty = length_penalty
+        self.early_stopping = early_stopping
+
+    def _apply_length_penalty(self, log_prob: float, length: int) -> float:
+        """Applies standard length normalization."""
+        if self.length_penalty == 0 or length <= 1:
+            return log_prob
+        return log_prob / (length ** self.length_penalty)
+
+    def select_candidates(
+        self,
+        beam_state: BeamState,
+        new_candidates: List[BeamGenerateInput],
+        step: int
+    ) -> List[BeamGenerateResult]:
+        """
+        Select the top-K candidates across all potential next tokens.
+        """
+        if not new_candidates:
+            return []
+
+        beam_size = beam_state.beam_size
+        
+        # 1. Flatten all potential next tokens into a single list for global comparison
+        # Each entry: (parent_input_index, token_candidate, global_accumulated_score)
+        all_potential_next: List[Tuple[int, 'BeamTokenCandidate', float]] = []
+
+        for idx, beam_input in enumerate(new_candidates):
+            parent_score = beam_input.candidate.score
+            for token_choice in beam_input.children:
+                # Accumulated log probability
+                total_score = parent_score + token_choice.log_prob
+                all_potential_next.append((idx, token_choice, total_score))
+
+        # 2. Sort by accumulated score descending
+        # Note: We sort by raw log-probs first; length penalty is usually used 
+        # for the final ranking or during selection if preferred.
+        all_potential_next.sort(key=lambda x: x[2], reverse=True)
+
+        # 3. Take the top beam_size candidates
+        top_selections = all_potential_next[:beam_size]
+
+        # 4. Map these selections back to their parents to create BeamGenerateResults
+        # Initialize results list with empty children
+        results_map: Dict[int, List[BeamToken]] = {i: [] for i in range(len(new_candidates))}
+        
+        for parent_idx, token_choice, total_score in top_selections:
+            results_map[parent_idx].append(
+                BeamToken(
+                    token_id=token_choice.token_id,
+                    accumulated_score=total_score
+                )
+            )
+
+        # 5. Construct final BeamGenerateResult objects in the original order
+        final_results = []
+        for i, beam_input in enumerate(new_candidates):
+            final_results.append(
+                BeamGenerateResult(
+                    candidate=beam_input.candidate,
+                    children=results_map[i]
+                )
+            )
+
+        return final_results
+
+    def should_stop(
+        self,
+        beam_state: BeamState,
+        max_length: int,
+        step: int
+    ) -> bool:
+        """
+        Standard stopping logic for beam search.
+        """
+        # Condition 1: Max length reached
+        if step >= max_length:
+            return True
+
+        # Condition 2: No active candidates left
+        if not beam_state.candidates:
+            return True
+
+        # Condition 3: Early stopping 
+        # (Stop if we have found 'beam_size' completed sequences)
+        if self.early_stopping:
+            if len(beam_state.finished_candidates) >= beam_state.beam_size:
+                return True
+        
+        # Condition 4: All current beams are marked as finished
+        if all(c.finished for c in beam_state.candidates):
+            return True
+
+        return False
+
+    def finalize_scores(self, candidates: List[BeamCandidate], step: int) -> List[Tuple[BeamCandidate, float]]:
+        """
+        Utility to rank candidates at the end of generation using length penalty.
+        
+        Returns:
+            List of (candidate, normalized_score) sorted descending.
+        """
+        scored_candidates = []
+        for c in candidates:
+            # Reconstruct length from trie depth or step
+            # Assuming step is provided or calculable
+            norm_score = self._apply_length_penalty(c.score, step)
+            scored_candidates.append((c, norm_score))
+            
+        return sorted(scored_candidates, key=lambda x: x[1], reverse=True)
