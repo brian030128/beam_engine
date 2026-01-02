@@ -397,7 +397,8 @@ class LlamaAttention(nn.Module):
 
         # Initialize cascade wrapper
         cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
-            float_workspace_buffer=workspace_buffer,
+            len(qo_indptr_arr),
+            workspace_buffer,
             kv_layout="NHD"
         )
 
