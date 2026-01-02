@@ -344,8 +344,8 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
     # Example prompts
     prompts = [
         "The future of artificial intelligence is",
-        "Once upon a time in a magical forest,",
-        "The best way to solve climate change is"
+        #"Once upon a time in a magical forest,",
+        #"The best way to solve climate change is"
     ]
 
     for prompt in prompts:
