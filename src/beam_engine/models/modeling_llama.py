@@ -419,7 +419,7 @@ class LlamaAttention(nn.Module):
         )
 
         # Prepare query: [batch, seq_len, num_heads, head_dim] -> [seq_len, num_heads, head_dim]
-        query_flashinfer = query.squeeze(0)
+        query_flashinfer = query
 
         # Get KV cache for this layer
         paged_kv_cache = page_table.kv_cache_at_layer[self.layer_idx]
@@ -503,6 +503,8 @@ class LlamaAttention(nn.Module):
             # key_states: [batch=1, seq_len=num_candidates, num_kv_heads, head_dim]
             # value_states: [batch=1, seq_len=num_candidates, num_kv_heads, head_dim]
             num_candidates = key_states.shape[1]
+
+            query_states = query_states.squeeze(0)  # [1, num_candidates, num_heads, head_dim] -> [num_candidates, num_heads, head_dim]
 
             flashinfer.rope.apply_llama31_rope_pos_ids_inplace(query_states, key_states, position_ids)
 
