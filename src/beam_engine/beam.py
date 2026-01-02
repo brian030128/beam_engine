@@ -136,7 +136,22 @@ class BeamSearchGenerator:
 
         # Decode loop
         for step in range(max_length - len(input_tokens)):
-            print(f"\n=== Decode Step {step + 1} ===")
+            print(f"\n{'='*80}")
+            print(f"{'='*80}")
+            print(f"=== DECODE STEP {step + 1} ===")
+            print(f"{'='*80}")
+            print(f"[STEP START] {len(beam_state.candidates)} active candidates before this step")
+
+            # Show current state of all candidates
+            for cand_idx, candidate in enumerate(beam_state.candidates):
+                sequence = []
+                node = candidate.trie_node
+                while node:
+                    sequence = node.tokens + sequence
+                    node = node.parent
+                text = self.tokenizer.decode(sequence, skip_special_tokens=False)
+                print(f"  Candidate {cand_idx}: score={candidate.score:.4f}, len={len(sequence)}, page_id={candidate.trie_node.page_id}")
+                print(f"    Current text: '{text}'")
 
             if self.strategy.should_stop(beam_state, max_length, step):
                 print("Stopping condition met")
@@ -146,7 +161,10 @@ class BeamSearchGenerator:
             (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
              paged_kv_last_page_len_arr, query_token_ids) = beam_state.get_cascade_input()
 
-            print(f"Cascade levels: {len(qo_indptr_arr)}, Candidates: {len(beam_state.candidates)}, Query tokens: {len(query_token_ids)}")
+            print(f"\n[DECODE INPUT] Cascade levels: {len(qo_indptr_arr)}, Candidates: {len(beam_state.candidates)}, Query tokens: {len(query_token_ids)}")
+            query_texts = [self.tokenizer.decode([tid], skip_special_tokens=False) for tid in query_token_ids.tolist()]
+            print(f"[DECODE INPUT] Query tokens: {query_token_ids.tolist()}")
+            print(f"[DECODE INPUT] Query texts: {query_texts}")
 
             # query_token_ids are already in correct cascade order, just reshape for model
             decode_input_ids = query_token_ids.unsqueeze(0)  # [1, num_candidates]
@@ -166,6 +184,7 @@ class BeamSearchGenerator:
 
             # Create BeamGenerateInput for each candidate
             generate_inputs = []
+            print(f"\n[TOKEN SELECTION] Processing {len(beam_state.candidates)} candidates")
             for cand_idx, candidate in enumerate(beam_state.candidates):
                 candidate_logits = logits[0, cand_idx, :]
 
@@ -177,6 +196,15 @@ class BeamSearchGenerator:
                 top_k = min(beam_size * 2, candidate_probs.shape[0])
                 top_probs, top_indices = torch.topk(candidate_probs, top_k)
 
+                # Debug: show top tokens for this candidate
+                print(f"  [Candidate {cand_idx}] score={candidate.score:.4f}, page_id={candidate.trie_node.page_id}")
+                print(f"    Top 5 token candidates:")
+                for k in range(min(5, len(top_indices))):
+                    token_id = top_indices[k].item()
+                    log_prob = top_probs[k].item()
+                    token_text = self.tokenizer.decode([token_id], skip_special_tokens=False)
+                    print(f"      {k+1}. Token {token_id}: '{token_text}' (log_prob: {log_prob:.4f})")
+
                 token_candidates = []
                 for k in range(len(top_indices)):
                     token_id = top_indices[k].item()
@@ -186,18 +214,51 @@ class BeamSearchGenerator:
                 generate_inputs.append(BeamGenerateInput(candidate=candidate, children=token_candidates))
 
             # Use strategy to select candidates
+            print(f"\n[STRATEGY] Selecting candidates using {self.strategy.__class__.__name__}")
             filtered_results = self.strategy.select_candidates(beam_state, generate_inputs, step)
+
+            print(f"\n[STRATEGY RESULTS] {len(filtered_results)} results selected")
+            for res_idx, result in enumerate(filtered_results):
+                if result.children:
+                    token_ids = [c.token_id for c in result.children]
+                    token_texts = [self.tokenizer.decode([tid], skip_special_tokens=False) for tid in token_ids]
+                    print(f"  Result {res_idx}: {len(result.children)} tokens selected: {token_ids} -> {token_texts}")
+                else:
+                    print(f"  Result {res_idx}: NO CHILDREN (will be eliminated)")
+
             beam_state.add_filtered_results(filtered_results)
-            print(f"After filtering: {len(beam_state.candidates)} candidates")
+            print(f"\n[BEAM STATE] After filtering: {len(beam_state.candidates)} active candidates")
+
+            # Show current sequences for each active candidate
+            for cand_idx, candidate in enumerate(beam_state.candidates):
+                # Reconstruct sequence from trie
+                sequence = []
+                node = candidate.trie_node
+                while node:
+                    sequence = node.tokens + sequence
+                    node = node.parent
+                text = self.tokenizer.decode(sequence, skip_special_tokens=False)
+                print(f"  Candidate {cand_idx} (score={candidate.score:.4f}): {len(sequence)} tokens")
+                print(f"    Text: '{text}'")
 
         # Get final sequences
+        print(f"\n{'='*80}")
+        print(f"=== FINAL RESULTS ===")
+        print(f"{'='*80}")
         final_sequences = self.strategy.get_final_sequences(beam_state, num_return_sequences)
 
         generated_texts = []
-        for tokens, score in final_sequences:
+        for idx, (tokens, score) in enumerate(final_sequences):
             text = self.tokenizer.decode(tokens, skip_special_tokens=True)
             generated_texts.append(text)
-            print(f"Final (score={score:.4f}): {text}")
+            print(f"\n[FINAL {idx+1}] Score: {score:.4f}, Tokens: {len(tokens)}")
+            print(f"  Full token sequence: {tokens}")
+            print(f"  Text: {text}")
+
+        # Show page table statistics
+        print(f"\n[PAGE TABLE] Statistics:")
+        print(f"  Total pages allocated: (tracked in page_table)")
+        print(f"  Page size: {self.page_size}")
 
         return generated_texts
 
