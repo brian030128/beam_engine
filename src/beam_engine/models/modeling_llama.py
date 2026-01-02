@@ -498,7 +498,8 @@ class LlamaAttention(nn.Module):
             
             key_states = key_states.squeeze(0)    # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
             query_states = query_states.squeeze(0)  # [1, num_candidates, num_heads, head_dim] -> [num_candidates, num_heads, head_dim]
-
+            value_states = value_states.squeeze(0)  # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
+            
             # Write current token's K/V to page table for each candidate
             # key_states: [seq_len=num_candidates, num_kv_heads, head_dim]
             # value_states: [ seq_len=num_candidates, num_kv_heads, head_dim]
@@ -510,7 +511,7 @@ class LlamaAttention(nn.Module):
                 page_id = cascade_write_page_indices[cand_idx]
                 write_pos = cascade_write_positions[cand_idx]
 
-                # Extract K/V for this candidate [1, num_kv_heads, head_dim]
+                # Extract K/V for this candidate [num_kv_heads, head_dim]
                 key_to_write = key_states[cand_idx:cand_idx+1, :, :]
                 value_to_write = value_states[cand_idx:cand_idx+1, :, :]
 
