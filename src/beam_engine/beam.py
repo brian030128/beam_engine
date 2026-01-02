@@ -313,6 +313,9 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
             early_stopping=True,
             return_dict_in_generate=True,
             output_scores=True,
+            repetition_penalty = 0.5,
+            length_penalty = 1.1,
+            
         )
 
     generated_texts = []
@@ -373,7 +376,7 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
             beam_size=4,
             max_length=50,
             num_return_sequences=4,
-            temperature=1
+            temperature=0.8
         )
 
         print("\n" + "=" * 80)
