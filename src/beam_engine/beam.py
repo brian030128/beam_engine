@@ -373,7 +373,7 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
             beam_size=4,
             max_length=50,
             num_return_sequences=4,
-            temperature=0.8
+            temperature=1
         )
 
         print("\n" + "=" * 80)
