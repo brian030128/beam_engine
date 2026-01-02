@@ -166,6 +166,13 @@ class BeamSearchGenerator:
             print(f"[DECODE INPUT] Query tokens: {query_token_ids.tolist()}")
             print(f"[DECODE INPUT] Query texts: {query_texts}")
 
+            # Prepare write locations for K/V cache
+            cascade_write_page_indices = [candidate.trie_node.page_id for candidate in beam_state.candidates]
+            cascade_write_positions = [len(candidate.trie_node.tokens) - 1 for candidate in beam_state.candidates]
+
+            print(f"[DECODE INPUT] Write page indices: {cascade_write_page_indices}")
+            print(f"[DECODE INPUT] Write positions: {cascade_write_positions}")
+
             # query_token_ids are already in correct cascade order, just reshape for model
             decode_input_ids = query_token_ids.unsqueeze(0)  # [1, num_candidates]
 
@@ -179,6 +186,8 @@ class BeamSearchGenerator:
                     cascade_kv_indptr_arr=paged_kv_indptr_arr,
                     cascade_kv_indices_arr=paged_kv_indices_arr,
                     cascade_kv_last_page_len_arr=paged_kv_last_page_len_arr,
+                    cascade_write_page_indices=cascade_write_page_indices,
+                    cascade_write_positions=cascade_write_positions,
                 )
                 logits = outputs.logits  # [1, num_candidates, vocab_size]
 
