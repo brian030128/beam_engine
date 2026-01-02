@@ -413,7 +413,7 @@ class LlamaAttention(nn.Module):
             head_dim=head_dim,
             page_size=page_table.page_size,
             causal=True,
-            pos_encoding_mode='None',
+            pos_encoding_mode='NONE',
             sm_scale=self.scaling,
             q_data_type=query.dtype
         )
@@ -499,7 +499,7 @@ class LlamaAttention(nn.Module):
             key_states = key_states.squeeze(0)    # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
             query_states = query_states.squeeze(0)  # [1, num_candidates, num_heads, head_dim] -> [num_candidates, num_heads, head_dim]
             value_states = value_states.squeeze(0)  # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
-            
+
             # Write current token's K/V to page table for each candidate
             # key_states: [seq_len=num_candidates, num_kv_heads, head_dim]
             # value_states: [ seq_len=num_candidates, num_kv_heads, head_dim]
