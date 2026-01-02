@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict, Optional
 
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from models.modeling_llama import LlamaForCausalLM
 from page_table import PageTable
 from attention_mode import AttentionMode
@@ -275,7 +275,43 @@ class BeamSearchGenerator:
 
 
 
-def demo_diverse_beam_search(model, tokenizer):
+def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int = 4,
+                                max_length: int = 50, num_return_sequences: int = 1,
+                                temperature: float = 1.0):
+    """Run HuggingFace's native beam search for comparison."""
+    print("\n" + "=" * 80)
+    print("=== HUGGINGFACE BEAM SEARCH (REFERENCE) ===")
+    print("=" * 80)
+
+    inputs = tokenizer(prompt, return_tensors="pt").to(hf_model.device)
+
+    with torch.no_grad():
+        outputs = hf_model.generate(
+            **inputs,
+            max_length=max_length,
+            num_beams=beam_size,
+            num_return_sequences=num_return_sequences,
+            temperature=temperature,
+            do_sample=False,  # Deterministic beam search
+            early_stopping=True,
+            return_dict_in_generate=True,
+            output_scores=True,
+        )
+
+    generated_texts = []
+    print(f"\n[HF RESULTS] Generated {len(outputs.sequences)} sequences:")
+    for idx, sequence in enumerate(outputs.sequences):
+        text = tokenizer.decode(sequence, skip_special_tokens=True)
+        generated_texts.append(text)
+        tokens = sequence.tolist()
+        print(f"\n[HF {idx+1}] Tokens: {len(tokens)}")
+        print(f"  Full token sequence: {tokens}")
+        print(f"  Text: {text}")
+
+    return generated_texts
+
+
+def demo_diverse_beam_search(model, tokenizer, hf_model=None):
     """Demonstrate diverse beam search generation."""
     print("=== Diverse Beam Search Demo ===")
 
@@ -299,32 +335,71 @@ def demo_diverse_beam_search(model, tokenizer):
         print(f"\nPrompt: '{prompt}'")
         print("-" * 50)
 
-        # Generate diverse sequences
+        # Run HuggingFace beam search first (if available)
+        if hf_model is not None:
+            hf_texts = run_huggingface_beam_search(
+                hf_model=hf_model,
+                tokenizer=tokenizer,
+                prompt=prompt,
+                beam_size=4,
+                max_length=30,
+                num_return_sequences=4,
+                temperature=0.8
+            )
+
+        # Generate diverse sequences with custom implementation
+        print("\n" + "=" * 80)
+        print("=== CUSTOM BEAM SEARCH (CASCADE ATTENTION) ===")
+        print("=" * 80)
         generated_texts = generator.generate(
             input_text=prompt,
+            beam_size=4,
             max_length=30,
             num_return_sequences=4,
             temperature=0.8
         )
 
+        print("\n" + "=" * 80)
+        print("=== COMPARISON ===")
+        print("=" * 80)
+        if hf_model is not None:
+            print("\nHuggingFace Results:")
+            for i, text in enumerate(hf_texts, 1):
+                print(f"  {i}. {text}")
+
+        print("\nCustom Cascade Results:")
         for i, text in enumerate(generated_texts, 1):
-            print(f"{i}. {text}")
+            print(f"  {i}. {text}")
 
 
 
 
 if __name__ == "__main__":
-    print("Loading model and tokenizer...")
-# Model and tokenizer setup
+    print("Loading models and tokenizer...")
+
+    # Model and tokenizer setup
     device = torch.device("cuda:5") if torch.cuda.is_available() else torch.device("cpu")
-    model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B",dtype=torch.float16).to(device)
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
+    model_name = "meta-llama/Llama-3.2-1B"
+
+    # Load custom model with cascade attention
+    print(f"Loading custom model from {model_name}...")
+    model = LlamaForCausalLM.from_pretrained(model_name, dtype=torch.float16).to(device)
+
+    # Load HuggingFace reference model
+    print(f"Loading HuggingFace reference model from {model_name}...")
+    hf_model = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch.float16).to(device)
+
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     # Set pad token if not set
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    # Run demonstrations
-    demo_diverse_beam_search(model, tokenizer)
+
+    print("Models loaded successfully!\n")
+
+    # Run demonstrations with comparison
+    demo_diverse_beam_search(model, tokenizer, hf_model)
 
     print("\n=== Strategy Comparison ===")
     print("Vanilla beam search: Selects candidates purely by score - simple and fast.")
