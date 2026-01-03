@@ -280,7 +280,7 @@ def flashinfer_prefill_attention_forward(
         head_dim,
         page_table.page_size,
         causal=True,
-        pos_encoding_mode="NONE"
+        pos_encoding_mode="ROPE_LLAMA"
     )
     print(f"Debug: Attention computation planned")
 
@@ -412,7 +412,7 @@ class LlamaAttention(nn.Module):
             head_dim=head_dim,
             page_size=page_table.page_size,
             causal=True,
-            pos_encoding_mode='NONE',
+            pos_encoding_mode='ROPE_LLAMA',
             sm_scale=self.scaling,
             q_data_type=query.dtype
         )
