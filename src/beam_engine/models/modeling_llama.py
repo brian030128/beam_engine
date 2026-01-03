@@ -280,7 +280,7 @@ def flashinfer_prefill_attention_forward(
         head_dim,
         page_table.page_size,
         causal=True,
-        pos_encoding_mode="ROPE_LLAMA"
+        pos_encoding_mode="NONE"
     )
     print(f"Debug: Attention computation planned")
 
@@ -412,7 +412,7 @@ class LlamaAttention(nn.Module):
             head_dim=head_dim,
             page_size=page_table.page_size,
             causal=True,
-            pos_encoding_mode='ROPE_LLAMA',
+            pos_encoding_mode='NONE',
             sm_scale=self.scaling,
             q_data_type=query.dtype
         )
@@ -462,10 +462,13 @@ class LlamaAttention(nn.Module):
         key_states = self.k_proj(hidden_states).view(hidden_shape)
         value_states = self.v_proj(hidden_states).view(hidden_shape)
 
+        cos, sin = position_embeddings
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        
         key_states = key_states.squeeze(0)    # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
         query_states = query_states.squeeze(0)  # [1, num_candidates, num_heads, head_dim] -> [num_candidates, num_heads, head_dim]
         value_states = value_states.squeeze(0)  # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
-        rope_params = self.config.rope_scaling
+
 
         # Choose attention implementation based on mode
         if attention_mode == AttentionMode.PREFILL:
@@ -707,7 +710,7 @@ class LlamaModel(LlamaPreTrainedModel):
         )
 
         hidden_states = inputs_embeds
-        #position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             hidden_states = decoder_layer(
@@ -716,7 +719,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 cache_position=cache_position,
-                #position_embeddings=position_embeddings,
+                position_embeddings=position_embeddings,
                 **kwargs,
             )
 
