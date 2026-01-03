@@ -508,7 +508,7 @@ class LlamaAttention(nn.Module):
             flashinfer.rope.apply_llama31_rope_inplace(
                 query_states,
                 key_states,
-                cascade_qo_indptr_arr[len(cascade_qo_indptr_arr) - 1],
+                cascade_qo_indptr_arr[len(cascade_qo_indptr_arr) - 1].to(query_states.device),
                 position_ids
             )
             # flashinfer.rope.apply_llama31_rope_pos_ids_inplace(
