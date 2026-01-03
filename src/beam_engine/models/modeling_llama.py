@@ -506,7 +506,7 @@ class LlamaAttention(nn.Module):
                 raise ValueError("Cascade parameters must be provided for DECODE attention mode")
             if cascade_write_page_indices is None or cascade_write_positions is None:
                 raise ValueError("cascade_write_page_indices and cascade_write_positions must be provided for DECODE attention mode")
-            
+
             num_candidates = key_states.shape[0]
 
             # Vectorized write - much more efficient than looping through candidates
