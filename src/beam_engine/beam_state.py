@@ -349,21 +349,19 @@ class BeamState:
         # ------------------------------------------------------------------
         # Phase 4: Construct Query Token IDs
         # ------------------------------------------------------------------
-        # We need to order query tokens based on the grouping at the FINAL cascade level
+        # Extract query token from each candidate's leaf node
+        # This ensures we get a query token for ALL candidates, regardless of
+        # which cascade level they're at (fixes bug where different branches
+        # have different max cascade levels)
         query_token_ids = []
-        
-        if max_cascade_level in groups_by_level:
-            final_level_groups = groups_by_level[max_cascade_level]
-            sorted_final_groups = sorted(final_level_groups.items(), key=lambda x: x[1][0][0])
-            
-            for _, group_candidates in sorted_final_groups:
-                for _, candidate, _ in group_candidates:
-                    leaf = candidate.trie_node
-                    if leaf.tokens:
-                        query_token_ids.append(leaf.tokens[-1])
-                    else:
-                        query_token_ids.append(0)
-        
+
+        for candidate in self.candidates:
+            leaf = candidate.trie_node
+            if leaf.tokens:
+                query_token_ids.append(leaf.tokens[-1])
+            else:
+                query_token_ids.append(0)
+
         query_token_ids_tensor = torch.tensor(query_token_ids, dtype=torch.long,
                                             device=self.page_table.device)
 
