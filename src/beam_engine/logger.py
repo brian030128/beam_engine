@@ -60,7 +60,7 @@ DEFAULT_LOGGING_CONFIG = {
             "datefmt": _DATE_FORMAT,
         },
         "colored": {
-            "()": "beam_engine.logger.ColoredFormatter",
+            "()": ColoredFormatter,
             "format": _FORMAT,
             "datefmt": _DATE_FORMAT,
         },
