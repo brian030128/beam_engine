@@ -3,11 +3,21 @@
 import logging
 import os
 import sys
+from enum import IntEnum
 from logging.config import dictConfig
 from typing import Optional
 
 _FORMAT = "%(levelname)s %(asctime)s [%(filename)s:%(lineno)d] %(message)s"
 _DATE_FORMAT = "%m-%d %H:%M:%S"
+
+
+class LogLevel(IntEnum):
+    """Logging levels for beam engine"""
+    DEBUG = logging.DEBUG      # 10
+    INFO = logging.INFO        # 20
+    WARNING = logging.WARNING  # 30
+    ERROR = logging.ERROR      # 40
+    CRITICAL = logging.CRITICAL # 50
 
 
 def _get_default_logging_level() -> str:
