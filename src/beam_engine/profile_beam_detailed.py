@@ -57,8 +57,8 @@ def main():
         with torch.no_grad():
             _ = generator.generate(
                 input_text=prompt,
-                beam_size=4,
-                max_length=20,
+                beam_size=8,
+                max_length=500,
                 num_return_sequences=1,
                 temperature=1.0
             )
