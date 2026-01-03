@@ -187,7 +187,7 @@ class BeamSearchGenerator:
                 # Current query token is at position (total_tokens - 1)
                 position_ids_list.append(total_tokens)
 
-            position_ids = torch.tensor(position_ids_list, dtype=torch.int, device=self.device)  # [1, num_candidates]
+            position_ids = torch.tensor([position_ids_list], dtype=torch.int, device=self.device)  # [1, num_candidates]
 
             print(f"[DECODE INPUT] Write page indices: {cascade_write_page_indices}")
             print(f"[DECODE INPUT] Write positions: {cascade_write_positions}")
