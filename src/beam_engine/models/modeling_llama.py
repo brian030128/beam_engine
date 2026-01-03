@@ -463,7 +463,7 @@ class LlamaAttention(nn.Module):
         key_states = self.k_proj(hidden_states).view(hidden_shape)
         value_states = self.v_proj(hidden_states).view(hidden_shape)
 
-        cos, sin = position_embeddings
+        #cos, sin = position_embeddings
 
         # Choose attention implementation based on mode
         if attention_mode == AttentionMode.PREFILL:
