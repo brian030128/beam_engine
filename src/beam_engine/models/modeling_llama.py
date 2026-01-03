@@ -225,8 +225,8 @@ def flashinfer_prefill_attention_forward(
         tokens_in_this_page = min(remaining_tokens, page_table.page_size)
 
         if tokens_in_this_page > 0:
-            page_key = key[0, current_pos:current_pos + tokens_in_this_page, :, :]
-            page_value = value[0, current_pos:current_pos + tokens_in_this_page, :, :]
+            page_key = key[current_pos:current_pos + tokens_in_this_page, :, :]
+            page_value = value[current_pos:current_pos + tokens_in_this_page, :, :]
 
             # Determine the write index for this page
             write_index = 0 if i < len(page_indices) - 1 else 0  # Always start at 0 for prefill
