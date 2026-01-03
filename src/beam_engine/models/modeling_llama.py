@@ -505,7 +505,7 @@ class LlamaAttention(nn.Module):
             # value_states: [ seq_len=num_candidates, num_kv_heads, head_dim]
             num_candidates = key_states.shape[0]
 
-            flashinfer.rope.apply_llama31_rope_pos_ids_inplace(query_states, key_states, position_ids)
+            #flashinfer.rope.apply_llama31_rope_pos_ids_inplace(query_states, key_states, position_ids)
 
             for cand_idx in range(num_candidates):
                 page_id = cascade_write_page_indices[cand_idx]
