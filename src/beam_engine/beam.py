@@ -374,7 +374,7 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
         generated_texts = generator.generate(
             input_text=prompt,
             beam_size=4,
-            max_length=50,
+            max_length=30,
             num_return_sequences=4,
             temperature=0.8
         )
