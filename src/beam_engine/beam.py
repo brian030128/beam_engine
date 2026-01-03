@@ -185,7 +185,7 @@ class BeamSearchGenerator:
                     total_tokens += len(node.tokens)
                     node = node.parent
                 # Current query token is at position (total_tokens - 1)
-                position_ids_list.append(total_tokens)
+                position_ids_list.append(total_tokens - 1)
 
             position_ids = torch.tensor(position_ids_list, dtype=torch.int, device=self.device)  # [1, num_candidates]
 
