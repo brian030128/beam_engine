@@ -110,13 +110,15 @@ def init_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-def set_logging_level(level: str) -> None:
+def set_logging_level(level) -> None:
     """Set the logging level for all beam_engine loggers
 
     Args:
-        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) as string or LogLevel enum
     """
-    level = level.upper()
+    # Convert string to uppercase, leave enum/int as-is
+    if hasattr(level, 'upper'):
+        level = level.upper()
     logger = logging.getLogger("beam_engine")
     logger.setLevel(level)
     for handler in logger.handlers:
