@@ -559,7 +559,7 @@ if __name__ == "__main__":
     from logger import set_logging_level, LogLevel
 
     # Set logging level to INFO (hides DEBUG messages)
-    set_logging_level(LogLevel.INFO)
+    set_logging_level(LogLevel.DEBUG)
 
     logger.info("Loading models and tokenizer...")
 

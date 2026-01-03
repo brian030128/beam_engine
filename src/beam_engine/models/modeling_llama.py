@@ -327,7 +327,8 @@ def flashinfer_prefill_attention_forward(
 
     return attn_output, None  # FlashInfer doesn't return attention weights
 
-
+workspace_size = 128 * 1024 * 1024  # 128MB
+workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
 
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
@@ -391,8 +392,7 @@ class LlamaAttention(nn.Module):
         # TODO: Store current token's K/V in page table for next iteration
 
         # Create workspace buffer
-        workspace_size = 128 * 1024 * 1024  # 128MB
-        workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
+
 
         # Initialize cascade wrapper
         cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
