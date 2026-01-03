@@ -11,7 +11,7 @@ from attention_mode import AttentionMode
 
 from beam_state import BeamState, TrieNode, BeamCandidate, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
 from beam_strategy import BeamStrategy, DiverseBeamSearchStrategy, VanillaBeamSearchStrategy
-from .logger import init_logger
+from logger import init_logger
 
 logger = init_logger(__name__)
 
@@ -402,7 +402,7 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
 
 
 if __name__ == "__main__":
-    from beam_engine.logger import set_logging_level, LogLevel
+    from logger import set_logging_level, LogLevel
 
     # Set logging level to INFO (hides DEBUG messages)
     set_logging_level(LogLevel.INFO)
