@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import time
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict, Optional
 
@@ -309,6 +310,12 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
 
     inputs = tokenizer(prompt, return_tensors="pt").to(hf_model.device)
 
+    # Warm up GPU
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+    start_time = time.perf_counter()
+
     with torch.no_grad():
         outputs = hf_model.generate(
             **inputs,
@@ -325,6 +332,12 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
 
         )
 
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+    end_time = time.perf_counter()
+    elapsed_time = end_time - start_time
+
     generated_texts = []
     logger.info(f"\n[HF RESULTS] Generated {len(outputs.sequences)} sequences:")
     for idx, sequence in enumerate(outputs.sequences):
@@ -335,7 +348,9 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
         logger.info(f"  Full token sequence: {tokens}")
         logger.info(f"  Text: {text}")
 
-    return generated_texts
+    logger.info(f"\n[HF TIMING] Total generation time: {elapsed_time:.4f}s ({elapsed_time*1000:.2f}ms)")
+
+    return generated_texts, elapsed_time
 
 
 def demo_diverse_beam_search(model, tokenizer, hf_model=None):
@@ -362,9 +377,12 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
         logger.info(f"\nPrompt: '{prompt}'")
         logger.info("-" * 50)
 
+        hf_time = None
+        custom_time = None
+
         # Run HuggingFace beam search first (if available)
         if hf_model is not None:
-            hf_texts = run_huggingface_beam_search(
+            hf_texts, hf_time = run_huggingface_beam_search(
                 hf_model=hf_model,
                 tokenizer=tokenizer,
                 prompt=prompt,
@@ -378,6 +396,13 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
         logger.info("\n" + "=" * 80)
         logger.info("=== CUSTOM BEAM SEARCH (CASCADE ATTENTION) ===")
         logger.info("=" * 80)
+
+        # Warm up GPU
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        start_time = time.perf_counter()
+
         generated_texts = generator.generate(
             input_text=prompt,
             beam_size=4,
@@ -385,6 +410,14 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
             num_return_sequences=4,
             temperature=1.0
         )
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        end_time = time.perf_counter()
+        custom_time = end_time - start_time
+
+        logger.info(f"\n[CUSTOM TIMING] Total generation time: {custom_time:.4f}s ({custom_time*1000:.2f}ms)")
 
         logger.info("\n" + "=" * 80)
         logger.info("=== COMPARISON ===")
@@ -397,6 +430,24 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
         logger.info("\nCustom Cascade Results:")
         for i, text in enumerate(generated_texts, 1):
             logger.info(f"  {i}. {text}")
+
+        # Performance comparison
+        if hf_time is not None and custom_time is not None:
+            logger.info("\n" + "=" * 80)
+            logger.info("=== PERFORMANCE BENCHMARK ===")
+            logger.info("=" * 80)
+            logger.info(f"HuggingFace time:  {hf_time:.4f}s ({hf_time*1000:.2f}ms)")
+            logger.info(f"Custom time:       {custom_time:.4f}s ({custom_time*1000:.2f}ms)")
+
+            speedup = hf_time / custom_time
+            if speedup > 1:
+                logger.info(f"Speedup:           {speedup:.2f}x faster (Custom is better)")
+            else:
+                logger.info(f"Slowdown:          {1/speedup:.2f}x slower (HuggingFace is better)")
+
+            time_diff = abs(hf_time - custom_time)
+            logger.info(f"Time difference:   {time_diff:.4f}s ({time_diff*1000:.2f}ms)")
+            logger.info("=" * 80)
 
 
 
