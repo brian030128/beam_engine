@@ -13,7 +13,7 @@ sys.path.insert(0, str(src_path.parent))
 
 from beam_engine.page_table import PageTable
 from beam_engine.beam_state import BeamState, BeamCandidate, TrieNode
-from beam_engine.logger import init_logger
+from .logger import init_logger
 
 logger = init_logger(__name__)
 

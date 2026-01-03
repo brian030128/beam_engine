@@ -11,7 +11,7 @@ from attention_mode import AttentionMode
 
 from beam_state import BeamState, TrieNode, BeamCandidate, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
 from beam_strategy import BeamStrategy, DiverseBeamSearchStrategy, VanillaBeamSearchStrategy
-from beam_engine.logger import init_logger
+from .logger import init_logger
 
 logger = init_logger(__name__)
 
