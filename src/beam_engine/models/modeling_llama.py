@@ -471,14 +471,14 @@ class LlamaAttention(nn.Module):
         if attention_mode == AttentionMode.PREFILL:
             if page_table is None or page_indices is None:
                 raise ValueError("PageTable and page_indices must be provided for PREFILL attention mode")       
-            flashinfer.rope.apply_rope_pos_ids_inplace(
-                query_states,
-                key_states,
-                position_ids,
-                rope_scale=rope_params.get("factor", 8.0),
-                rope_theta=self.config.rope_theta,
-                interleave=False # Llama uses non-interleaved (rotate_half)
-            )
+            # flashinfer.rope.apply_rope_pos_ids_inplace(
+            #     query_states,
+            #     key_states,
+            #     position_ids,
+            #     rope_scale=rope_params.get("factor", 8.0),
+            #     rope_theta=self.config.rope_theta,
+            #     interleave=False # Llama uses non-interleaved (rotate_half)
+            # )
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
                 query_states,
@@ -511,18 +511,18 @@ class LlamaAttention(nn.Module):
             # value_states: [ seq_len=num_candidates, num_kv_heads, head_dim]
             num_candidates = key_states.shape[0]
             
-            flashinfer.rope.apply_llama31_rope_inplace(
-                query_states,
-                key_states,
-                cascade_qo_indptr_arr[len(cascade_qo_indptr_arr) - 1].to(query_states.device),
-                position_ids,
-                rope_scale=rope_params.get("factor", 8.0),
-                rope_theta=self.config.rope_theta,
-                low_freq_factor=rope_params.get("low_freq_factor", 1.0),
-                high_freq_factor=rope_params.get("high_freq_factor", 4.0),
-                old_context_len=rope_params.get("original_max_position_embeddings", 8192),
-                interleave=False # Llama uses non-interleaved (rotate_half)
-            )
+            # flashinfer.rope.apply_llama31_rope_inplace(
+            #     query_states,
+            #     key_states,
+            #     cascade_qo_indptr_arr[len(cascade_qo_indptr_arr) - 1].to(query_states.device),
+            #     position_ids,
+            #     rope_scale=rope_params.get("factor", 8.0),
+            #     rope_theta=self.config.rope_theta,
+            #     low_freq_factor=rope_params.get("low_freq_factor", 1.0),
+            #     high_freq_factor=rope_params.get("high_freq_factor", 4.0),
+            #     old_context_len=rope_params.get("original_max_position_embeddings", 8192),
+            #     interleave=False # Llama uses non-interleaved (rotate_half)
+            # )
             # flashinfer.rope.apply_llama31_rope_pos_ids_inplace(
             #     query_states,
             #     key_states,
