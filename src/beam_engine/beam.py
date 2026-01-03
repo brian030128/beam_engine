@@ -223,7 +223,7 @@ class BeamSearchGenerator:
 
                 candidate_probs = F.log_softmax(candidate_logits, dim=-1)
 
-                top_k = min(beam_size * 2, candidate_probs.shape[0])
+                top_k = min(beam_size * 2, candidate_probs.shape[0]) if beam_size != 1 else 1
                 top_probs, top_indices = torch.topk(candidate_probs, top_k)
 
                 # Debug: show top tokens for this candidate
