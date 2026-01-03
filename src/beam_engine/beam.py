@@ -256,19 +256,26 @@ class BeamSearchGenerator:
             # Time token selection
             token_selection_start = time.perf_counter()
 
+            # Vectorized operations: process all candidates at once
+            all_logits = logits[0]  # [num_candidates, vocab_size]
+
+            if temperature != 1.0:
+                all_logits = all_logits / temperature
+
+            all_probs = F.log_softmax(all_logits, dim=-1)  # [num_candidates, vocab_size]
+
+            # Compute topk for all candidates at once
+            top_k = min(beam_size * 2, all_probs.shape[1]) if beam_size != 1 else 1
+            all_top_probs, all_top_indices = torch.topk(all_probs, top_k, dim=-1)  # [num_candidates, top_k]
+
             # Create BeamGenerateInput for each candidate
             generate_inputs = []
             logger.debug(f"\n[TOKEN SELECTION] Processing {len(beam_state.candidates)} candidates")
+
             for cand_idx, candidate in enumerate(beam_state.candidates):
-                candidate_logits = logits[0, cand_idx, :]
-
-                if temperature != 1.0:
-                    candidate_logits = candidate_logits / temperature
-
-                candidate_probs = F.log_softmax(candidate_logits, dim=-1)
-
-                top_k = min(beam_size * 2, candidate_probs.shape[0]) if beam_size != 1 else 1
-                top_probs, top_indices = torch.topk(candidate_probs, top_k)
+                # Get pre-computed topk results for this candidate
+                top_probs = all_top_probs[cand_idx]
+                top_indices = all_top_indices[cand_idx]
 
                 # Debug: show top tokens for this candidate
                 logger.debug(f"  [Candidate {cand_idx}] score={candidate.score:.4f}, page_id={candidate.trie_node.page_id}")
