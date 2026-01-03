@@ -365,9 +365,9 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
                 hf_model=hf_model,
                 tokenizer=tokenizer,
                 prompt=prompt,
-                beam_size=1,
-                max_length=9,
-                num_return_sequences=1,
+                beam_size=4,
+                max_length=30,
+                num_return_sequences=4,
                 temperature=1.0
             )
 
@@ -377,9 +377,9 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
         print("=" * 80)
         generated_texts = generator.generate(
             input_text=prompt,
-            beam_size=1,
-            max_length=9,
-            num_return_sequences=1,
+            beam_size=4,
+            max_length=30,
+            num_return_sequences=4,
             temperature=1.0
         )
 
