@@ -213,9 +213,8 @@ def flashinfer_prefill_attention_forward(
     FlashInfer prefill attention using batch prefill with paged KV cache.
     page_indices must be pre-allocated BEFORE calling this function.
     """
-    batch_size, seq_len, num_heads, head_dim = query.shape
+    seq_len, num_heads, head_dim = query.shape
 
-    assert batch_size == 1, "Current implementation expects single sequence per call"
 
     # DON'T allocate pages here - use the pre-allocated page_indices
     # Write KV states to the pre-allocated pages for THIS LAYER
@@ -471,7 +470,7 @@ class LlamaAttention(nn.Module):
         # Choose attention implementation based on mode
         if attention_mode == AttentionMode.PREFILL:
             if page_table is None or page_indices is None:
-                raise ValueError("PageTable and page_indices must be provided for PREFILL attention mode")
+                raise ValueError("PageTable and page_indices must be provided for PREFILL attention mode")       
             flashinfer.rope.apply_rope_pos_ids_inplace(query_states, key_states, position_ids)
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
