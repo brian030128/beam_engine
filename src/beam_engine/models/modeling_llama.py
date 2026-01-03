@@ -514,7 +514,6 @@ class LlamaAttention(nn.Module):
                 rope_theta=self.config.rope_theta,
                 low_freq_factor=rope_params.get("low_freq_factor", 1.0),
                 high_freq_factor=rope_params.get("high_freq_factor", 4.0),
-                old_context_len=rope_params.get("original_max_position_embeddings", 8192),
                 interleave=False # Llama uses non-interleaved (rotate_half)
             )
             # flashinfer.rope.apply_llama31_rope_pos_ids_inplace(
