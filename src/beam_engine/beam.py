@@ -77,9 +77,13 @@ class BeamSearchGenerator:
         new_nodes = beam_state.add_root_sequence(input_tokens)
         page_indices = [ n.page_id for n in new_nodes]
 
+        # Compute position IDs for prefilling (sequential from 0 to len-1)
+        prefill_position_ids = torch.arange(0, input_ids.shape[1], dtype=torch.long, device=self.device).unsqueeze(0)
+
         with torch.no_grad():
             outputs = self.model(
                 input_ids,
+                position_ids=prefill_position_ids,
                 attention_mode=AttentionMode.PREFILL,
                 page_table=self.page_table,
                 page_indices=page_indices,

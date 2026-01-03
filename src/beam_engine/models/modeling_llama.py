@@ -281,7 +281,7 @@ def flashinfer_prefill_attention_forward(
         head_dim,
         page_table.page_size,
         causal=True,
-        pos_encoding_mode="ROPE_LLAMA"
+        pos_encoding_mode="None"
     )
     print(f"Debug: Attention computation planned")
 
@@ -463,13 +463,13 @@ class LlamaAttention(nn.Module):
         key_states = self.k_proj(hidden_states).view(hidden_shape)
         value_states = self.v_proj(hidden_states).view(hidden_shape)
 
-        #cos, sin = position_embeddings
+
 
         # Choose attention implementation based on mode
         if attention_mode == AttentionMode.PREFILL:
             if page_table is None or page_indices is None:
                 raise ValueError("PageTable and page_indices must be provided for PREFILL attention mode")
-
+            flashinfer.rope.apply_rope_pos_ids_inplace(query_states, key_states, position_ids)
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
                 query_states,
