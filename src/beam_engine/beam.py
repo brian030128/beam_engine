@@ -16,7 +16,7 @@ from beam_strategy import BeamStrategy, DiverseBeamSearchStrategy, VanillaBeamSe
 class BeamSearchGenerator:
     """Main beam search generator with pluggable strategies."""
 
-    def __init__(self, model, tokenizer, strategy: BeamStrategy, page_size: int = 64):
+    def __init__(self, model, tokenizer, strategy: BeamStrategy, page_size: int = 8):
         """
         Args:
             model: The language model
