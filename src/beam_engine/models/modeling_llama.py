@@ -280,7 +280,7 @@ def flashinfer_prefill_attention_forward(
         head_dim,
         page_table.page_size,
         causal=True,
-        pos_encoding_mode="None"
+        pos_encoding_mode="NONE"
     )
     print(f"Debug: Attention computation planned")
 
