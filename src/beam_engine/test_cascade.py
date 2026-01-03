@@ -13,6 +13,9 @@ sys.path.insert(0, str(src_path.parent))
 
 from beam_engine.page_table import PageTable
 from beam_engine.beam_state import BeamState, BeamCandidate, TrieNode
+from beam_engine.logger import init_logger
+
+logger = init_logger(__name__)
 
 
 def build_cascade_example_tree(beam_state: BeamState):
@@ -103,9 +106,9 @@ def build_cascade_example_tree(beam_state: BeamState):
 def test_cascade_input():
     """Test get_cascade_input with the exact example from cascade.md"""
 
-    print("=" * 80)
-    print("Testing BeamState.get_cascade_input() with cascade.md example")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("Testing BeamState.get_cascade_input() with cascade.md example")
+    logger.info("=" * 80)
 
     # Create page table with page_size=4 to match cascade.md
     page_table = PageTable(
@@ -124,8 +127,8 @@ def test_cascade_input():
     # Build the example tree structure
     build_cascade_example_tree(beam_state)
 
-    print(f"\nCreated tree with {len(beam_state.candidates)} candidates")
-    print(f"Root: {beam_state.root}")
+    logger.info(f"\nCreated tree with {len(beam_state.candidates)} candidates")
+    logger.info(f"Root: {beam_state.root}")
 
     # Call get_cascade_input with timing
     start_time = time.perf_counter()
@@ -134,19 +137,19 @@ def test_cascade_input():
     end_time = time.perf_counter()
     elapsed_ms = (end_time - start_time) * 1000
 
-    print(f"\nget_cascade_input() took {elapsed_ms:.4f} ms")
-    print(f"Number of cascade levels: {len(qo_indptr_arr)}")
+    logger.info(f"\nget_cascade_input() took {elapsed_ms:.4f} ms")
+    logger.info(f"Number of cascade levels: {len(qo_indptr_arr)}")
 
     # Print raw outputs for inspection
-    print("\n" + "=" * 80)
-    print("RAW OUTPUTS:")
-    print("=" * 80)
+    logger.info("\n" + "=" * 80)
+    logger.info("RAW OUTPUTS:")
+    logger.info("=" * 80)
     for level_idx in range(len(qo_indptr_arr)):
-        print(f"\n--- Level {level_idx} ---")
-        print(f"qo_indptr:             {qo_indptr_arr[level_idx].tolist()}")
-        print(f"paged_kv_indptr:       {paged_kv_indptr_arr[level_idx].tolist()}")
-        print(f"paged_kv_indices:      {paged_kv_indices_arr[level_idx].tolist()}")
-        print(f"paged_kv_last_page_len: {paged_kv_last_page_len[level_idx].tolist()}")
+        logger.info(f"\n--- Level {level_idx} ---")
+        logger.info(f"qo_indptr:             {qo_indptr_arr[level_idx].tolist()}")
+        logger.info(f"paged_kv_indptr:       {paged_kv_indptr_arr[level_idx].tolist()}")
+        logger.info(f"paged_kv_indices:      {paged_kv_indices_arr[level_idx].tolist()}")
+        logger.info(f"paged_kv_last_page_len: {paged_kv_last_page_len[level_idx].tolist()}")
 
     # Verify the outputs
     verify_cascade_output(beam_state, qo_indptr_arr, paged_kv_indptr_arr,
@@ -223,9 +226,9 @@ def verify_cascade_output(beam_state, qo_indptr_arr, paged_kv_indptr_arr,
     3. Verify they match
     4. Verify query token matches the last token in the candidate's leaf node
     """
-    print("\n" + "=" * 80)
-    print("VERIFICATION: Reconstructing page sequences for each candidate")
-    print("=" * 80)
+    logger.info("\n" + "=" * 80)
+    logger.info("VERIFICATION: Reconstructing page sequences for each candidate")
+    logger.info("=" * 80)
 
     all_match = True
 
@@ -256,7 +259,7 @@ def verify_cascade_output(beam_state, qo_indptr_arr, paged_kv_indptr_arr,
                     break
 
             if group_idx is None:
-                print(f"ERROR: Could not find group for candidate {cand_idx} at level {level_idx}")
+                logger.info(f"ERROR: Could not find group for candidate {cand_idx} at level {level_idx}")
                 all_match = False
                 continue
 
@@ -274,23 +277,23 @@ def verify_cascade_output(beam_state, qo_indptr_arr, paged_kv_indptr_arr,
 
         status = "✓" if (pages_match and query_match) else "✗"
 
-        print(f"\n{status} Candidate {cand_idx}:")
-        print(f"  Expected pages:      {expected_pages}")
-        print(f"  Reconstructed pages: {reconstructed_pages}")
-        print(f"  Pages match: {'YES' if pages_match else 'NO'}")
-        print(f"  Expected query token:  {expected_query_token}")
-        print(f"  Actual query token:    {q[cand_idx].item()}")
-        print(f"  Query match: {'YES' if query_match else 'NO'}")
+        logger.info(f"\n{status} Candidate {cand_idx}:")
+        logger.info(f"  Expected pages:      {expected_pages}")
+        logger.info(f"  Reconstructed pages: {reconstructed_pages}")
+        logger.info(f"  Pages match: {'YES' if pages_match else 'NO'}")
+        logger.info(f"  Expected query token:  {expected_query_token}")
+        logger.info(f"  Actual query token:    {q[cand_idx].item()}")
+        logger.info(f"  Query match: {'YES' if query_match else 'NO'}")
 
         if not pages_match or not query_match:
             all_match = False
 
-    print("\n" + "=" * 80)
+    logger.info("\n" + "=" * 80)
     if all_match:
-        print("✓ ALL CANDIDATES VERIFIED SUCCESSFULLY!")
+        logger.info("✓ ALL CANDIDATES VERIFIED SUCCESSFULLY!")
     else:
-        print("✗ VERIFICATION FAILED FOR SOME CANDIDATES")
-    print("=" * 80)
+        logger.info("✗ VERIFICATION FAILED FOR SOME CANDIDATES")
+    logger.info("=" * 80)
 
     return all_match
 
@@ -298,9 +301,9 @@ def verify_cascade_output(beam_state, qo_indptr_arr, paged_kv_indptr_arr,
 def test_cascade_input_swapped():
     """Test get_cascade_input with swapped branch construction order"""
 
-    print("=" * 80)
-    print("Testing BeamState.get_cascade_input() with SWAPPED branch order")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("Testing BeamState.get_cascade_input() with SWAPPED branch order")
+    logger.info("=" * 80)
 
     # Create page table with page_size=4 to match cascade.md
     page_table = PageTable(
@@ -319,8 +322,8 @@ def test_cascade_input_swapped():
     # Build the swapped tree structure
     build_cascade_swapped_tree(beam_state)
 
-    print(f"\nCreated tree with {len(beam_state.candidates)} candidates")
-    print(f"Root: {beam_state.root}")
+    logger.info(f"\nCreated tree with {len(beam_state.candidates)} candidates")
+    logger.info(f"Root: {beam_state.root}")
 
     # Call get_cascade_input with timing
     start_time = time.perf_counter()
@@ -329,19 +332,19 @@ def test_cascade_input_swapped():
     end_time = time.perf_counter()
     elapsed_ms = (end_time - start_time) * 1000
 
-    print(f"\nget_cascade_input() took {elapsed_ms:.4f} ms")
-    print(f"Number of cascade levels: {len(qo_indptr_arr)}")
+    logger.info(f"\nget_cascade_input() took {elapsed_ms:.4f} ms")
+    logger.info(f"Number of cascade levels: {len(qo_indptr_arr)}")
 
     # Print raw outputs for inspection
-    print("\n" + "=" * 80)
-    print("RAW OUTPUTS:")
-    print("=" * 80)
+    logger.info("\n" + "=" * 80)
+    logger.info("RAW OUTPUTS:")
+    logger.info("=" * 80)
     for level_idx in range(len(qo_indptr_arr)):
-        print(f"\n--- Level {level_idx} ---")
-        print(f"qo_indptr:             {qo_indptr_arr[level_idx].tolist()}")
-        print(f"paged_kv_indptr:       {paged_kv_indptr_arr[level_idx].tolist()}")
-        print(f"paged_kv_indices:      {paged_kv_indices_arr[level_idx].tolist()}")
-        print(f"paged_kv_last_page_len: {paged_kv_last_page_len[level_idx].tolist()}")
+        logger.info(f"\n--- Level {level_idx} ---")
+        logger.info(f"qo_indptr:             {qo_indptr_arr[level_idx].tolist()}")
+        logger.info(f"paged_kv_indptr:       {paged_kv_indptr_arr[level_idx].tolist()}")
+        logger.info(f"paged_kv_indices:      {paged_kv_indices_arr[level_idx].tolist()}")
+        logger.info(f"paged_kv_last_page_len: {paged_kv_last_page_len[level_idx].tolist()}")
 
     # Verify the outputs
     verify_cascade_output(beam_state, qo_indptr_arr, paged_kv_indptr_arr,
@@ -372,9 +375,9 @@ def test_uneven_cascade_levels():
     Expected query tokens: [5, 6, 11] (for all 3 candidates)
     Bug: Only returns 2 query tokens [5, 6] (only from max level 2)
     """
-    print("=" * 80)
-    print("Testing BeamState.get_cascade_input() with UNEVEN cascade levels")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("Testing BeamState.get_cascade_input() with UNEVEN cascade levels")
+    logger.info("=" * 80)
 
     page_table = PageTable(
         layer_num=1,
@@ -408,48 +411,48 @@ def test_uneven_cascade_levels():
         BeamCandidate(trie_node=leaf_b1, score=0.0),  # Candidate 2, level 1
     ]
 
-    print(f"\nCreated tree with {len(beam_state.candidates)} candidates")
-    print("Expected cascade structure:")
-    print("  - Level 0: 1 group (root with 3 candidates)")
-    print("  - Level 1: 2 groups (branch_a with 2 candidates, branch_b with 1 candidate)")
-    print("  - Level 2: 2 groups (leaf_a1, leaf_a2) - only from branch A")
-    print("\nExpected query tokens: [5, 6, 11]")
+    logger.info(f"\nCreated tree with {len(beam_state.candidates)} candidates")
+    logger.info("Expected cascade structure:")
+    logger.info("  - Level 0: 1 group (root with 3 candidates)")
+    logger.info("  - Level 1: 2 groups (branch_a with 2 candidates, branch_b with 1 candidate)")
+    logger.info("  - Level 2: 2 groups (leaf_a1, leaf_a2) - only from branch A")
+    logger.info("\nExpected query tokens: [5, 6, 11]")
 
     # Call get_cascade_input
     (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
      paged_kv_last_page_len, q) = beam_state.get_cascade_input()
 
-    print(f"\nActual query tokens: {q.tolist()}")
-    print(f"Number of query tokens: {len(q)}")
+    logger.info(f"\nActual query tokens: {q.tolist()}")
+    logger.info(f"Number of query tokens: {len(q)}")
 
     # Verify
     expected_query_tokens = [5, 6, 11]
 
-    print("\n" + "=" * 80)
-    print("VERIFICATION:")
-    print("=" * 80)
+    logger.info("\n" + "=" * 80)
+    logger.info("VERIFICATION:")
+    logger.info("=" * 80)
 
     if len(q) != len(beam_state.candidates):
-        print(f"✗ FAILED: Expected {len(beam_state.candidates)} query tokens, got {len(q)}")
-        print(f"  This demonstrates the bug where only candidates at max_cascade_level")
-        print(f"  are included in query_token_ids.")
+        logger.info(f"✗ FAILED: Expected {len(beam_state.candidates)} query tokens, got {len(q)}")
+        logger.info(f"  This demonstrates the bug where only candidates at max_cascade_level")
+        logger.info(f"  are included in query_token_ids.")
         return False
 
     actual_tokens = q.tolist()
     # Since order might differ due to grouping, check if all expected tokens are present
     if sorted(actual_tokens) != sorted(expected_query_tokens):
-        print(f"✗ FAILED: Query tokens don't match")
-        print(f"  Expected (sorted): {sorted(expected_query_tokens)}")
-        print(f"  Got (sorted):      {sorted(actual_tokens)}")
+        logger.info(f"✗ FAILED: Query tokens don't match")
+        logger.info(f"  Expected (sorted): {sorted(expected_query_tokens)}")
+        logger.info(f"  Got (sorted):      {sorted(actual_tokens)}")
         return False
 
-    print("✓ PASSED: All query tokens present and correct!")
+    logger.info("✓ PASSED: All query tokens present and correct!")
     return True
 
 
 if __name__ == "__main__":
     test_cascade_input()
-    print("\n\n")
+    logger.info("\n\n")
     test_cascade_input_swapped()
-    print("\n\n")
+    logger.info("\n\n")
     test_uneven_cascade_levels()

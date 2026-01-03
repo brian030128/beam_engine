@@ -11,6 +11,9 @@ from attention_mode import AttentionMode
 
 from beam_state import BeamState, TrieNode, BeamCandidate, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
 from beam_strategy import BeamStrategy, DiverseBeamSearchStrategy, VanillaBeamSearchStrategy
+from beam_engine.logger import init_logger
+
+logger = init_logger(__name__)
 
 
 class BeamSearchGenerator:
@@ -95,9 +98,9 @@ class BeamSearchGenerator:
         next_token_logits = logits[0, -1, :]  # Last token logits
 
         # Debug: Check what the model actually computed
-        print(f"Debug: Prefill - Model outputs shape: {outputs.logits.shape}")
-        print(f"Debug: Prefill - Next token logits stats - mean: {next_token_logits.mean().item():.4f}, std: {next_token_logits.std().item():.4f}")
-        print(f"Debug: Prefill - Logits range - min: {next_token_logits.min().item():.4f}, max: {next_token_logits.max().item():.4f}")
+        logger.debug(f"Debug: Prefill - Model outputs shape: {outputs.logits.shape}")
+        logger.debug(f"Debug: Prefill - Next token logits stats - mean: {next_token_logits.mean().item():.4f}, std: {next_token_logits.std().item():.4f}")
+        logger.debug(f"Debug: Prefill - Logits range - min: {next_token_logits.min().item():.4f}, max: {next_token_logits.max().item():.4f}")
 
         # Apply temperature
         if temperature != 1.0:
@@ -111,15 +114,15 @@ class BeamSearchGenerator:
         top_probs, top_indices = torch.topk(next_token_probs, top_k)
 
         # Debug: Print prefill token generation details
-        print(f"\n=== PREFILL TOKEN GENERATION DEBUG ===")
-        print(f"Input sequence: {input_ids[0].tolist()}")
-        print(f"Input text: '{self.tokenizer.decode(input_ids[0].tolist(), skip_special_tokens=False)}'")
-        print(f"Next token logits shape: {next_token_logits.shape}")
-        print(f"Top {min(10, len(top_indices))} tokens:")
+        logger.debug(f"\n=== PREFILL TOKEN GENERATION DEBUG ===")
+        logger.debug(f"Input sequence: {input_ids[0].tolist()}")
+        logger.debug(f"Input text: '{self.tokenizer.decode(input_ids[0].tolist(), skip_special_tokens=False)}'")
+        logger.debug(f"Next token logits shape: {next_token_logits.shape}")
+        logger.debug(f"Top {min(10, len(top_indices))} tokens:")
         for i, (prob, token_id) in enumerate(zip(top_probs[:10], top_indices[:10])):
             token_text = self.tokenizer.decode([token_id.item()], skip_special_tokens=False)
-            print(f"  {i+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
-        print("=" * 50)
+            logger.debug(f"  {i+1}. Token {token_id.item()}: '{token_text}' (prob: {prob.item():.4f})")
+        logger.debug("=" * 50)
 
         # After add_root_sequence, beam_state has 1 root candidate
         if not beam_state.candidates:
@@ -136,15 +139,15 @@ class BeamSearchGenerator:
 
         initial_result = BeamGenerateResult(candidate=root_candidate, children=initial_tokens)
         beam_state.add_filtered_results([initial_result])
-        print(f"\nExpanded root into {len(beam_state.candidates)} beam candidates")
+        logger.debug(f"\nExpanded root into {len(beam_state.candidates)} beam candidates")
 
         # Decode loop
         for step in range(max_length - len(input_tokens) - 1):
-            print(f"\n{'='*80}")
-            print(f"{'='*80}")
-            print(f"=== DECODE STEP {step + 1} ===")
-            print(f"{'='*80}")
-            print(f"[STEP START] {len(beam_state.candidates)} active candidates before this step")
+            logger.debug(f"\n{'='*80}")
+            logger.debug(f"{'='*80}")
+            logger.debug(f"=== DECODE STEP {step + 1} ===")
+            logger.debug(f"{'='*80}")
+            logger.debug(f"[STEP START] {len(beam_state.candidates)} active candidates before this step")
 
             # Show current state of all candidates
             for cand_idx, candidate in enumerate(beam_state.candidates):
@@ -154,21 +157,21 @@ class BeamSearchGenerator:
                     sequence = node.tokens + sequence
                     node = node.parent
                 text = self.tokenizer.decode(sequence, skip_special_tokens=False)
-                print(f"  Candidate {cand_idx}: score={candidate.score:.4f}, len={len(sequence)}, page_id={candidate.trie_node.page_id}")
-                print(f"    Current text: '{text}'")
+                logger.debug(f"  Candidate {cand_idx}: score={candidate.score:.4f}, len={len(sequence)}, page_id={candidate.trie_node.page_id}")
+                logger.debug(f"    Current text: '{text}'")
 
             if self.strategy.should_stop(beam_state, max_length, step):
-                print("Stopping condition met")
+                logger.debug("Stopping condition met")
                 break
 
             # Get cascade input including query token IDs
             (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
              paged_kv_last_page_len_arr, query_token_ids) = beam_state.get_cascade_input()
 
-            print(f"\n[DECODE INPUT] Cascade levels: {len(qo_indptr_arr)}, Candidates: {len(beam_state.candidates)}, Query tokens: {len(query_token_ids)}")
+            logger.debug(f"\n[DECODE INPUT] Cascade levels: {len(qo_indptr_arr)}, Candidates: {len(beam_state.candidates)}, Query tokens: {len(query_token_ids)}")
             query_texts = [self.tokenizer.decode([tid], skip_special_tokens=False) for tid in query_token_ids.tolist()]
-            print(f"[DECODE INPUT] Query tokens: {query_token_ids.tolist()}")
-            print(f"[DECODE INPUT] Query texts: {query_texts}")
+            logger.debug(f"[DECODE INPUT] Query tokens: {query_token_ids.tolist()}")
+            logger.debug(f"[DECODE INPUT] Query texts: {query_texts}")
 
             # Prepare write locations for K/V cache
             cascade_write_page_indices = [candidate.trie_node.page_id for candidate in beam_state.candidates]
@@ -189,9 +192,9 @@ class BeamSearchGenerator:
 
             position_ids = torch.tensor([position_ids_list], dtype=torch.int, device=self.device)  # [1, num_candidates]
 
-            print(f"[DECODE INPUT] Write page indices: {cascade_write_page_indices}")
-            print(f"[DECODE INPUT] Write positions: {cascade_write_positions}")
-            print(f"[DECODE INPUT] Position IDs: {position_ids_list}")
+            logger.debug(f"[DECODE INPUT] Write page indices: {cascade_write_page_indices}")
+            logger.debug(f"[DECODE INPUT] Write positions: {cascade_write_positions}")
+            logger.debug(f"[DECODE INPUT] Position IDs: {position_ids_list}")
 
             # query_token_ids are already in correct cascade order, just reshape for model
             decode_input_ids = query_token_ids.unsqueeze(0)  # [1, num_candidates]
@@ -214,7 +217,7 @@ class BeamSearchGenerator:
 
             # Create BeamGenerateInput for each candidate
             generate_inputs = []
-            print(f"\n[TOKEN SELECTION] Processing {len(beam_state.candidates)} candidates")
+            logger.debug(f"\n[TOKEN SELECTION] Processing {len(beam_state.candidates)} candidates")
             for cand_idx, candidate in enumerate(beam_state.candidates):
                 candidate_logits = logits[0, cand_idx, :]
 
@@ -227,13 +230,13 @@ class BeamSearchGenerator:
                 top_probs, top_indices = torch.topk(candidate_probs, top_k)
 
                 # Debug: show top tokens for this candidate
-                print(f"  [Candidate {cand_idx}] score={candidate.score:.4f}, page_id={candidate.trie_node.page_id}")
-                print(f"    Top 5 token candidates:")
+                logger.debug(f"  [Candidate {cand_idx}] score={candidate.score:.4f}, page_id={candidate.trie_node.page_id}")
+                logger.debug(f"    Top 5 token candidates:")
                 for k in range(min(5, len(top_indices))):
                     token_id = top_indices[k].item()
                     log_prob = top_probs[k].item()
                     token_text = self.tokenizer.decode([token_id], skip_special_tokens=False)
-                    print(f"      {k+1}. Token {token_id}: '{token_text}' (log_prob: {log_prob:.4f})")
+                    logger.debug(f"      {k+1}. Token {token_id}: '{token_text}' (log_prob: {log_prob:.4f})")
 
                 token_candidates = []
                 for k in range(len(top_indices)):
@@ -244,20 +247,20 @@ class BeamSearchGenerator:
                 generate_inputs.append(BeamGenerateInput(candidate=candidate, children=token_candidates))
 
             # Use strategy to select candidates
-            print(f"\n[STRATEGY] Selecting candidates using {self.strategy.__class__.__name__}")
+            logger.debug(f"\n[STRATEGY] Selecting candidates using {self.strategy.__class__.__name__}")
             filtered_results = self.strategy.select_candidates(beam_state, generate_inputs, step)
 
-            print(f"\n[STRATEGY RESULTS] {len(filtered_results)} results selected")
+            logger.debug(f"\n[STRATEGY RESULTS] {len(filtered_results)} results selected")
             for res_idx, result in enumerate(filtered_results):
                 if result.children:
                     token_ids = [c.token_id for c in result.children]
                     token_texts = [self.tokenizer.decode([tid], skip_special_tokens=False) for tid in token_ids]
-                    print(f"  Result {res_idx}: {len(result.children)} tokens selected: {token_ids} -> {token_texts}")
+                    logger.debug(f"  Result {res_idx}: {len(result.children)} tokens selected: {token_ids} -> {token_texts}")
                 else:
-                    print(f"  Result {res_idx}: NO CHILDREN (will be eliminated)")
+                    logger.debug(f"  Result {res_idx}: NO CHILDREN (will be eliminated)")
 
             beam_state.add_filtered_results(filtered_results)
-            print(f"\n[BEAM STATE] After filtering: {len(beam_state.candidates)} active candidates")
+            logger.debug(f"\n[BEAM STATE] After filtering: {len(beam_state.candidates)} active candidates")
 
             # Show current sequences for each active candidate
             for cand_idx, candidate in enumerate(beam_state.candidates):
@@ -268,27 +271,27 @@ class BeamSearchGenerator:
                     sequence = node.tokens + sequence
                     node = node.parent
                 text = self.tokenizer.decode(sequence, skip_special_tokens=False)
-                print(f"  Candidate {cand_idx} (score={candidate.score:.4f}): {len(sequence)} tokens")
-                print(f"    Text: '{text}'")
+                logger.debug(f"  Candidate {cand_idx} (score={candidate.score:.4f}): {len(sequence)} tokens")
+                logger.debug(f"    Text: '{text}'")
 
         # Get final sequences
-        print(f"\n{'='*80}")
-        print(f"=== FINAL RESULTS ===")
-        print(f"{'='*80}")
+        logger.info(f"\n{'='*80}")
+        logger.info(f"=== FINAL RESULTS ===")
+        logger.info(f"{'='*80}")
         final_sequences = self.strategy.get_final_sequences(beam_state, num_return_sequences)
 
         generated_texts = []
         for idx, (tokens, score) in enumerate(final_sequences):
             text = self.tokenizer.decode(tokens, skip_special_tokens=True)
             generated_texts.append(text)
-            print(f"\n[FINAL {idx+1}] Score: {score:.4f}, Tokens: {len(tokens)}")
-            print(f"  Full token sequence: {tokens}")
-            print(f"  Text: {text}")
+            logger.info(f"\n[FINAL {idx+1}] Score: {score:.4f}, Tokens: {len(tokens)}")
+            logger.info(f"  Full token sequence: {tokens}")
+            logger.info(f"  Text: {text}")
 
         # Show page table statistics
-        print(f"\n[PAGE TABLE] Statistics:")
-        print(f"  Total pages allocated: (tracked in page_table)")
-        print(f"  Page size: {self.page_size}")
+        logger.debug(f"\n[PAGE TABLE] Statistics:")
+        logger.debug(f"  Total pages allocated: (tracked in page_table)")
+        logger.debug(f"  Page size: {self.page_size}")
 
         return generated_texts
 
@@ -300,9 +303,9 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
                                 max_length: int = 50, num_return_sequences: int = 1,
                                 temperature: float = 1.0):
     """Run HuggingFace's native beam search for comparison."""
-    print("\n" + "=" * 80)
-    print("=== HUGGINGFACE BEAM SEARCH (REFERENCE) ===")
-    print("=" * 80)
+    logger.info("\n" + "=" * 80)
+    logger.info("=== HUGGINGFACE BEAM SEARCH (REFERENCE) ===")
+    logger.info("=" * 80)
 
     inputs = tokenizer(prompt, return_tensors="pt").to(hf_model.device)
 
@@ -323,21 +326,21 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
         )
 
     generated_texts = []
-    print(f"\n[HF RESULTS] Generated {len(outputs.sequences)} sequences:")
+    logger.info(f"\n[HF RESULTS] Generated {len(outputs.sequences)} sequences:")
     for idx, sequence in enumerate(outputs.sequences):
         text = tokenizer.decode(sequence, skip_special_tokens=True)
         generated_texts.append(text)
         tokens = sequence.tolist()
-        print(f"\n[HF {idx+1}] Tokens: {len(tokens)}")
-        print(f"  Full token sequence: {tokens}")
-        print(f"  Text: {text}")
+        logger.info(f"\n[HF {idx+1}] Tokens: {len(tokens)}")
+        logger.info(f"  Full token sequence: {tokens}")
+        logger.info(f"  Text: {text}")
 
     return generated_texts
 
 
 def demo_diverse_beam_search(model, tokenizer, hf_model=None):
     """Demonstrate diverse beam search generation."""
-    print("=== Diverse Beam Search Demo ===")
+    logger.info("=== Diverse Beam Search Demo ===")
 
     # Create diverse beam search strategy
     # strategy = DiverseBeamSearchStrategy(
@@ -356,8 +359,8 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
     ]
 
     for prompt in prompts:
-        print(f"\nPrompt: '{prompt}'")
-        print("-" * 50)
+        logger.info(f"\nPrompt: '{prompt}'")
+        logger.info("-" * 50)
 
         # Run HuggingFace beam search first (if available)
         if hf_model is not None:
@@ -366,51 +369,56 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
                 tokenizer=tokenizer,
                 prompt=prompt,
                 beam_size=4,
-                max_length=30,
+                max_length=100,
                 num_return_sequences=4,
                 temperature=1.0
             )
 
         # Generate diverse sequences with custom implementation
-        print("\n" + "=" * 80)
-        print("=== CUSTOM BEAM SEARCH (CASCADE ATTENTION) ===")
-        print("=" * 80)
+        logger.info("\n" + "=" * 80)
+        logger.info("=== CUSTOM BEAM SEARCH (CASCADE ATTENTION) ===")
+        logger.info("=" * 80)
         generated_texts = generator.generate(
             input_text=prompt,
             beam_size=4,
-            max_length=30,
+            max_length=100,
             num_return_sequences=4,
             temperature=1.0
         )
 
-        print("\n" + "=" * 80)
-        print("=== COMPARISON ===")
-        print("=" * 80)
+        logger.info("\n" + "=" * 80)
+        logger.info("=== COMPARISON ===")
+        logger.info("=" * 80)
         if hf_model is not None:
-            print("\nHuggingFace Results:")
+            logger.info("\nHuggingFace Results:")
             for i, text in enumerate(hf_texts, 1):
-                print(f"  {i}. {text}")
+                logger.info(f"  {i}. {text}")
 
-        print("\nCustom Cascade Results:")
+        logger.info("\nCustom Cascade Results:")
         for i, text in enumerate(generated_texts, 1):
-            print(f"  {i}. {text}")
+            logger.info(f"  {i}. {text}")
 
 
 
 
 if __name__ == "__main__":
-    print("Loading models and tokenizer...")
+    from beam_engine.logger import set_logging_level, LogLevel
+
+    # Set logging level to INFO (hides DEBUG messages)
+    set_logging_level(LogLevel.INFO)
+
+    logger.info("Loading models and tokenizer...")
 
     # Model and tokenizer setup
     device = torch.device("cuda:5") if torch.cuda.is_available() else torch.device("cpu")
     model_name = "meta-llama/Llama-3.2-1B"
 
     # Load custom model with cascade attention
-    print(f"Loading custom model from {model_name}...")
+    logger.info(f"Loading custom model from {model_name}...")
     model = LlamaForCausalLM.from_pretrained(model_name, dtype=torch.float16).to(device)
 
     # Load HuggingFace reference model
-    print(f"Loading HuggingFace reference model from {model_name}...")
+    logger.info(f"Loading HuggingFace reference model from {model_name}...")
     hf_model = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch.float16).to(device)
 
     # Load tokenizer
@@ -420,16 +428,16 @@ if __name__ == "__main__":
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print("Models loaded successfully!\n")
+    logger.info("Models loaded successfully!\n")
 
     # Run demonstrations with comparison
     demo_diverse_beam_search(model, tokenizer, hf_model)
 
-    print("\n=== Strategy Comparison ===")
-    print("Vanilla beam search: Selects candidates purely by score - simple and fast.")
-    print("Diverse beam search: Promotes variety by grouping beams and penalizing similarity.")
-    print("\nBoth strategies are now cleanly separated with no shared dependencies!")
-    print("You can easily switch strategies by changing the BeamStrategy class.")
-    print("Try implementing TopKBeamStrategy, NucleusBeamStrategy, or other custom approaches.")
+    logger.info("\n=== Strategy Comparison ===")
+    logger.info("Vanilla beam search: Selects candidates purely by score - simple and fast.")
+    logger.info("Diverse beam search: Promotes variety by grouping beams and penalizing similarity.")
+    logger.info("\nBoth strategies are now cleanly separated with no shared dependencies!")
+    logger.info("You can easily switch strategies by changing the BeamStrategy class.")
+    logger.info("Try implementing TopKBeamStrategy, NucleusBeamStrategy, or other custom approaches.")
 
 

@@ -5,6 +5,9 @@ import torch
 from collections import defaultdict
 
 from page_table import PageTable
+from beam_engine.logger import init_logger
+
+logger = init_logger(__name__)
 class TrieNode:
     """
     Pure data structure for storing beam search sequence tree.
@@ -67,7 +70,7 @@ class BeamState:
 
     def add_root_sequence(self, sequence: List[int]) -> List[TrieNode]:
         """ returns created nodes as their creation order"""
-        print(f"\n[BeamState] Adding root sequence with {len(sequence)} tokens")
+        logger.debug(f"\n[BeamState] Adding root sequence with {len(sequence)} tokens")
         ptr = 0
         current_node = None
         created = []
@@ -76,7 +79,7 @@ class BeamState:
             he = min(len(sequence), ptr + self.page_table.page_size)
             # allocate a new block for this node
             page_id = self.page_table.allocate_block()
-            print(f"  [PAGE ALLOC] Page {page_id} allocated for root tokens {ptr}:{he}")
+            logger.debug(f"  [PAGE ALLOC] Page {page_id} allocated for root tokens {ptr}:{he}")
 
             new_node = TrieNode(sequence[ptr:he], page_id, current_node)
             created.append(new_node)
@@ -86,7 +89,7 @@ class BeamState:
             ptr += self.page_table.page_size
 
         self.candidates.append(BeamCandidate(current_node, 0, False))
-        print(f"  [BeamState] Root candidate created: {len(created)} nodes/pages")
+        logger.debug(f"  [BeamState] Root candidate created: {len(created)} nodes/pages")
         return created
 
 
@@ -94,7 +97,7 @@ class BeamState:
         """
         Update beam candidates and trie structure after token filtering.
         """
-        print(f"\n[BeamState] add_filtered_results: {len(results)} results, {len(self.candidates)} current candidates")
+        logger.debug(f"\n[BeamState] add_filtered_results: {len(results)} results, {len(self.candidates)} current candidates")
 
         def free_dead_branch(node: TrieNode):
             """Free page blocks upward until a node with children is found."""
@@ -107,21 +110,21 @@ class BeamState:
                     parent.children.remove(node)
                 node = parent
             if freed_pages:
-                print(f"  [PAGE FREE] Pages freed (dead branch): {freed_pages}")
+                logger.debug(f"  [PAGE FREE] Pages freed (dead branch): {freed_pages}")
 
         new_candidates: List[BeamCandidate] = []
 
         # 1. Cleanup dead branches
-        print(f"  [BRANCH CLEANUP] Checking for branches to eliminate...")
+        logger.debug(f"  [BRANCH CLEANUP] Checking for branches to eliminate...")
         for idx, result in enumerate(results):
             if not result.children:
-                print(f"    [BRANCH ELIMINATED] Candidate {idx} (score={result.candidate.score:.4f}) has no children - eliminating")
+                logger.debug(f"    [BRANCH ELIMINATED] Candidate {idx} (score={result.candidate.score:.4f}) has no children - eliminating")
                 free_dead_branch(result.candidate.trie_node)
             else:
-                print(f"    [BRANCH KEPT] Candidate {idx} (score={result.candidate.score:.4f}) has {len(result.children)} children")
+                logger.debug(f"    [BRANCH KEPT] Candidate {idx} (score={result.candidate.score:.4f}) has {len(result.children)} children")
 
         # 2. Expand surviving candidates
-        print(f"\n  [EXPAND] Expanding surviving candidates...")
+        logger.debug(f"\n  [EXPAND] Expanding surviving candidates...")
         for result_idx, result in enumerate(results):
             children = result.children
             if not children:
@@ -132,22 +135,22 @@ class BeamState:
             tokens = node.tokens
             page_size = self.page_table.page_size
 
-            print(f"    [EXPAND {result_idx}] Node page_id={node.page_id}, tokens={len(tokens)}/{page_size}, children={len(children)}")
+            logger.debug(f"    [EXPAND {result_idx}] Node page_id={node.page_id}, tokens={len(tokens)}/{page_size}, children={len(children)}")
 
             # ── Case 1: single child ───────────────────────────────
             if len(children) == 1:
                 child = children[0]
-                print(f"      [SINGLE CHILD] token_id={child.token_id}, score={child.accumulated_score:.4f}")
+                logger.debug(f"      [SINGLE CHILD] token_id={child.token_id}, score={child.accumulated_score:.4f}")
 
                 if len(tokens) < page_size:
                     tokens.append(child.token_id)
-                    print(f"        [APPEND] Appended to existing page {node.page_id} (now {len(tokens)}/{page_size} tokens)")
+                    logger.debug(f"        [APPEND] Appended to existing page {node.page_id} (now {len(tokens)}/{page_size} tokens)")
                     new_candidates.append(
                         BeamCandidate(node, child.accumulated_score)
                     )
                 else:
                     new_page = self.page_table.allocate_block()
-                    print(f"        [PAGE ALLOC] Page {new_page} allocated (parent page {node.page_id} is full)")
+                    logger.debug(f"        [PAGE ALLOC] Page {new_page} allocated (parent page {node.page_id} is full)")
                     new_node = TrieNode(
                         tokens=[child.token_id],
                         page_id=new_page,
@@ -159,13 +162,13 @@ class BeamState:
                 continue
 
             # ── Case 2: multiple children ──────────────────────────
-            print(f"      [MULTIPLE CHILDREN] {len(children)} branches")
+            logger.debug(f"      [MULTIPLE CHILDREN] {len(children)} branches")
             if len(tokens) == page_size:
                 # Full page → allocate N new blocks
-                print(f"        [FULL PAGE] Allocating {len(children)} new pages")
+                logger.debug(f"        [FULL PAGE] Allocating {len(children)} new pages")
                 for child_idx, child in enumerate(children):
                     new_page = self.page_table.allocate_block()
-                    print(f"          [PAGE ALLOC] Page {new_page} for child {child_idx}: token_id={child.token_id}, score={child.accumulated_score:.4f}")
+                    logger.debug(f"          [PAGE ALLOC] Page {new_page} for child {child_idx}: token_id={child.token_id}, score={child.accumulated_score:.4f}")
                     new_node = TrieNode(
                         tokens=[child.token_id],
                         page_id=new_page,
@@ -177,11 +180,11 @@ class BeamState:
             else:
                 # Not full → reuse current node for first child
                 first, rest = children[0], children[1:]
-                print(f"        [PARTIAL PAGE] Reusing page {node.page_id} for first child, copying for {len(rest)} others")
+                logger.debug(f"        [PARTIAL PAGE] Reusing page {node.page_id} for first child, copying for {len(rest)} others")
 
                 for child_idx, child in enumerate(rest):
                     new_page = self.page_table.copy_block(node.page_id, len(node.tokens))
-                    print(f"          [PAGE COPY] Page {new_page} copied from {node.page_id} ({len(node.tokens)} tokens) for child {child_idx+1}: token_id={child.token_id}, score={child.accumulated_score:.4f}")
+                    logger.debug(f"          [PAGE COPY] Page {new_page} copied from {node.page_id} ({len(node.tokens)} tokens) for child {child_idx+1}: token_id={child.token_id}, score={child.accumulated_score:.4f}")
                     new_node = TrieNode(
                         tokens=[*tokens, child.token_id],
                         page_id=new_page,
@@ -192,13 +195,13 @@ class BeamState:
                     )
 
                 tokens.append(first.token_id)
-                print(f"          [APPEND] First child token_id={first.token_id} appended to page {node.page_id}, score={first.accumulated_score:.4f}")
+                logger.debug(f"          [APPEND] First child token_id={first.token_id} appended to page {node.page_id}, score={first.accumulated_score:.4f}")
                 new_candidates.append(
                     BeamCandidate(node, first.accumulated_score)
                 )
 
         self.candidates = new_candidates
-        print(f"\n  [RESULT] {len(new_candidates)} new candidates created")
+        logger.debug(f"\n  [RESULT] {len(new_candidates)} new candidates created")
 
     def get_cascade_input(self):
         """
@@ -214,7 +217,7 @@ class BeamState:
             - q: torch.Tensor
         """
 
-        print(f"\n[CASCADE] Building cascade input for {len(self.candidates)} candidates")
+        logger.debug(f"\n[CASCADE] Building cascade input for {len(self.candidates)} candidates")
 
         if not self.candidates:
             return ([], [], [], [], torch.empty(0, 0, 0))
@@ -380,16 +383,16 @@ class BeamState:
                                             device=self.page_table.device)
 
         # Debug output
-        print(f"  [CASCADE] Built {max_cascade_level + 1} cascade levels")
+        logger.debug(f"  [CASCADE] Built {max_cascade_level + 1} cascade levels")
         for lvl in range(max_cascade_level + 1):
             num_groups = len(groups_by_level[lvl])
             total_candidates = sum(len(group) for group in groups_by_level[lvl].values())
-            print(f"    Level {lvl}: {num_groups} groups, {total_candidates} candidates")
-            print(f"      qo_indptr: {qo_indptr_arr[lvl].tolist()}")
-            print(f"      kv_indptr: {paged_kv_indptr_arr[lvl].tolist()}")
-            print(f"      kv_indices: {paged_kv_indices_arr[lvl].tolist()}")
-            print(f"      kv_last_page_len: {paged_kv_last_page_len[lvl].tolist()}")
-        print(f"  [CASCADE] Query token IDs: {query_token_ids_tensor.tolist()}")
+            logger.debug(f"    Level {lvl}: {num_groups} groups, {total_candidates} candidates")
+            logger.debug(f"      qo_indptr: {qo_indptr_arr[lvl].tolist()}")
+            logger.debug(f"      kv_indptr: {paged_kv_indptr_arr[lvl].tolist()}")
+            logger.debug(f"      kv_indices: {paged_kv_indices_arr[lvl].tolist()}")
+            logger.debug(f"      kv_last_page_len: {paged_kv_last_page_len[lvl].tolist()}")
+        logger.debug(f"  [CASCADE] Query token IDs: {query_token_ids_tensor.tolist()}")
 
         return (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
                 paged_kv_last_page_len, query_token_ids_tensor)

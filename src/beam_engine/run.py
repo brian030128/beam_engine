@@ -1,5 +1,8 @@
 import torch
 import flashinfer
+from beam_engine.logger import init_logger
+
+logger = init_logger(__name__)
 
 DEVICE = "cuda:5"
 num_layers = 32
@@ -54,4 +57,4 @@ for i in range(num_layers):
     o = wrapper.run(q, kv_cache_at_layer[i])
     outputs.append(o)
 
-print(outputs[0].shape)
+logger.info(outputs[0].shape)
