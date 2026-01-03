@@ -63,6 +63,16 @@ class BeamSearchGenerator:
         Returns:
             List of generated text sequences
         """
+        # Initialize timing statistics
+        timing_stats = {
+            'prefill': 0.0,
+            'decode_total': 0.0,
+            'decode_model_forward': 0.0,
+            'decode_token_selection': 0.0,
+            'decode_strategy': 0.0,
+            'decode_beam_update': 0.0,
+            'decode_cascade_prep': 0.0,
+        }
         # Set default token IDs
         if pad_token_id is None:
             pad_token_id = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
@@ -84,6 +94,11 @@ class BeamSearchGenerator:
         # Compute position IDs for prefilling (sequential from 0 to len-1)
         prefill_position_ids = torch.arange(0, input_ids.shape[1], dtype=torch.long, device=self.device).unsqueeze(0)
 
+        # Time prefill phase
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        prefill_start = time.perf_counter()
+
         with torch.no_grad():
             outputs = self.model(
                 input_ids,
@@ -94,6 +109,11 @@ class BeamSearchGenerator:
                 last_page_len=len(new_nodes[len(new_nodes) - 1].tokens)
             )
             logits = outputs.logits
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        prefill_end = time.perf_counter()
+        timing_stats['prefill'] = prefill_end - prefill_start
 
         # Get next token probabilities from the last position
         next_token_logits = logits[0, -1, :]  # Last token logits
@@ -143,6 +163,7 @@ class BeamSearchGenerator:
         logger.debug(f"\nExpanded root into {len(beam_state.candidates)} beam candidates")
 
         # Decode loop
+        decode_loop_start = time.perf_counter()
         for step in range(max_length - len(input_tokens) - 1):
             logger.debug(f"\n{'='*80}")
             logger.debug(f"{'='*80}")
@@ -164,6 +185,9 @@ class BeamSearchGenerator:
             if self.strategy.should_stop(beam_state, max_length, step):
                 logger.debug("Stopping condition met")
                 break
+
+            # Time cascade input preparation
+            cascade_prep_start = time.perf_counter()
 
             # Get cascade input including query token IDs
             (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
@@ -200,6 +224,14 @@ class BeamSearchGenerator:
             # query_token_ids are already in correct cascade order, just reshape for model
             decode_input_ids = query_token_ids.unsqueeze(0)  # [1, num_candidates]
 
+            cascade_prep_end = time.perf_counter()
+            timing_stats['decode_cascade_prep'] += cascade_prep_end - cascade_prep_start
+
+            # Time model forward pass
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            model_forward_start = time.perf_counter()
+
             # Run model with cascade decode
             with torch.no_grad():
                 outputs = self.model(
@@ -215,6 +247,14 @@ class BeamSearchGenerator:
                     cascade_write_positions=cascade_write_positions,
                 )
                 logits = outputs.logits  # [1, num_candidates, vocab_size]
+
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            model_forward_end = time.perf_counter()
+            timing_stats['decode_model_forward'] += model_forward_end - model_forward_start
+
+            # Time token selection
+            token_selection_start = time.perf_counter()
 
             # Create BeamGenerateInput for each candidate
             generate_inputs = []
@@ -247,9 +287,18 @@ class BeamSearchGenerator:
 
                 generate_inputs.append(BeamGenerateInput(candidate=candidate, children=token_candidates))
 
+            token_selection_end = time.perf_counter()
+            timing_stats['decode_token_selection'] += token_selection_end - token_selection_start
+
+            # Time strategy selection
+            strategy_start = time.perf_counter()
+
             # Use strategy to select candidates
             logger.debug(f"\n[STRATEGY] Selecting candidates using {self.strategy.__class__.__name__}")
             filtered_results = self.strategy.select_candidates(beam_state, generate_inputs, step)
+
+            strategy_end = time.perf_counter()
+            timing_stats['decode_strategy'] += strategy_end - strategy_start
 
             logger.debug(f"\n[STRATEGY RESULTS] {len(filtered_results)} results selected")
             for res_idx, result in enumerate(filtered_results):
@@ -260,7 +309,14 @@ class BeamSearchGenerator:
                 else:
                     logger.debug(f"  Result {res_idx}: NO CHILDREN (will be eliminated)")
 
+            # Time beam state update
+            beam_update_start = time.perf_counter()
+
             beam_state.add_filtered_results(filtered_results)
+
+            beam_update_end = time.perf_counter()
+            timing_stats['decode_beam_update'] += beam_update_end - beam_update_start
+
             logger.debug(f"\n[BEAM STATE] After filtering: {len(beam_state.candidates)} active candidates")
 
             # Show current sequences for each active candidate
@@ -274,6 +330,10 @@ class BeamSearchGenerator:
                 text = self.tokenizer.decode(sequence, skip_special_tokens=False)
                 logger.debug(f"  Candidate {cand_idx} (score={candidate.score:.4f}): {len(sequence)} tokens")
                 logger.debug(f"    Text: '{text}'")
+
+        # End decode loop timing
+        decode_loop_end = time.perf_counter()
+        timing_stats['decode_total'] = decode_loop_end - decode_loop_start
 
         # Get final sequences
         logger.info(f"\n{'='*80}")
@@ -293,6 +353,42 @@ class BeamSearchGenerator:
         logger.debug(f"\n[PAGE TABLE] Statistics:")
         logger.debug(f"  Total pages allocated: (tracked in page_table)")
         logger.debug(f"  Page size: {self.page_size}")
+
+        # Print detailed timing breakdown
+        logger.info(f"\n{'='*80}")
+        logger.info(f"=== DETAILED TIMING BREAKDOWN ===")
+        logger.info(f"{'='*80}")
+        logger.info(f"Prefill phase:              {timing_stats['prefill']:.4f}s ({timing_stats['prefill']*1000:.2f}ms)")
+        logger.info(f"Decode total:               {timing_stats['decode_total']:.4f}s ({timing_stats['decode_total']*1000:.2f}ms)")
+        logger.info(f"  - Cascade prep:           {timing_stats['decode_cascade_prep']:.4f}s ({timing_stats['decode_cascade_prep']*1000:.2f}ms)")
+        logger.info(f"  - Model forward:          {timing_stats['decode_model_forward']:.4f}s ({timing_stats['decode_model_forward']*1000:.2f}ms)")
+        logger.info(f"  - Token selection:        {timing_stats['decode_token_selection']:.4f}s ({timing_stats['decode_token_selection']*1000:.2f}ms)")
+        logger.info(f"  - Strategy selection:     {timing_stats['decode_strategy']:.4f}s ({timing_stats['decode_strategy']*1000:.2f}ms)")
+        logger.info(f"  - Beam state update:      {timing_stats['decode_beam_update']:.4f}s ({timing_stats['decode_beam_update']*1000:.2f}ms)")
+
+        # Calculate other overhead
+        decode_accounted = (timing_stats['decode_cascade_prep'] +
+                           timing_stats['decode_model_forward'] +
+                           timing_stats['decode_token_selection'] +
+                           timing_stats['decode_strategy'] +
+                           timing_stats['decode_beam_update'])
+        decode_other = timing_stats['decode_total'] - decode_accounted
+        logger.info(f"  - Other overhead:         {decode_other:.4f}s ({decode_other*1000:.2f}ms)")
+
+        total_time = timing_stats['prefill'] + timing_stats['decode_total']
+        logger.info(f"\nTotal generation time:      {total_time:.4f}s ({total_time*1000:.2f}ms)")
+
+        # Show percentages
+        logger.info(f"\n=== PERCENTAGE BREAKDOWN ===")
+        logger.info(f"Prefill:                    {timing_stats['prefill']/total_time*100:.1f}%")
+        logger.info(f"Decode total:               {timing_stats['decode_total']/total_time*100:.1f}%")
+        logger.info(f"  - Cascade prep:           {timing_stats['decode_cascade_prep']/total_time*100:.1f}%")
+        logger.info(f"  - Model forward:          {timing_stats['decode_model_forward']/total_time*100:.1f}%")
+        logger.info(f"  - Token selection:        {timing_stats['decode_token_selection']/total_time*100:.1f}%")
+        logger.info(f"  - Strategy selection:     {timing_stats['decode_strategy']/total_time*100:.1f}%")
+        logger.info(f"  - Beam state update:      {timing_stats['decode_beam_update']/total_time*100:.1f}%")
+        logger.info(f"  - Other overhead:         {decode_other/total_time*100:.1f}%")
+        logger.info(f"{'='*80}")
 
         return generated_texts
 
@@ -386,8 +482,8 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
                 hf_model=hf_model,
                 tokenizer=tokenizer,
                 prompt=prompt,
-                beam_size=4,
-                max_length=100,
+                beam_size=8,
+                max_length=500,
                 num_return_sequences=4,
                 temperature=1.0
             )
@@ -405,8 +501,8 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
 
         generated_texts = generator.generate(
             input_text=prompt,
-            beam_size=4,
-            max_length=100,
+            beam_size=8,
+            max_length=500,
             num_return_sequences=4,
             temperature=1.0
         )
