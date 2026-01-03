@@ -249,26 +249,26 @@ def flashinfer_prefill_attention_forward(
     paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
     paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)
 
-    print(f"Debug: Created index tensors")
+    logger.debug(f"Debug: Created index tensors")
 
     # Create workspace buffer (128MB recommended)
     workspace_size = 128 * 1024 * 1024  # 128MB
     workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
 
     # Initialize prefill wrapper
-    print(f"Debug: Initializing prefill wrapper")
+    logger.debug(f"Debug: Initializing prefill wrapper")
     prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
         workspace_buffer,
         kv_layout="NHD"
     )
-    print(f"Debug: Prefill wrapper initialized")
+    logger.debug(f"Debug: Prefill wrapper initialized")
 
     # Plan the attention computation
-    print(f"Debug: Planning attention computation")
+    logger.debug(f"Debug: Planning attention computation")
     # Extract correct head counts for Grouped Query Attention (GQA)
     num_qo_heads = num_heads  # Query heads from query tensor
     num_kv_heads = key.shape[1]  # KV heads from key tensor shape [seq_len, num_kv_heads, head_dim]
-    print(f"Debug: num_qo_heads={num_qo_heads}, num_kv_heads={num_kv_heads}")
+    logger.debug(f"Debug: num_qo_heads={num_qo_heads}, num_kv_heads={num_kv_heads}")
 
     prefill_wrapper.plan(
         qo_indptr,
@@ -282,48 +282,48 @@ def flashinfer_prefill_attention_forward(
         causal=True,
         pos_encoding_mode="NONE"
     )
-    print(f"Debug: Attention computation planned")
+    logger.debug(f"Debug: Attention computation planned")
 
     # FlashInfer expects query without batch dimension: [seq_len, num_heads, head_dim]
-    print(f"Debug: Query shape for FlashInfer: {query.shape}")
+    logger.debug(f"Debug: Query shape for FlashInfer: {query.shape}")
     query_flashinfer = query
-    print(f"Debug: Query ready for FlashInfer: {query_flashinfer.shape}")
+    logger.debug(f"Debug: Query ready for FlashInfer: {query_flashinfer.shape}")
 
     # Get paged KV cache for this layer
     paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
-    print(f"Debug: Got paged KV cache shape {paged_kv_cache.shape}")
+    logger.debug(f"Debug: Got paged KV cache shape {paged_kv_cache.shape}")
 
     # Run prefill attention
-    print(f"Debug: Running prefill attention")
-    print(f"Debug: query_flashinfer shape: {query_flashinfer.shape}, dtype: {query_flashinfer.dtype}")
-    print(f"Debug: paged_kv_cache shape: {paged_kv_cache.shape}, dtype: {paged_kv_cache.dtype}")
-    print(f"Debug: qo_indptr: {qo_indptr}")
-    print(f"Debug: paged_kv_indices: {paged_kv_indices}")
-    print(f"Debug: paged_kv_indptr: {paged_kv_indptr}")
-    print(f"Debug: paged_kv_last_page_len: {paged_kv_last_page_len}")
+    logger.debug(f"Debug: Running prefill attention")
+    logger.debug(f"Debug: query_flashinfer shape: {query_flashinfer.shape}, dtype: {query_flashinfer.dtype}")
+    logger.debug(f"Debug: paged_kv_cache shape: {paged_kv_cache.shape}, dtype: {paged_kv_cache.dtype}")
+    logger.debug(f"Debug: qo_indptr: {qo_indptr}")
+    logger.debug(f"Debug: paged_kv_indices: {paged_kv_indices}")
+    logger.debug(f"Debug: paged_kv_indptr: {paged_kv_indptr}")
+    logger.debug(f"Debug: paged_kv_last_page_len: {paged_kv_last_page_len}")
 
-    print(f"Debug: About to call prefill_wrapper.run")
-    print(f"Debug: All tensors on same device? query: {query_flashinfer.device}, kv_cache: {paged_kv_cache.device}")
-    print(f"Debug: All tensors same dtype? query: {query_flashinfer.dtype}, kv_cache: {paged_kv_cache.dtype}")
+    logger.debug(f"Debug: About to call prefill_wrapper.run")
+    logger.debug(f"Debug: All tensors on same device? query: {query_flashinfer.device}, kv_cache: {paged_kv_cache.device}")
+    logger.debug(f"Debug: All tensors same dtype? query: {query_flashinfer.dtype}, kv_cache: {paged_kv_cache.dtype}")
 
     try:
-        print(f"Debug: Calling prefill_wrapper.run...")
+        logger.debug(f"Debug: Calling prefill_wrapper.run...")
         attn_output = prefill_wrapper.run(query_flashinfer, paged_kv_cache)
-        print(f"Debug: prefill_wrapper.run completed successfully!")
+        logger.debug(f"Debug: prefill_wrapper.run completed successfully!")
     except Exception as e:
-        print(f"Debug: ERROR in prefill_wrapper.run: {e}")
-        print(f"Debug: Error type: {type(e)}")
-        print(f"Debug: Full traceback:")
+        logger.debug(f"Debug: ERROR in prefill_wrapper.run: {e}")
+        logger.debug(f"Debug: Error type: {type(e)}")
+        logger.debug(f"Debug: Full traceback:")
         import traceback
         traceback.print_exc()
         raise
-    print(f"Debug: Prefill attention completed, output shape {attn_output.shape}")
+    logger.debug(f"Debug: Prefill attention completed, output shape {attn_output.shape}")
 
     # Reshape output back to original format
-    print(f"Debug: Reshaping output back to original format")
+    logger.debug(f"Debug: Reshaping output back to original format")
     # FlashInfer returns [seq_len, num_qo_heads, head_dim], we need [batch, num_heads, seq_len, head_dim]
     attn_output = attn_output.unsqueeze(0)
-    print(f"Debug: Final output shape {attn_output.shape}")
+    logger.debug(f"Debug: Final output shape {attn_output.shape}")
 
     return attn_output, None  # FlashInfer doesn't return attention weights
 

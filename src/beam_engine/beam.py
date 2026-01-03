@@ -403,9 +403,11 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
 
 if __name__ == "__main__":
     from logger import set_logging_level, LogLevel
+    from transformers import logging as transformers_logging
 
     # Set logging level to INFO (hides DEBUG messages)
     set_logging_level(LogLevel.INFO)
+    transformers_logging.set_verbosity_info()  # Also set transformers logging to INFO
 
     logger.info("Loading models and tokenizer...")
 
