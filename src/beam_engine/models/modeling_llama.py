@@ -286,7 +286,7 @@ def flashinfer_prefill_attention_forward(
 
     # FlashInfer expects query without batch dimension: [seq_len, num_heads, head_dim]
     print(f"Debug: Query shape for FlashInfer: {query.shape}")
-    query_flashinfer = query[0]  # Remove batch dimension: [seq_len, num_heads, head_dim]
+    query_flashinfer = query
     print(f"Debug: Query ready for FlashInfer: {query_flashinfer.shape}")
 
     # Get paged KV cache for this layer
