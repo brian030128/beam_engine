@@ -267,7 +267,7 @@ def flashinfer_prefill_attention_forward(
     print(f"Debug: Planning attention computation")
     # Extract correct head counts for Grouped Query Attention (GQA)
     num_qo_heads = num_heads  # Query heads from query tensor
-    num_kv_heads = key.shape[2]  # KV heads from key tensor shape [batch, seq_len, num_kv_heads, head_dim]
+    num_kv_heads = key.shape[1]  # KV heads from key tensor shape [seq_len, num_kv_heads, head_dim]
     print(f"Debug: num_qo_heads={num_qo_heads}, num_kv_heads={num_kv_heads}")
 
     prefill_wrapper.plan(
