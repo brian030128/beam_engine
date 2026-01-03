@@ -139,7 +139,7 @@ class BeamSearchGenerator:
         print(f"\nExpanded root into {len(beam_state.candidates)} beam candidates")
 
         # Decode loop
-        for step in range(max_length - len(input_tokens)):
+        for step in range(max_length - len(input_tokens) - 1):
             print(f"\n{'='*80}")
             print(f"{'='*80}")
             print(f"=== DECODE STEP {step + 1} ===")
@@ -365,10 +365,10 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
                 hf_model=hf_model,
                 tokenizer=tokenizer,
                 prompt=prompt,
-                beam_size=4,
-                max_length=30,
+                beam_size=1,
+                max_length=9,
                 num_return_sequences=4,
-                temperature=0.8
+                temperature=1.0
             )
 
         # Generate diverse sequences with custom implementation
@@ -377,10 +377,10 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
         print("=" * 80)
         generated_texts = generator.generate(
             input_text=prompt,
-            beam_size=4,
-            max_length=30,
+            beam_size=1,
+            max_length=9,
             num_return_sequences=4,
-            temperature=0.8
+            temperature=1.0
         )
 
         print("\n" + "=" * 80)
