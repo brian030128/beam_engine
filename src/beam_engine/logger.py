@@ -107,6 +107,13 @@ def init_logger(name: str) -> logging.Logger:
     Returns:
         Logger instance configured for beam_engine
     """
+    # If the module is run as __main__, use the package name instead
+    # This ensures the logger is always a child of "beam_engine"
+    if name == "__main__":
+        name = "beam_engine"
+    elif not name.startswith("beam_engine"):
+        name = f"beam_engine.{name}"
+
     return logging.getLogger(name)
 
 
