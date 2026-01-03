@@ -509,12 +509,7 @@ class LlamaAttention(nn.Module):
                 query_states,
                 key_states,
                 cascade_qo_indptr_arr,
-                position_ids,
-                rope_scale=rope_params.get("factor", 8.0),
-                rope_theta=self.config.rope_theta,
-                low_freq_factor=rope_params.get("low_freq_factor", 1.0),
-                high_freq_factor=rope_params.get("high_freq_factor", 4.0),
-                interleave=False # Llama uses non-interleaved (rotate_half)
+                position_ids
             )
             # flashinfer.rope.apply_llama31_rope_pos_ids_inplace(
             #     query_states,
