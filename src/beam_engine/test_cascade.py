@@ -355,18 +355,22 @@ def test_uneven_cascade_levels():
     This reproduces the bug where query_token_ids only includes candidates
     from the max cascade level, missing candidates from lower levels.
 
-    Structure:
-    - Root (page 0): [1, 2]
-    - Branch A (page 1): [3, 4] - splits into 2 candidates at level 1
-      - Leaf A1 (page 2): [5]
-      - Leaf A2 (page 3): [6]
-    - Branch B (page 4): [7, 8, 9, 10] - splits into 2 candidates at level 0 (no further branching)
-      - Leaf B1 (page 5): [11]
-      - Leaf B2 (page 6): [12]
+    Cascade level is incremented when parent has multiple children.
 
-    Expected: 4 candidates total (A1, A2, B1, B2)
-    Expected query tokens: [5, 6, 11, 12]
-    Bug: Only returns 2 query tokens [5, 6] (only from max level)
+    Structure:
+    - Root (page 0, level 0): [1, 2] - has 2 children
+      - Branch A (page 1, level 1): [3, 4] - has 2 children, so further branching
+        - Leaf A1 (page 2, level 2): [5]
+        - Leaf A2 (page 3, level 2): [6]
+      - Branch B (page 4, level 1): [7, 8, 9, 10] - has only 1 child, no further branching
+        - Leaf B1 (page 5, level 1): [11]
+
+    Expected: 3 candidates total (A1, A2, B1)
+    - A1 and A2 are at cascade level 2 (max_cascade_level)
+    - B1 is at cascade level 1
+
+    Expected query tokens: [5, 6, 11] (for all 3 candidates)
+    Bug: Only returns 2 query tokens [5, 6] (only from max level 2)
     """
     print("=" * 80)
     print("Testing BeamState.get_cascade_input() with UNEVEN cascade levels")
@@ -382,35 +386,34 @@ def test_uneven_cascade_levels():
         store_dtype=torch.float16
     )
 
-    beam_state = BeamState(beam_size=4, page_table=page_table)
+    beam_state = BeamState(beam_size=3, page_table=page_table)
 
     # Build tree manually
     root = TrieNode(tokens=[1, 2], page_id=0, parent=None)
     beam_state.root = root
 
-    # Branch A - will create level 1 (has children)
+    # Branch A - will branch further (has 2 children)
     branch_a = TrieNode(tokens=[3, 4], page_id=1, parent=root)
     leaf_a1 = TrieNode(tokens=[5], page_id=2, parent=branch_a)
     leaf_a2 = TrieNode(tokens=[6], page_id=3, parent=branch_a)
 
-    # Branch B - will stay at level 0 (also has children from root's perspective)
+    # Branch B - will NOT branch further (has only 1 child)
     branch_b = TrieNode(tokens=[7, 8, 9, 10], page_id=4, parent=root)
     leaf_b1 = TrieNode(tokens=[11], page_id=5, parent=branch_b)
-    leaf_b2 = TrieNode(tokens=[12], page_id=6, parent=branch_b)
 
-    # Create 4 candidates
+    # Create 3 candidates
     beam_state.candidates = [
-        BeamCandidate(trie_node=leaf_a1, score=0.0),  # Candidate 0
-        BeamCandidate(trie_node=leaf_a2, score=0.0),  # Candidate 1
-        BeamCandidate(trie_node=leaf_b1, score=0.0),  # Candidate 2
-        BeamCandidate(trie_node=leaf_b2, score=0.0),  # Candidate 3
+        BeamCandidate(trie_node=leaf_a1, score=0.0),  # Candidate 0, level 2
+        BeamCandidate(trie_node=leaf_a2, score=0.0),  # Candidate 1, level 2
+        BeamCandidate(trie_node=leaf_b1, score=0.0),  # Candidate 2, level 1
     ]
 
     print(f"\nCreated tree with {len(beam_state.candidates)} candidates")
     print("Expected cascade structure:")
-    print("  - Level 0: 2 groups (branch_a with 2 candidates, branch_b with 2 candidates)")
-    print("  - Level 1: 2 groups (leaf_a1, leaf_a2) - only from branch A")
-    print("\nExpected query tokens: [5, 6, 11, 12]")
+    print("  - Level 0: 1 group (root with 3 candidates)")
+    print("  - Level 1: 2 groups (branch_a with 2 candidates, branch_b with 1 candidate)")
+    print("  - Level 2: 2 groups (leaf_a1, leaf_a2) - only from branch A")
+    print("\nExpected query tokens: [5, 6, 11]")
 
     # Call get_cascade_input
     (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
@@ -420,7 +423,7 @@ def test_uneven_cascade_levels():
     print(f"Number of query tokens: {len(q)}")
 
     # Verify
-    expected_query_tokens = [5, 6, 11, 12]
+    expected_query_tokens = [5, 6, 11]
 
     print("\n" + "=" * 80)
     print("VERIFICATION:")
