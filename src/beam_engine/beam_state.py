@@ -251,11 +251,10 @@ class BeamState:
         # Phase 2: Build Paths and Group by Level
         # ------------------------------------------------------------------
         # Structure: groups_by_level[level][rep_node_id] = list of (cand_idx, cand, nodes_at_level)
-        groups_by_level = defaultdict(lambda: defaultdict(list))
+
+        # First pass: build candidate info and determine max cascade level
+        candidate_info = []  # List of (cand_idx, candidate, path, nodes_by_level)
         max_cascade_level = 0
-        
-        # Store paths for query token generation step
-        candidate_paths = []
 
         for cand_idx, candidate in enumerate(self.candidates):
             # Build path from leaf to root
@@ -265,8 +264,6 @@ class BeamState:
                 path.append(current)
                 current = current.parent
             path.reverse() # root to leaf
-            
-            candidate_paths.append((cand_idx, candidate, path))
 
             # Segment path nodes by their computed level
             nodes_in_current_path_by_level = defaultdict(list)
@@ -275,13 +272,30 @@ class BeamState:
                 nodes_in_current_path_by_level[lvl].append(node)
                 if lvl > max_cascade_level:
                     max_cascade_level = lvl
-            
-            # Add to global grouping
-            for lvl, nodes in nodes_in_current_path_by_level.items():
-                # The "representative" node for this candidate at this level 
-                # is the last node (deepest) in the chain for this level.
-                rep_node = nodes[-1]
-                groups_by_level[lvl][id(rep_node)].append((cand_idx, candidate, nodes))
+
+            candidate_info.append((cand_idx, candidate, path, nodes_in_current_path_by_level))
+
+        # Second pass: build groups ensuring EVERY candidate appears at EVERY level
+        # This is critical when different branches have different max cascade levels
+        groups_by_level = defaultdict(lambda: defaultdict(list))
+
+        for cand_idx, candidate, path, nodes_by_level in candidate_info:
+            # Find this candidate's maximum level
+            candidate_max_level = max(nodes_by_level.keys()) if nodes_by_level else 0
+
+            # Add this candidate to ALL cascade levels from 0 to max_cascade_level
+            for cascade_level in range(max_cascade_level + 1):
+                if cascade_level in nodes_by_level:
+                    # Candidate has nodes at this specific level
+                    nodes_at_level = nodes_by_level[cascade_level]
+                else:
+                    # Candidate doesn't have nodes at this level (its path ended earlier)
+                    # Use nodes from its deepest level
+                    nodes_at_level = nodes_by_level[candidate_max_level]
+
+                # The "representative" node for this candidate at this level
+                rep_node = nodes_at_level[-1]
+                groups_by_level[cascade_level][id(rep_node)].append((cand_idx, candidate, nodes_at_level))
 
         # ------------------------------------------------------------------
         # Phase 3: Construct Output Tensors
