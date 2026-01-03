@@ -328,7 +328,7 @@ def flashinfer_prefill_attention_forward(
     return attn_output, None  # FlashInfer doesn't return attention weights
 
 workspace_size = 128 * 1024 * 1024  # 128MB
-workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
+workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device="cuda:5")
 
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
