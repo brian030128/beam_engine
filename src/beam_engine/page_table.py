@@ -162,3 +162,60 @@ class PageTable:
             self.kv_cache_at_layer[layer][page_idx, 1, index:index + seq_len, :, :] = value
 
         logger.debug(f"Wrote {seq_len} tokens to layer {layer}, page {page_idx}")
+
+    def write_blocks_vectorized(
+        self,
+        layer: int,
+        page_indices: torch.Tensor,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        indices: torch.Tensor
+    ):
+        """
+        Vectorized write of key-value tokens to multiple pages at once.
+
+        This is much more efficient than calling write_block in a loop for multiple candidates.
+
+        Args:
+            layer: Layer index (0 to layer_num-1)
+            page_indices: Tensor of page indices to write to [num_candidates]
+            keys: Key tensor [num_candidates, num_kv_heads, head_dim]
+            values: Value tensor [num_candidates, num_kv_heads, head_dim]
+            indices: Tensor of positions within each page to start writing [num_candidates]
+        """
+        assert keys.shape == values.shape
+        num_candidates = keys.shape[0]
+
+        if layer >= self.layer_num:
+            raise ValueError(f"Layer {layer} out of range (max: {self.layer_num-1})")
+
+        # Convert to tensors if they're lists
+        if not isinstance(page_indices, torch.Tensor):
+            page_indices = torch.tensor(page_indices, dtype=torch.long, device=self.device)
+        if not isinstance(indices, torch.Tensor):
+            indices = torch.tensor(indices, dtype=torch.long, device=self.device)
+
+        # Validate all page indices are allocated
+        for page_idx in page_indices.tolist():
+            if page_idx not in self.allocated_pages:
+                raise ValueError(f"Page {page_idx} is not allocated")
+
+        # Validate indices don't exceed page size
+        if torch.any(indices >= self.page_size):
+            raise ValueError(f"Some indices exceed page size {self.page_size}")
+
+        # Each candidate writes exactly 1 token (typical for decode)
+        # keys/values shape: [num_candidates, num_kv_heads, head_dim]
+        # We need to write to positions [page_indices[i], 0/1, indices[i], :, :] for each i
+
+        # Use advanced indexing to write all at once
+        # kv_cache_at_layer[layer]: [total_num_pages, 2, page_size, num_kv_heads, head_dim]
+        kv_cache = self.kv_cache_at_layer[layer]
+
+        # Write keys (index 0 in dimension 1)
+        kv_cache[page_indices, 0, indices, :, :] = keys
+
+        # Write values (index 1 in dimension 1)
+        kv_cache[page_indices, 1, indices, :, :] = values
+
+        logger.debug(f"Vectorized write of {num_candidates} candidates to layer {layer}")

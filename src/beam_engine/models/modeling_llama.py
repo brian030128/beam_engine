@@ -497,7 +497,6 @@ class LlamaAttention(nn.Module):
             )
 
         elif attention_mode == AttentionMode.DECODE:
-            
 
             # Validate cascade decode parameters
             if page_table is None:
@@ -508,52 +507,22 @@ class LlamaAttention(nn.Module):
             if cascade_write_page_indices is None or cascade_write_positions is None:
                 raise ValueError("cascade_write_page_indices and cascade_write_positions must be provided for DECODE attention mode")
             
-
-            # Write current token's K/V to page table for each candidate
-            # key_states: [seq_len=num_candidates, num_kv_heads, head_dim]
-            # value_states: [ seq_len=num_candidates, num_kv_heads, head_dim]
             num_candidates = key_states.shape[0]
-            
-            # flashinfer.rope.apply_llama31_rope_inplace(
-            #     query_states,
-            #     key_states,
-            #     cascade_qo_indptr_arr[len(cascade_qo_indptr_arr) - 1].to(query_states.device),
-            #     position_ids,
-            #     rope_scale=rope_params.get("factor", 8.0),
-            #     rope_theta=self.config.rope_theta,
-            #     low_freq_factor=rope_params.get("low_freq_factor", 1.0),
-            #     high_freq_factor=rope_params.get("high_freq_factor", 4.0),
-            #     old_context_len=rope_params.get("original_max_position_embeddings", 8192),
-            #     interleave=False # Llama uses non-interleaved (rotate_half)
-            # )
-            # flashinfer.rope.apply_llama31_rope_pos_ids_inplace(
-            #     query_states,
-            #     key_states,
-            #     position_ids,
-            #     rope_scale=rope_params.get("factor", 8.0),
-            #     rope_theta=self.config.rope_theta,
-            #     low_freq_factor=rope_params.get("low_freq_factor", 1.0),
-            #     high_freq_factor=rope_params.get("high_freq_factor", 4.0),
-            #     old_context_len=rope_params.get("original_max_position_embeddings", 8192),
-            #     interleave=False # Llama uses non-interleaved (rotate_half)
-            # )
 
-            for cand_idx in range(num_candidates):
-                page_id = cascade_write_page_indices[cand_idx]
-                write_pos = cascade_write_positions[cand_idx]
+            # Vectorized write - much more efficient than looping through candidates
+            # Convert lists to tensors for vectorized indexing
+            device = key_states.device
+            page_indices_tensor = torch.tensor(cascade_write_page_indices, dtype=torch.long, device=device)
+            write_positions_tensor = torch.tensor(cascade_write_positions, dtype=torch.long, device=device)
 
-                # Extract K/V for this candidate [num_kv_heads, head_dim]
-                key_to_write = key_states[cand_idx:cand_idx+1, :, :]
-                value_to_write = value_states[cand_idx:cand_idx+1, :, :]
-
-                # Write to page table at this layer
-                page_table.write_block(
-                    layer=self.layer_idx,
-                    page_idx=page_id,
-                    key=key_to_write,
-                    value=value_to_write,
-                    index=write_pos    
-                )
+            # Write all candidates at once
+            page_table.write_blocks_vectorized(
+                layer=self.layer_idx,
+                page_indices=page_indices_tensor,
+                keys=key_states,
+                values=value_states,
+                indices=write_positions_tensor
+            )
 
             # Run cascade decode attention
             attn_output = self._cascade_decode_attention(
