@@ -504,8 +504,18 @@ class LlamaAttention(nn.Module):
             # key_states: [seq_len=num_candidates, num_kv_heads, head_dim]
             # value_states: [ seq_len=num_candidates, num_kv_heads, head_dim]
             num_candidates = key_states.shape[0]
-
-            #flashinfer.rope.apply_llama31_rope_pos_ids_inplace(query_states, key_states, position_ids)
+            rope_params = self.config.rope_scaling
+            flashinfer.rope.apply_llama31_rope_pos_ids_inplace(
+                query_states,
+                key_states,
+                position_ids,
+                rope_scale=rope_params.get("factor", 8.0),
+                rope_theta=self.config.rope_theta,
+                low_freq_factor=rope_params.get("low_freq_factor", 1.0),
+                high_freq_factor=rope_params.get("high_freq_factor", 4.0),
+                old_context_len=rope_params.get("original_max_position_embeddings", 8192),
+                interleave=False # Llama uses non-interleaved (rotate_half)
+            )
 
             for cand_idx in range(num_candidates):
                 page_id = cascade_write_page_indices[cand_idx]
