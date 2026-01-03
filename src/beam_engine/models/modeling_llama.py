@@ -463,6 +463,9 @@ class LlamaAttention(nn.Module):
         key_states = self.k_proj(hidden_states).view(hidden_shape)
         value_states = self.v_proj(hidden_states).view(hidden_shape)
 
+        key_states = key_states.squeeze(0)    # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
+        query_states = query_states.squeeze(0)  # [1, num_candidates, num_heads, head_dim] -> [num_candidates, num_heads, head_dim]
+        value_states = value_states.squeeze(0)  # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
 
 
         # Choose attention implementation based on mode
@@ -496,9 +499,6 @@ class LlamaAttention(nn.Module):
             if cascade_write_page_indices is None or cascade_write_positions is None:
                 raise ValueError("cascade_write_page_indices and cascade_write_positions must be provided for DECODE attention mode")
             
-            key_states = key_states.squeeze(0)    # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
-            query_states = query_states.squeeze(0)  # [1, num_candidates, num_heads, head_dim] -> [num_candidates, num_heads, head_dim]
-            value_states = value_states.squeeze(0)  # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
 
             # Write current token's K/V to page table for each candidate
             # key_states: [seq_len=num_candidates, num_kv_heads, head_dim]
