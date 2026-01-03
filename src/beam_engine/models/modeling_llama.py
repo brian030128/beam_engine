@@ -465,7 +465,7 @@ class LlamaAttention(nn.Module):
         key_states = key_states.squeeze(0)    # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
         query_states = query_states.squeeze(0)  # [1, num_candidates, num_heads, head_dim] -> [num_candidates, num_heads, head_dim]
         value_states = value_states.squeeze(0)  # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
-
+        rope_params = self.config.rope_scaling
 
         # Choose attention implementation based on mode
         if attention_mode == AttentionMode.PREFILL:
@@ -513,7 +513,7 @@ class LlamaAttention(nn.Module):
             # key_states: [seq_len=num_candidates, num_kv_heads, head_dim]
             # value_states: [ seq_len=num_candidates, num_kv_heads, head_dim]
             num_candidates = key_states.shape[0]
-            rope_params = self.config.rope_scaling
+            
             flashinfer.rope.apply_llama31_rope_inplace(
                 query_states,
                 key_states,
