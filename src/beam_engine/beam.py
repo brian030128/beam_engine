@@ -367,7 +367,7 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
                 prompt=prompt,
                 beam_size=1,
                 max_length=9,
-                num_return_sequences=4,
+                num_return_sequences=1,
                 temperature=1.0
             )
 
@@ -379,7 +379,7 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
             input_text=prompt,
             beam_size=1,
             max_length=9,
-            num_return_sequences=4,
+            num_return_sequences=1,
             temperature=1.0
         )
 
