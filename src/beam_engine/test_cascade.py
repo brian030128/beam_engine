@@ -348,7 +348,105 @@ def test_cascade_input_swapped():
                          paged_kv_indices_arr, paged_kv_last_page_len, q)
 
 
+def test_uneven_cascade_levels():
+    """
+    Test case where different branches have different maximum cascade levels.
+
+    This reproduces the bug where query_token_ids only includes candidates
+    from the max cascade level, missing candidates from lower levels.
+
+    Structure:
+    - Root (page 0): [1, 2]
+    - Branch A (page 1): [3, 4] - splits into 2 candidates at level 1
+      - Leaf A1 (page 2): [5]
+      - Leaf A2 (page 3): [6]
+    - Branch B (page 4): [7, 8, 9, 10] - splits into 2 candidates at level 0 (no further branching)
+      - Leaf B1 (page 5): [11]
+      - Leaf B2 (page 6): [12]
+
+    Expected: 4 candidates total (A1, A2, B1, B2)
+    Expected query tokens: [5, 6, 11, 12]
+    Bug: Only returns 2 query tokens [5, 6] (only from max level)
+    """
+    print("=" * 80)
+    print("Testing BeamState.get_cascade_input() with UNEVEN cascade levels")
+    print("=" * 80)
+
+    page_table = PageTable(
+        layer_num=1,
+        page_size=4,
+        max_num_pages=10,
+        head_num=32,
+        head_dim=128,
+        device=torch.device('cpu'),
+        store_dtype=torch.float16
+    )
+
+    beam_state = BeamState(beam_size=4, page_table=page_table)
+
+    # Build tree manually
+    root = TrieNode(tokens=[1, 2], page_id=0, parent=None)
+    beam_state.root = root
+
+    # Branch A - will create level 1 (has children)
+    branch_a = TrieNode(tokens=[3, 4], page_id=1, parent=root)
+    leaf_a1 = TrieNode(tokens=[5], page_id=2, parent=branch_a)
+    leaf_a2 = TrieNode(tokens=[6], page_id=3, parent=branch_a)
+
+    # Branch B - will stay at level 0 (also has children from root's perspective)
+    branch_b = TrieNode(tokens=[7, 8, 9, 10], page_id=4, parent=root)
+    leaf_b1 = TrieNode(tokens=[11], page_id=5, parent=branch_b)
+    leaf_b2 = TrieNode(tokens=[12], page_id=6, parent=branch_b)
+
+    # Create 4 candidates
+    beam_state.candidates = [
+        BeamCandidate(trie_node=leaf_a1, score=0.0),  # Candidate 0
+        BeamCandidate(trie_node=leaf_a2, score=0.0),  # Candidate 1
+        BeamCandidate(trie_node=leaf_b1, score=0.0),  # Candidate 2
+        BeamCandidate(trie_node=leaf_b2, score=0.0),  # Candidate 3
+    ]
+
+    print(f"\nCreated tree with {len(beam_state.candidates)} candidates")
+    print("Expected cascade structure:")
+    print("  - Level 0: 2 groups (branch_a with 2 candidates, branch_b with 2 candidates)")
+    print("  - Level 1: 2 groups (leaf_a1, leaf_a2) - only from branch A")
+    print("\nExpected query tokens: [5, 6, 11, 12]")
+
+    # Call get_cascade_input
+    (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
+     paged_kv_last_page_len, q) = beam_state.get_cascade_input()
+
+    print(f"\nActual query tokens: {q.tolist()}")
+    print(f"Number of query tokens: {len(q)}")
+
+    # Verify
+    expected_query_tokens = [5, 6, 11, 12]
+
+    print("\n" + "=" * 80)
+    print("VERIFICATION:")
+    print("=" * 80)
+
+    if len(q) != len(beam_state.candidates):
+        print(f"✗ FAILED: Expected {len(beam_state.candidates)} query tokens, got {len(q)}")
+        print(f"  This demonstrates the bug where only candidates at max_cascade_level")
+        print(f"  are included in query_token_ids.")
+        return False
+
+    actual_tokens = q.tolist()
+    # Since order might differ due to grouping, check if all expected tokens are present
+    if sorted(actual_tokens) != sorted(expected_query_tokens):
+        print(f"✗ FAILED: Query tokens don't match")
+        print(f"  Expected (sorted): {sorted(expected_query_tokens)}")
+        print(f"  Got (sorted):      {sorted(actual_tokens)}")
+        return False
+
+    print("✓ PASSED: All query tokens present and correct!")
+    return True
+
+
 if __name__ == "__main__":
     test_cascade_input()
     print("\n\n")
     test_cascade_input_swapped()
+    print("\n\n")
+    test_uneven_cascade_levels()
