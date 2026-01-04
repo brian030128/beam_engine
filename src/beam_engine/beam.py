@@ -199,8 +199,16 @@ class BeamSearchGenerator:
             logger.debug(f"[DECODE INPUT] Query texts: {query_texts}")
 
             # Prepare write locations for K/V cache
-            cascade_write_page_indices = [candidate.trie_node.page_id for candidate in beam_state.candidates]
-            cascade_write_positions = [len(candidate.trie_node.tokens) - 1 for candidate in beam_state.candidates]
+            cascade_write_page_indices = torch.tensor(
+                [candidate.trie_node.page_id for candidate in beam_state.candidates],
+                dtype=torch.int32,
+                device=self.device
+            )
+            cascade_write_positions = torch.tensor(
+                [len(candidate.trie_node.tokens) - 1 for candidate in beam_state.candidates],
+                dtype=torch.int32,
+                device=self.device
+            )
 
             # Compute position IDs for each candidate's query token
             # Position ID = total sequence length - 1 (0-indexed position of current query token)
