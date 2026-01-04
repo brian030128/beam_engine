@@ -575,7 +575,7 @@ if __name__ == "__main__":
     logger.info("Loading models and tokenizer...")
 
     # Model and tokenizer setup
-    device = torch.device("cuda:5") if torch.cuda.is_available() else torch.device("cpu")
+    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     model_name = "meta-llama/Llama-3.1-8B"
 
     # Load custom model with cascade attention
