@@ -521,8 +521,8 @@ def run_vllm_beam_search(vllm_model, tokenizer, prompt: str, beam_size: int = 4,
 def demo_diverse_beam_search(model, tokenizer, model_name, device):
     """Demonstrate diverse beam search generation with sequential model loading."""
     logger.info("=== Diverse Beam Search Demo ===")
+    # Load custom model with cascade attention
 
-    generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy())
 
     # Example prompts
     prompts = [
@@ -585,7 +585,12 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
             torch.cuda.synchronize()
 
         start_time = time.perf_counter()
+        logger.info(f"Loading custom model from {model_name}...")
+        model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16).to(device)
 
+        # Load tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy())
         generated_texts = generator.generate(
             input_text=prompt,
             beam_size=8,
@@ -651,12 +656,7 @@ if __name__ == "__main__":
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     model_name = "meta-llama/Llama-3.1-8B"
 
-    # Load custom model with cascade attention
-    logger.info(f"Loading custom model from {model_name}...")
-    model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16).to(device)
 
-    # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     # Set pad token if not set
     if tokenizer.pad_token is None:
