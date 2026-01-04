@@ -511,7 +511,6 @@ class LlamaAttention(nn.Module):
 
             # Vectorized write - much more efficient than looping through candidates
             # Convert lists to tensors for vectorized indexing
-            device = key_states.device
 
             # Write all candidates at once
             page_table.write_blocks_vectorized(
