@@ -9,6 +9,9 @@ from models.modeling_llama import LlamaForCausalLM
 from page_table import PageTable
 from attention_mode import AttentionMode
 
+from vllm import LLM
+from vllm.sampling_params import BeamSearchParams
+
 
 from beam_state import BeamState, TrieNode, BeamCandidate, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
 from beam_strategy import BeamStrategy, DiverseBeamSearchStrategy, VanillaBeamSearchStrategy
@@ -467,16 +470,57 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
     return generated_texts, elapsed_time
 
 
-def demo_diverse_beam_search(model, tokenizer, hf_model=None):
-    """Demonstrate diverse beam search generation."""
-    logger.info("=== Diverse Beam Search Demo ===")
+def run_vllm_beam_search(vllm_model, tokenizer, prompt: str, beam_size: int = 4,
+                         max_length: int = 50, num_return_sequences: int = 1,
+                         temperature: float = 1.0):
+    """Run vLLM's beam search for comparison."""
+    logger.info("\n" + "=" * 80)
+    logger.info("=== VLLM BEAM SEARCH (REFERENCE) ===")
+    logger.info("=" * 80)
 
-    # Create diverse beam search strategy
-    # strategy = DiverseBeamSearchStrategy(
-    #     num_groups=1,          # Divide beams into 2 groups for diversity
-    #     diversity_penalty=0.5, # Penalty for generating similar tokens
-    #     length_penalty=1.1     # Slight preference for longer sequences
-    # )
+    # Warm up GPU
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+    start_time = time.perf_counter()
+
+    # Create BeamSearchParams
+    beam_params = BeamSearchParams(
+        beam_width=beam_size,
+        max_tokens=max_length,
+        temperature=temperature,
+        n=num_return_sequences,  # Number of sequences to return
+    )
+
+    # Run beam search
+    outputs = vllm_model.beam_search(
+        prompts=[{"prompt": prompt}],
+        params=beam_params
+    )
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+    end_time = time.perf_counter()
+    elapsed_time = end_time - start_time
+
+    generated_texts = []
+    logger.info(f"\n[VLLM RESULTS] Generated {len(outputs)} outputs:")
+    for output_idx, output in enumerate(outputs):
+        logger.info(f"\n[VLLM Output {output_idx+1}] {len(output.sequences)} sequences:")
+        for seq_idx, sequence in enumerate(output.sequences):
+            text = sequence.text
+            generated_texts.append(text)
+            logger.info(f"  [Sequence {seq_idx+1}] Text: {text}")
+
+    logger.info(f"\n[VLLM TIMING] Total generation time: {elapsed_time:.4f}s ({elapsed_time*1000:.2f}ms)")
+
+    return generated_texts, elapsed_time
+
+
+def demo_diverse_beam_search(model, tokenizer, model_name, device):
+    """Demonstrate diverse beam search generation with sequential model loading."""
+    logger.info("=== Diverse Beam Search Demo ===")
 
     generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy())
 
@@ -491,20 +535,45 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
         logger.info(f"\nPrompt: '{prompt}'")
         logger.info("-" * 50)
 
-        hf_time = None
-        custom_time = None
+        # Run HuggingFace beam search first
+        logger.info("\n[BENCHMARK] Loading HuggingFace model...")
+        hf_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16).to(device)
 
-        # Run HuggingFace beam search first (if available)
-        if hf_model is not None:
-            hf_texts, hf_time = run_huggingface_beam_search(
-                hf_model=hf_model,
-                tokenizer=tokenizer,
-                prompt=prompt,
-                beam_size=8,
-                max_length=500,
-                num_return_sequences=4,
-                temperature=1.0
-            )
+        hf_texts, hf_time = run_huggingface_beam_search(
+            hf_model=hf_model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            beam_size=8,
+            max_length=500,
+            num_return_sequences=4,
+            temperature=1.0
+        )
+
+        # Cleanup HuggingFace model
+        logger.info("[BENCHMARK] Cleaning up HuggingFace model...")
+        del hf_model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Run vLLM beam search
+        logger.info("\n[BENCHMARK] Loading vLLM model...")
+        vllm_model = LLM(model=model_name, dtype="float16")
+
+        vllm_texts, vllm_time = run_vllm_beam_search(
+            vllm_model=vllm_model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            beam_size=8,
+            max_length=500,
+            num_return_sequences=4,
+            temperature=1.0
+        )
+
+        # Cleanup vLLM model
+        logger.info("[BENCHMARK] Cleaning up vLLM model...")
+        del vllm_model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         # Generate diverse sequences with custom implementation
         logger.info("\n" + "=" * 80)
@@ -536,32 +605,36 @@ def demo_diverse_beam_search(model, tokenizer, hf_model=None):
         logger.info("\n" + "=" * 80)
         logger.info("=== COMPARISON ===")
         logger.info("=" * 80)
-        if hf_model is not None:
-            logger.info("\nHuggingFace Results:")
-            for i, text in enumerate(hf_texts, 1):
-                logger.info(f"  {i}. {text}")
+
+        logger.info("\nHuggingFace Results:")
+        for i, text in enumerate(hf_texts, 1):
+            logger.info(f"  {i}. {text}")
+
+        logger.info("\nvLLM Results:")
+        for i, text in enumerate(vllm_texts, 1):
+            logger.info(f"  {i}. {text}")
 
         logger.info("\nCustom Cascade Results:")
         for i, text in enumerate(generated_texts, 1):
             logger.info(f"  {i}. {text}")
 
         # Performance comparison
-        if hf_time is not None and custom_time is not None:
-            logger.info("\n" + "=" * 80)
-            logger.info("=== PERFORMANCE BENCHMARK ===")
-            logger.info("=" * 80)
-            logger.info(f"HuggingFace time:  {hf_time:.4f}s ({hf_time*1000:.2f}ms)")
-            logger.info(f"Custom time:       {custom_time:.4f}s ({custom_time*1000:.2f}ms)")
+        logger.info("\n" + "=" * 80)
+        logger.info("=== PERFORMANCE BENCHMARK ===")
+        logger.info("=" * 80)
+        logger.info(f"HuggingFace time:  {hf_time:.4f}s ({hf_time*1000:.2f}ms)")
+        logger.info(f"vLLM time:         {vllm_time:.4f}s ({vllm_time*1000:.2f}ms)")
+        logger.info(f"Custom time:       {custom_time:.4f}s ({custom_time*1000:.2f}ms)")
 
-            speedup = hf_time / custom_time
-            if speedup > 1:
-                logger.info(f"Speedup:           {speedup:.2f}x faster (Custom is better)")
-            else:
-                logger.info(f"Slowdown:          {1/speedup:.2f}x slower (HuggingFace is better)")
+        # Speedup comparisons
+        hf_vs_custom = hf_time / custom_time
+        vllm_vs_custom = vllm_time / custom_time
+        vllm_vs_hf = hf_time / vllm_time
 
-            time_diff = abs(hf_time - custom_time)
-            logger.info(f"Time difference:   {time_diff:.4f}s ({time_diff*1000:.2f}ms)")
-            logger.info("=" * 80)
+        logger.info(f"\nCustom vs HuggingFace: {hf_vs_custom:.2f}x {'faster' if hf_vs_custom > 1 else 'slower'}")
+        logger.info(f"Custom vs vLLM:        {vllm_vs_custom:.2f}x {'faster' if vllm_vs_custom > 1 else 'slower'}")
+        logger.info(f"vLLM vs HuggingFace:   {vllm_vs_hf:.2f}x {'faster' if vllm_vs_hf > 1 else 'slower'}")
+        logger.info("=" * 80)
 
 
 
@@ -572,7 +645,7 @@ if __name__ == "__main__":
     # Set logging level to INFO (hides DEBUG messages)
     set_logging_level(LogLevel.INFO)
 
-    logger.info("Loading models and tokenizer...")
+    logger.info("Loading custom model and tokenizer...")
 
     # Model and tokenizer setup
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
@@ -580,11 +653,7 @@ if __name__ == "__main__":
 
     # Load custom model with cascade attention
     logger.info(f"Loading custom model from {model_name}...")
-    model = LlamaForCausalLM.from_pretrained(model_name, dtype=torch.float16).to(device)
-
-    # Load HuggingFace reference model
-    logger.info(f"Loading HuggingFace reference model from {model_name}...")
-    hf_model = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch.float16).to(device)
+    model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16).to(device)
 
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -593,10 +662,11 @@ if __name__ == "__main__":
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    logger.info("Models loaded successfully!\n")
+    logger.info("Custom model loaded successfully!\n")
+    logger.info("Note: HuggingFace and vLLM models will be loaded sequentially during benchmarking\n")
 
     # Run demonstrations with comparison
-    demo_diverse_beam_search(model, tokenizer, hf_model)
+    demo_diverse_beam_search(model, tokenizer, model_name, device)
 
     logger.info("\n=== Strategy Comparison ===")
     logger.info("Vanilla beam search: Selects candidates purely by score - simple and fast.")
