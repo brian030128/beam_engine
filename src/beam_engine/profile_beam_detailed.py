@@ -30,7 +30,7 @@ def main():
 
     # Setup (same as beam.py)
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
-    model_name = "meta-llama/Llama-3.2-3B"
+    model_name = "meta-llama/Llama-3.1-8B"
 
     logger.info(f"Loading custom model from {model_name}...")
     model = LlamaForCausalLM.from_pretrained(model_name, dtype=torch.float16).to(device)
