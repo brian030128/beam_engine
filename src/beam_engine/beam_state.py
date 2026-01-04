@@ -68,6 +68,10 @@ class BeamState:
         self.candidates: List[BeamCandidate] = []
         self.finished_candidates: List[BeamCandidate] = []
 
+        # Cache for write_blocks_vectorized tensors - only recreate when num_candidates changes
+        self._cached_write_batch_indices = None
+        self._cached_write_kv_indptr = None
+
     def add_root_sequence(self, sequence: List[int]) -> List[TrieNode]:
         """ returns created nodes as their creation order"""
         logger.debug(f"\n[BeamState] Adding root sequence with {len(sequence)} tokens")
@@ -394,8 +398,17 @@ class BeamState:
             logger.debug(f"      kv_last_page_len: {paged_kv_last_page_len[lvl].tolist()}")
         logger.debug(f"  [CASCADE] Query token IDs: {query_token_ids_tensor.tolist()}")
 
+        # Get or create cached tensors for write_blocks_vectorized
+        # Only allocate new tensors when num_candidates changes
+        num_candidates = len(self.candidates)
+        if (self._cached_write_batch_indices is None or
+            self._cached_write_batch_indices.shape[0] != num_candidates):
+            self._cached_write_batch_indices = torch.arange(num_candidates, dtype=torch.int32, device=self.page_table.device)
+            self._cached_write_kv_indptr = torch.arange(num_candidates + 1, dtype=torch.int32, device=self.page_table.device)
+
         return (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
-                paged_kv_last_page_len, query_token_ids_tensor)
+                paged_kv_last_page_len, query_token_ids_tensor,
+                self._cached_write_batch_indices, self._cached_write_kv_indptr)
 
     def get_best_finished(self, num_return: int) -> List[BeamCandidate]:
         """Get the best finished candidates, normalized by length."""

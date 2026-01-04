@@ -453,6 +453,8 @@ class LlamaAttention(nn.Module):
         cascade_kv_last_page_len_arr: Optional[list[torch.Tensor]] = None,
         cascade_write_page_indices: Optional[list] = None,  # Page IDs to write K/V for each candidate
         cascade_write_positions: Optional[list] = None,  # Positions within page to write K/V
+        cascade_write_batch_indices: Optional[torch.Tensor] = None,  # Pre-allocated batch indices for write
+        cascade_write_kv_indptr: Optional[torch.Tensor] = None,  # Pre-allocated kv_indptr for write
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -518,7 +520,9 @@ class LlamaAttention(nn.Module):
                 page_indices=cascade_write_page_indices,
                 keys=key_states,
                 values=value_states,
-                indices=cascade_write_positions
+                indices=cascade_write_positions,
+                batch_indices=cascade_write_batch_indices,
+                kv_indptr=cascade_write_kv_indptr
             )
 
             # Run cascade decode attention

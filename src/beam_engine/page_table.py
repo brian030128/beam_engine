@@ -169,73 +169,26 @@ class PageTable:
         page_indices: torch.Tensor,
         keys: torch.Tensor,
         values: torch.Tensor,
-        indices: torch.Tensor
+        indices: torch.Tensor,
+        batch_indices: torch.Tensor,
+        kv_indptr: torch.Tensor
     ):
         """
         Vectorized write of key-value tokens to multiple pages using FlashInfer's append kernel.
 
         This replaces PyTorch advanced indexing with FlashInfer's CUDA kernel to eliminate
-        implicit synchronization (aten::to_copy, cudaStreamSynchronize).
+        implicit synchronization. Pre-allocated tensors are passed in to avoid allocation overhead.
 
         Args:
             layer: Layer index (0 to layer_num-1)
-            page_indices: Tensor of page indices to write to [num_candidates]
+            page_indices: Tensor of page indices to write to [num_candidates], dtype=int32
             keys: Key tensor [num_candidates, num_kv_heads, head_dim]
             values: Value tensor [num_candidates, num_kv_heads, head_dim]
-            indices: Tensor of positions within each page to start writing [num_candidates]
+            indices: Tensor of positions within each page to start writing [num_candidates], dtype=int32
+            batch_indices: Pre-allocated [0, 1, 2, ..., num_candidates-1] tensor, dtype=int32
+            kv_indptr: Pre-allocated [0, 1, 2, ..., num_candidates] tensor, dtype=int32
         """
         import flashinfer.page
-
-        assert keys.shape == values.shape
-        assert isinstance(page_indices, torch.Tensor)
-        assert isinstance(indices, torch.Tensor)
-        num_candidates = keys.shape[0]
-        device = keys.device
-
-        if layer >= self.layer_num:
-            raise ValueError(f"Layer {layer} out of range (max: {self.layer_num-1})")
-
-        # Validate all page indices are allocated
-        for page_idx in page_indices.tolist():
-            if page_idx not in self.allocated_pages:
-                raise ValueError(f"Page {page_idx} is not allocated")
-
-        # Validate indices don't exceed page size
-        if torch.any(indices >= self.page_size):
-            raise ValueError(f"Some indices exceed page size {self.page_size}")
-
-        # Convert to int32 if necessary (FlashInfer requires int32 for indices)
-        if page_indices.dtype != torch.int32:
-            page_indices = page_indices.to(torch.int32)
-        if indices.dtype != torch.int32:
-            indices = indices.to(torch.int32)
-
-        # Build FlashInfer parameters for paged KV cache append
-        # Each candidate is treated as an independent request (beam-style decode)
-
-        # batch_indices: maps each appended token to its request/candidate
-        # Shape: [num_candidates], values: [0, 1, 2, ..., num_candidates-1]
-        batch_indices = torch.arange(num_candidates, dtype=torch.int32, device=device)
-
-        # positions: where to write each token within its page
-        # For decode, this equals the current page length (append at end)
-        # Shape: [num_candidates]
-        positions = indices
-
-        # kv_indices: page index for each request
-        # In decode mode, each candidate has exactly 1 active page
-        # Shape: [num_candidates]
-        kv_indices = page_indices
-
-        # kv_indptr: indptr for ragged tensor representation of pages per request
-        # Since each request has exactly 1 page: [0, 1, 2, ..., num_candidates]
-        # Shape: [num_candidates + 1]
-        kv_indptr = torch.arange(num_candidates + 1, dtype=torch.int32, device=device)
-
-        # kv_last_page_len: number of entries in the last page of each request BEFORE append
-        # For decode where we append at position=indices, current length = indices
-        # Shape: [num_candidates]
-        kv_last_page_len = indices
 
         # Get the paged KV cache for this layer
         # Shape: [max_num_pages, 2, page_size, num_kv_heads, head_dim]
@@ -246,12 +199,10 @@ class PageTable:
             append_key=keys,              # [num_candidates, num_kv_heads, head_dim]
             append_value=values,          # [num_candidates, num_kv_heads, head_dim]
             batch_indices=batch_indices,  # [num_candidates]
-            positions=positions,          # [num_candidates]
+            positions=indices,            # [num_candidates] - where to write in each page
             paged_kv_cache=paged_kv_cache,  # [max_num_pages, 2, page_size, num_kv_heads, head_dim]
-            kv_indices=kv_indices,        # [num_candidates]
+            kv_indices=page_indices,      # [num_candidates] - which pages to write to
             kv_indptr=kv_indptr,          # [num_candidates + 1]
-            kv_last_page_len=kv_last_page_len,  # [num_candidates]
+            kv_last_page_len=indices,     # [num_candidates] - current length before append
             kv_layout='NHD'               # Layout: [N, H, D] = [seq, heads, dim]
         )
-
-        logger.debug(f"FlashInfer: Appended {num_candidates} KV pairs to layer {layer}")

@@ -189,9 +189,10 @@ class BeamSearchGenerator:
             # Time cascade input preparation
             cascade_prep_start = time.perf_counter()
 
-            # Get cascade input including query token IDs
+            # Get cascade input including query token IDs and pre-allocated write tensors
             (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
-             paged_kv_last_page_len_arr, query_token_ids) = beam_state.get_cascade_input()
+             paged_kv_last_page_len_arr, query_token_ids,
+             write_batch_indices, write_kv_indptr) = beam_state.get_cascade_input()
 
             logger.debug(f"\n[DECODE INPUT] Cascade levels: {len(qo_indptr_arr)}, Candidates: {len(beam_state.candidates)}, Query tokens: {len(query_token_ids)}")
             query_texts = [self.tokenizer.decode([tid], skip_special_tokens=False) for tid in query_token_ids.tolist()]
@@ -253,6 +254,8 @@ class BeamSearchGenerator:
                     cascade_kv_last_page_len_arr=paged_kv_last_page_len_arr,
                     cascade_write_page_indices=cascade_write_page_indices,
                     cascade_write_positions=cascade_write_positions,
+                    cascade_write_batch_indices=write_batch_indices,
+                    cascade_write_kv_indptr=write_kv_indptr,
                 )
                 logits = outputs.logits  # [1, num_candidates, vocab_size]
 
@@ -573,7 +576,7 @@ if __name__ == "__main__":
 
     # Model and tokenizer setup
     device = torch.device("cuda:5") if torch.cuda.is_available() else torch.device("cpu")
-    model_name = "meta-llama/Llama-3.2-3B"
+    model_name = "meta-llama/Llama-3.1-8B"
 
     # Load custom model with cascade attention
     logger.info(f"Loading custom model from {model_name}...")
