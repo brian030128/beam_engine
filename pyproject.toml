@@ -9,6 +9,11 @@ dependencies = [
     "vllm>=0.10.1.1",
 ]
 
+[project.optional-dependencies]
+benchmark = [
+    "vllm",
+]
+
 [tool.uv]
 packages = ["beam_engine"]
 no-build-isolation-package = ["torch"]

@@ -589,7 +589,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16).to(device)
 
         # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+
         generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy())
         generated_texts = generator.generate(
             input_text=prompt,
@@ -655,7 +655,8 @@ if __name__ == "__main__":
     # Model and tokenizer setup
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     model_name = "meta-llama/Llama-3.1-8B"
-
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model=None
 
 
     # Set pad token if not set
