@@ -512,16 +512,14 @@ class LlamaAttention(nn.Module):
             # Vectorized write - much more efficient than looping through candidates
             # Convert lists to tensors for vectorized indexing
             device = key_states.device
-            page_indices_tensor = torch.tensor(cascade_write_page_indices, dtype=torch.long, device=device)
-            write_positions_tensor = torch.tensor(cascade_write_positions, dtype=torch.long, device=device)
 
             # Write all candidates at once
             page_table.write_blocks_vectorized(
                 layer=self.layer_idx,
-                page_indices=page_indices_tensor,
+                page_indices=cascade_write_page_indices,
                 keys=key_states,
                 values=value_states,
-                indices=write_positions_tensor
+                indices=cascade_write_positions
             )
 
             # Run cascade decode attention
