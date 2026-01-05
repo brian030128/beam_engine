@@ -580,15 +580,24 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         logger.info("=" * 80)
 
         # Warm up GPU
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
 
-        start_time = time.perf_counter()
+
+        
         logger.info(f"Loading custom model from {model_name}...")
         model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16).to(device)
-
+        generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy())
+        generated_texts = generator.generate(
+            input_text=prompt,
+            beam_size=8,
+            max_length=500,
+            num_return_sequences=4,
+            temperature=1.0
+        )
+        
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         # Load tokenizer
-
+        start_time = time.perf_counter()
         generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy())
         generated_texts = generator.generate(
             input_text=prompt,
