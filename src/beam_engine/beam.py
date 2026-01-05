@@ -525,7 +525,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
 
     # Example prompts
     prompts = [
-        "The future of artificial intelligence is",
+        "The future of artificial intelligence is" * 100,
         #"Once upon a time in a magical forest,",
         #"The best way to solve climate change is"
     ]
@@ -593,7 +593,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
             num_return_sequences=4,
             temperature=1.0
         )
-        
+
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         # Load tokenizer
