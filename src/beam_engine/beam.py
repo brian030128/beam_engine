@@ -543,7 +543,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
             tokenizer=tokenizer,
             prompt=prompt,
             beam_size=8,
-            max_length=500,
+            max_length=1000,
             num_return_sequences=4,
             temperature=1.0
         )
@@ -563,7 +563,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
             tokenizer=tokenizer,
             prompt=prompt,
             beam_size=8,
-            max_length=500,
+            max_length=1000,
             num_return_sequences=4,
             temperature=1.0
         )
@@ -589,7 +589,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         generated_texts = generator.generate(
             input_text=prompt,
             beam_size=8,
-            max_length=500,
+            max_length=1000,
             num_return_sequences=4,
             temperature=1.0
         )
