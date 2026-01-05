@@ -249,7 +249,8 @@ class VLLMBenchmark:
         beam_width: Optional[int] = None,
     ) -> List[str]:
         """Generate text using vLLM."""
-        from vllm import SamplingParams, BeamSearchParams
+        from vllm import SamplingParams
+        from vllm.sampling_params import BeamSearchParams
         
         if decoding_strategy == DecodingStrategy.GREEDY:
             sampling_params = SamplingParams(
