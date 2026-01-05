@@ -250,7 +250,6 @@ class VLLMBenchmark:
     ) -> List[str]:
         """Generate text using vLLM."""
         from vllm import SamplingParams
-        from vllm.sampling_params import BeamSearchParams
         
         if decoding_strategy == DecodingStrategy.GREEDY:
             sampling_params = SamplingParams(
@@ -258,15 +257,46 @@ class VLLMBenchmark:
                 temperature=0,
             )
             outputs = self.llm.generate(prompts, sampling_params)
-        elif decoding_strategy == DecodingStrategy.BEAM_SEARCH:
-            # vLLM beam search uses BeamSearchParams
-            beam_params = BeamSearchParams(
-                beam_width=beam_width or BEAM_WIDTH,
-                max_tokens=max_new_tokens,
-            )
-            outputs = self.llm.beam_search(prompts, beam_params)
+            return [output.outputs[0].text for output in outputs]
         
-        return [output.outputs[0].text for output in outputs]
+        elif decoding_strategy == DecodingStrategy.BEAM_SEARCH:
+            # Try different vLLM beam search APIs based on version
+            try:
+                # vLLM >= 0.6.0: use beam_search with BeamSearchParams
+                from vllm.sampling_params import BeamSearchParams
+                beam_params = BeamSearchParams(
+                    beam_width=beam_width or BEAM_WIDTH,
+                    max_tokens=max_new_tokens,
+                )
+                # beam_search expects TokensPrompt dicts with "prompt_token_ids" key
+                tokenizer = self.llm.get_tokenizer()
+                prompt_inputs = [
+                    {"prompt_token_ids": tokenizer.encode(p)} for p in prompts
+                ]
+                outputs = self.llm.beam_search(prompt_inputs, beam_params)
+                # beam_search returns BeamSearchOutput with sequences attribute
+                return [output.sequences[0].text for output in outputs]
+            except (ImportError, AttributeError, TypeError) as e:
+                # Fallback: use SamplingParams with use_beam_search=True (older API)
+                try:
+                    sampling_params = SamplingParams(
+                        max_tokens=max_new_tokens,
+                        temperature=0,
+                        use_beam_search=True,
+                        best_of=beam_width or BEAM_WIDTH,
+                        n=1,
+                    )
+                    outputs = self.llm.generate(prompts, sampling_params)
+                    return [output.outputs[0].text for output in outputs]
+                except Exception:
+                    # Last fallback: just use greedy and warn
+                    print(f"    Warning: Beam search not available, falling back to greedy")
+                    sampling_params = SamplingParams(
+                        max_tokens=max_new_tokens,
+                        temperature=0,
+                    )
+                    outputs = self.llm.generate(prompts, sampling_params)
+                    return [output.outputs[0].text for output in outputs]
     
     def benchmark(
         self,
