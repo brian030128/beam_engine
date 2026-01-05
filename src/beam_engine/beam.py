@@ -489,7 +489,6 @@ def run_vllm_beam_search(vllm_model, tokenizer, prompt: str, beam_size: int = 4,
         beam_width=beam_size,
         max_tokens=max_length,
         temperature=temperature,
-        n=num_return_sequences,  # Number of sequences to return
     )
 
     # Run beam search
@@ -653,7 +652,7 @@ if __name__ == "__main__":
     logger.info("Loading custom model and tokenizer...")
 
     # Model and tokenizer setup
-    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+    device = torch.device("cuda:1") if torch.cuda.is_available() else torch.device("cpu")
     model_name = "meta-llama/Llama-3.1-8B"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model=None
