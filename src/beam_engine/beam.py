@@ -585,7 +585,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         
         logger.info(f"Loading custom model from {model_name}...")
         model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16).to(device)
-        generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy())
+        generator = BeamSearchGenerator(model, tokenizer, DiverseBeamSearchStrategy())
         generated_texts = generator.generate(
             input_text=prompt,
             beam_size=8,
