@@ -5,13 +5,12 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict, Optional
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from models.modeling_llama import LlamaForCausalLM
-from page_table import PageTable
-from attention_mode import AttentionMode
-
-from beam_state import BeamState, TrieNode, BeamCandidate, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
-from beam_strategy import BeamStrategy, DiverseBeamSearchStrategy, VanillaBeamSearchStrategy
-from logger import init_logger
+from beam_engine.models.modeling_llama import LlamaForCausalLM
+from beam_engine.page_table import PageTable
+from beam_engine.attention_mode import AttentionMode
+from beam_engine.beam_state import BeamState, TrieNode, BeamCandidate, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
+from beam_engine.beam_strategy import BeamStrategy, DiverseBeamSearchStrategy, VanillaBeamSearchStrategy
+from beam_engine.logger import init_logger
 
 logger = init_logger(__name__)
 
