@@ -355,6 +355,13 @@ class HuggingFaceBenchmark:
             "avg_peak_memory_gb": np.mean(memory_usage),
             "latencies": latencies,
         }
+        
+        # Clear static cache after benchmark to free memory for next config
+        self._static_cache = None
+        self._cache_config = None
+        clear_gpu_memory()
+        
+        return result
     
     def cleanup(self):
         """Release model resources."""
@@ -693,6 +700,10 @@ def main():
             hf_benchmark.tokenizer, BATCH_SIZE, input_len, run_id=-999
         )
         hf_benchmark.generate(warmup_prompts, OUTPUT_LENGTH, DecodingStrategy.GREEDY)
+        # Clear the static cache between different input lengths to avoid OOM
+        hf_benchmark._static_cache = None
+        hf_benchmark._cache_config = None
+        clear_gpu_memory()
     torch.cuda.synchronize()
     print("  Initial warmup complete.\n")
     
@@ -706,6 +717,11 @@ def main():
         all_results.append(result)
     
     hf_benchmark.cleanup()
+    
+    # Ensure GPU memory is fully cleared before loading vLLM
+    print("\nClearing GPU memory before vLLM...")
+    clear_gpu_memory()
+    print(f"GPU Memory after cleanup: {get_gpu_memory_usage()}")
     
     # ==========================================
     # Benchmark vLLM
