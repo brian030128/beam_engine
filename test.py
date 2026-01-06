@@ -685,6 +685,17 @@ def main():
     
     hf_benchmark = HuggingFaceBenchmark(MODEL_NAME, DEVICE, DTYPE)
     
+    # Initial warmup to trigger JIT compilation and CUDA kernel initialization
+    # Cover all input lengths to ensure kernels are compiled for each
+    print("  Running initial warmup to trigger JIT/kernel compilation...")
+    for input_len in INPUT_LENGTHS:
+        warmup_prompts = generate_dummy_input(
+            hf_benchmark.tokenizer, BATCH_SIZE, input_len, run_id=-999
+        )
+        hf_benchmark.generate(warmup_prompts, OUTPUT_LENGTH, DecodingStrategy.GREEDY)
+    torch.cuda.synchronize()
+    print("  Initial warmup complete.\n")
+    
     for config in configs:
         result = hf_benchmark.benchmark(
             config=config,
@@ -704,6 +715,17 @@ def main():
     print("="*80)
     
     vllm_benchmark = VLLMBenchmark(MODEL_NAME, DEVICE, DTYPE)
+    
+    # Initial warmup to trigger JIT compilation and CUDA kernel initialization
+    # Must cover ALL input lengths since vLLM compiles different kernels per sequence length
+    print("  Running initial warmup to trigger JIT/kernel compilation...")
+    for input_len in INPUT_LENGTHS:
+        warmup_prompts = generate_dummy_input(
+            vllm_benchmark.tokenizer, BATCH_SIZE, input_len, run_id=-999
+        )
+        vllm_benchmark.generate(warmup_prompts, OUTPUT_LENGTH, DecodingStrategy.GREEDY)
+    torch.cuda.synchronize()
+    print("  Initial warmup complete.\n")
     
     for config in configs:
         result = vllm_benchmark.benchmark(
