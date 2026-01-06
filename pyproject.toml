@@ -15,7 +15,6 @@ benchmark = [
 ]
 
 [tool.uv]
-packages = ["beam_engine"]
 no-build-isolation-package = ["torch"]
 
 [tool.setuptools]
