@@ -7,7 +7,7 @@ Device: cuda:0
 
 Tests:
 1. Different input lengths (64, 256, 512, 1024 tokens)
-2. Greedy decoding vs Beam search (beam_width=4)
+2. Greedy decoding only (beam search disabled)
 3. Batch size variations
 
 Note: HuggingFace greedy decoding uses StaticCache for optimal performance
@@ -648,7 +648,7 @@ def main():
     print(f"Batch size:    {BATCH_SIZE}")
     print(f"Input lengths: {INPUT_LENGTHS}")
     print(f"Output length: {OUTPUT_LENGTH} tokens")
-    print(f"Beam width:    {BEAM_WIDTH}")
+    print(f"Decoding:      Greedy only (beam search disabled)")
     print(f"Warmup runs:   {NUM_WARMUP_RUNS}")
     print(f"Bench runs:    {NUM_BENCHMARK_RUNS}")
     print()
@@ -665,20 +665,12 @@ def main():
     # Build test configurations
     configs = []
     for input_length in INPUT_LENGTHS:
-        # Greedy decoding
+        # Greedy decoding only (beam search disabled)
         configs.append(BenchmarkConfig(
             input_length=input_length,
             output_length=OUTPUT_LENGTH,
             batch_size=BATCH_SIZE,
             decoding_strategy=DecodingStrategy.GREEDY,
-        ))
-        # Beam search
-        configs.append(BenchmarkConfig(
-            input_length=input_length,
-            output_length=OUTPUT_LENGTH,
-            batch_size=BATCH_SIZE,
-            decoding_strategy=DecodingStrategy.BEAM_SEARCH,
-            beam_width=BEAM_WIDTH,
         ))
     
     all_results = []
