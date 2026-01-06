@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Tuple, Dict, Optional, List, Set
-from beam_state import BeamState, BeamCandidate, TrieNode, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
+from beam_engine.beam_state import BeamState, BeamCandidate, TrieNode, BeamGenerateResult, BeamToken, BeamGenerateInput, BeamTokenCandidate
 from dataclasses import dataclass
 
 

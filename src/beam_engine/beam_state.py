@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import torch
 from collections import defaultdict
 
-from page_table import PageTable
-from logger import init_logger
+from beam_engine.page_table import PageTable
+from beam_engine.logger import init_logger
 
 logger = init_logger(__name__)
 class TrieNode:
