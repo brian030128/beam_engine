@@ -62,18 +62,38 @@ class BenchmarkConfig:
         return f"in={self.input_length}, out={self.output_length}, batch={self.batch_size}, {strategy}"
 
 
-def generate_dummy_input(tokenizer, batch_size: int, input_length: int) -> List[str]:
-    """Generate dummy input texts of approximately the specified token length."""
-    base_text = "This is a sample text for benchmarking language model performance. "
+def generate_dummy_input(tokenizer, batch_size: int, input_length: int, run_id: int = 0) -> List[str]:
+    """
+    Generate dummy input texts of approximately the specified token length.
     
-    base_tokens = tokenizer.encode(base_text, add_special_tokens=False)
-    repeats = (input_length // len(base_tokens)) + 1
+    Each prompt is unique to avoid hitting vLLM's prefix cache.
+    Uses run_id and batch index to ensure uniqueness across runs.
+    """
+    prompts = []
     
-    long_text = base_text * repeats
-    tokens = tokenizer.encode(long_text, add_special_tokens=False)[:input_length]
-    text = tokenizer.decode(tokens)
+    for batch_idx in range(batch_size):
+        # Create unique prefix for each prompt to avoid cache hits
+        unique_prefix = f"Run {run_id} batch {batch_idx}: "
+        base_text = "This is a sample text for benchmarking language model performance. "
+        
+        # Calculate how many tokens we need after the prefix
+        prefix_tokens = tokenizer.encode(unique_prefix, add_special_tokens=False)
+        base_tokens = tokenizer.encode(base_text, add_special_tokens=False)
+        
+        remaining_length = input_length - len(prefix_tokens)
+        if remaining_length <= 0:
+            # Input length is very short, just use prefix
+            tokens = prefix_tokens[:input_length]
+        else:
+            repeats = (remaining_length // len(base_tokens)) + 1
+            long_text = base_text * repeats
+            body_tokens = tokenizer.encode(long_text, add_special_tokens=False)[:remaining_length]
+            tokens = prefix_tokens + body_tokens
+        
+        text = tokenizer.decode(tokens)
+        prompts.append(text)
     
-    return [text] * batch_size
+    return prompts
 
 
 def clear_gpu_memory():
@@ -259,7 +279,6 @@ class HuggingFaceBenchmark:
     def benchmark(
         self,
         config: BenchmarkConfig,
-        prompts: List[str],
         num_warmup: int,
         num_runs: int,
     ) -> Dict[str, Any]:
@@ -267,11 +286,14 @@ class HuggingFaceBenchmark:
         cache_info = " (with StaticCache)" if config.decoding_strategy == DecodingStrategy.GREEDY else ""
         print(f"  Config: {config}{cache_info}")
         
-        # Warmup
+        # Warmup (use negative run_ids to differentiate from benchmark runs)
         print("  Running warmup...")
-        for _ in range(num_warmup):
+        for warmup_idx in range(num_warmup):
+            warmup_prompts = generate_dummy_input(
+                self.tokenizer, config.batch_size, config.input_length, run_id=-(warmup_idx + 1)
+            )
             self.generate(
-                prompts, 
+                warmup_prompts, 
                 config.output_length,
                 config.decoding_strategy,
                 config.beam_width,
@@ -285,12 +307,17 @@ class HuggingFaceBenchmark:
         memory_usage = []
         
         for i in range(num_runs):
+            # Generate unique prompts for each run to avoid cache hits
+            run_prompts = generate_dummy_input(
+                self.tokenizer, config.batch_size, config.input_length, run_id=i
+            )
+            
             torch.cuda.reset_peak_memory_stats()
             torch.cuda.synchronize()
             start_time = time.perf_counter()
             
             outputs = self.generate(
-                prompts, 
+                run_prompts, 
                 config.output_length,
                 config.decoding_strategy,
                 config.beam_width,
@@ -305,7 +332,7 @@ class HuggingFaceBenchmark:
             print(f"    Run {i+1}/{num_runs}: {latencies[-1]:.4f}s, Peak Memory: {peak_memory:.2f}GB")
         
         # Calculate metrics
-        total_tokens_generated = len(prompts) * config.output_length
+        total_tokens_generated = config.batch_size * config.output_length
         avg_latency = np.mean(latencies)
         std_latency = np.std(latencies)
         throughput = total_tokens_generated / avg_latency
@@ -344,8 +371,6 @@ class VLLMBenchmark:
     def __init__(self, model_name: str, device: str, dtype: torch.dtype):
         from vllm import LLM
         
-        gpu_id = int(device.split(":")[-1]) if ":" in device else 0
-        
         print(f"Loading vLLM model: {model_name}")
         
         dtype_str = "float16" if dtype == torch.float16 else "bfloat16"
@@ -375,63 +400,36 @@ class VLLMBenchmark:
                 max_tokens=max_new_tokens,
                 temperature=0,
             )
-            outputs = self.llm.generate(prompts, sampling_params)
-            return [output.outputs[0].text for output in outputs]
-        
         elif decoding_strategy == DecodingStrategy.BEAM_SEARCH:
-            # Try different vLLM beam search APIs based on version
-            try:
-                # vLLM >= 0.6.0: use beam_search with BeamSearchParams
-                from vllm.sampling_params import BeamSearchParams
-                beam_params = BeamSearchParams(
-                    beam_width=beam_width or BEAM_WIDTH,
-                    max_tokens=max_new_tokens,
-                )
-                # beam_search expects TokensPrompt dicts with "prompt_token_ids" key
-                tokenizer = self.llm.get_tokenizer()
-                prompt_inputs = [
-                    {"prompt_token_ids": tokenizer.encode(p)} for p in prompts
-                ]
-                outputs = self.llm.beam_search(prompt_inputs, beam_params)
-                # beam_search returns BeamSearchOutput with sequences attribute
-                return [output.sequences[0].text for output in outputs]
-            except (ImportError, AttributeError, TypeError) as e:
-                # Fallback: use SamplingParams with use_beam_search=True (older API)
-                try:
-                    sampling_params = SamplingParams(
-                        max_tokens=max_new_tokens,
-                        temperature=0,
-                        use_beam_search=True,
-                        best_of=beam_width or BEAM_WIDTH,
-                        n=1,
-                    )
-                    outputs = self.llm.generate(prompts, sampling_params)
-                    return [output.outputs[0].text for output in outputs]
-                except Exception:
-                    # Last fallback: just use greedy and warn
-                    print(f"    Warning: Beam search not available, falling back to greedy")
-                    sampling_params = SamplingParams(
-                        max_tokens=max_new_tokens,
-                        temperature=0,
-                    )
-                    outputs = self.llm.generate(prompts, sampling_params)
-                    return [output.outputs[0].text for output in outputs]
+            sampling_params = SamplingParams(
+                max_tokens=max_new_tokens,
+                use_beam_search=True,
+                best_of=beam_width or BEAM_WIDTH,
+                temperature=0,
+            )
+        else:
+            raise ValueError(f"Unknown decoding strategy: {decoding_strategy}")
+        
+        outputs = self.llm.generate(prompts, sampling_params)
+        return [output.outputs[0].text for output in outputs]
     
     def benchmark(
         self,
         config: BenchmarkConfig,
-        prompts: List[str],
         num_warmup: int,
         num_runs: int,
     ) -> Dict[str, Any]:
         """Run benchmark and collect metrics."""
         print(f"  Config: {config}")
         
-        # Warmup
+        # Warmup (use negative run_ids to differentiate from benchmark runs)
         print("  Running warmup...")
-        for _ in range(num_warmup):
+        for warmup_idx in range(num_warmup):
+            warmup_prompts = generate_dummy_input(
+                self.tokenizer, config.batch_size, config.input_length, run_id=-(warmup_idx + 1)
+            )
             self.generate(
-                prompts, 
+                warmup_prompts, 
                 config.output_length,
                 config.decoding_strategy,
                 config.beam_width,
@@ -445,12 +443,17 @@ class VLLMBenchmark:
         memory_usage = []
         
         for i in range(num_runs):
+            # Generate unique prompts for each run to avoid prefix cache hits
+            run_prompts = generate_dummy_input(
+                self.tokenizer, config.batch_size, config.input_length, run_id=i
+            )
+            
             torch.cuda.reset_peak_memory_stats()
             torch.cuda.synchronize()
             start_time = time.perf_counter()
             
             outputs = self.generate(
-                prompts, 
+                run_prompts, 
                 config.output_length,
                 config.decoding_strategy,
                 config.beam_width,
@@ -465,7 +468,7 @@ class VLLMBenchmark:
             print(f"    Run {i+1}/{num_runs}: {latencies[-1]:.4f}s, Peak Memory: {peak_memory:.2f}GB")
         
         # Calculate metrics
-        total_tokens_generated = len(prompts) * config.output_length
+        total_tokens_generated = config.batch_size * config.output_length
         avg_latency = np.mean(latencies)
         std_latency = np.std(latencies)
         throughput = total_tokens_generated / avg_latency
@@ -691,11 +694,8 @@ def main():
     hf_benchmark = HuggingFaceBenchmark(MODEL_NAME, DEVICE, DTYPE)
     
     for config in configs:
-        prompts = generate_dummy_input(hf_benchmark.tokenizer, config.batch_size, config.input_length)
-        
         result = hf_benchmark.benchmark(
             config=config,
-            prompts=prompts,
             num_warmup=NUM_WARMUP_RUNS,
             num_runs=NUM_BENCHMARK_RUNS,
         )
@@ -714,11 +714,8 @@ def main():
     vllm_benchmark = VLLMBenchmark(MODEL_NAME, DEVICE, DTYPE)
     
     for config in configs:
-        prompts = generate_dummy_input(vllm_benchmark.tokenizer, config.batch_size, config.input_length)
-        
         result = vllm_benchmark.benchmark(
             config=config,
-            prompts=prompts,
             num_warmup=NUM_WARMUP_RUNS,
             num_runs=NUM_BENCHMARK_RUNS,
         )
