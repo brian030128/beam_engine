@@ -6,7 +6,7 @@ dependencies = [
     "flashinfer-python",
     "transformers==4.57.3",
     "ninja",
-    "vllm>=0.10.1.1",
+    "vllm",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +17,12 @@ benchmark = [
 [tool.uv]
 packages = ["beam_engine"]
 no-build-isolation-package = ["torch"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
