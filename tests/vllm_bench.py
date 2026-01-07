@@ -21,7 +21,7 @@ TEMPERATURE = 1.0
 # Profiling configuration
 ENABLE_PROFILING = True
 PROFILER_OUTPUT_DIR = "./vllm_profile"
-
+os.environ["VLLM_TORCH_PROFILER_DIR"] = "./vllm_profile"
 
 def run_vllm_beam_search():
     if ENABLE_PROFILING:
@@ -50,7 +50,7 @@ def run_vllm_beam_search():
     llm = LLM(
         model=MODEL_NAME,
         dtype="float16",
-        profiler_config=profiler_config,
+        #profiler_config=profiler_config, not that version yet
     )
 
     params = BeamSearchParams(
