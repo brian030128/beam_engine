@@ -19,7 +19,7 @@ logger = init_logger(__name__)
 def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int = 4,
                                 max_new_tokens: int = 50, num_return_sequences: int = 1,
                                 temperature: float = 1.0):
-    """Run HuggingFace's native beam search for comparison."""
+    """Run HuggingFace's native beam search for comparison with profiling."""
     logger.info("\n" + "=" * 80)
     logger.info("=== HUGGINGFACE BEAM SEARCH (REFERENCE) ===")
     logger.info("=" * 80)
@@ -31,26 +31,55 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
     max_length = input_len + max_new_tokens
     logger.info(f"Input Length: {input_len} | Max New Tokens: {max_new_tokens} | Max Total Length: {max_length}")
 
+    # Warmup
+    logger.info("Warming up HuggingFace model (3 iterations)...")
+    for _ in range(3):
+        with torch.no_grad():
+            _ = hf_model.generate(
+                **inputs,
+                max_length=max_length,
+                num_beams=beam_size,
+                num_return_sequences=num_return_sequences,
+                temperature=temperature,
+                do_sample=False,
+                early_stopping=False,
+                repetition_penalty=1,
+                length_penalty=1,
+            )
+    logger.info("Warmup complete. Starting profiling...")
+
     # Warm up GPU
     if torch.cuda.is_available():
         torch.cuda.synchronize()
 
     start_time = time.perf_counter()
 
-    with torch.no_grad():
-        outputs = hf_model.generate(
-            **inputs,
-            max_length=max_length,
-            num_beams=beam_size,
-            num_return_sequences=num_return_sequences,
-            temperature=temperature,
-            do_sample=False,  # Deterministic beam search
-            early_stopping=False,
-            return_dict_in_generate=True,
-            output_scores=True,
-            repetition_penalty=1,
-            length_penalty=1,
-        )
+    # Profile with PyTorch profiler
+    activities = [ProfilerActivity.CPU]
+    if torch.cuda.is_available():
+        activities.append(ProfilerActivity.CUDA)
+
+    with profile(
+        activities=activities,
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True,
+    ) as prof:
+        with record_function("huggingface_beam_search_generation"):
+            with torch.no_grad():
+                outputs = hf_model.generate(
+                    **inputs,
+                    max_length=max_length,
+                    num_beams=beam_size,
+                    num_return_sequences=num_return_sequences,
+                    temperature=temperature,
+                    do_sample=False,  # Deterministic beam search
+                    early_stopping=False,
+                    return_dict_in_generate=True,
+                    output_scores=True,
+                    repetition_penalty=1,
+                    length_penalty=1,
+                )
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -67,6 +96,47 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
         logger.info(f"\n[HF {idx+1}] Generated Tokens: {gen_token_count}")
 
     logger.info(f"\n[HF TIMING] Total generation time: {elapsed_time:.4f}s")
+
+    # Print profiling results
+    logger.info("\n" + "=" * 80)
+    logger.info("HUGGINGFACE PROFILING RESULTS - TOP 40 OPERATIONS BY CUDA TIME")
+    logger.info("=" * 80)
+    print(prof.key_averages().table(
+        sort_by="cuda_time_total",
+        row_limit=40,
+        max_name_column_width=60
+    ))
+
+    logger.info("\n" + "=" * 80)
+    logger.info("HUGGINGFACE PROFILING RESULTS - TOP 20 OPERATIONS BY CPU TIME")
+    logger.info("=" * 80)
+    print(prof.key_averages().table(
+        sort_by="cpu_time_total",
+        row_limit=20,
+        max_name_column_width=60
+    ))
+
+    logger.info("\n" + "=" * 80)
+    logger.info("HUGGINGFACE MEMORY USAGE - TOP 20 OPERATIONS")
+    logger.info("=" * 80)
+    print(prof.key_averages().table(
+        sort_by="cuda_memory_usage",
+        row_limit=20,
+        max_name_column_width=60
+    ))
+
+    # Save trace for chrome://tracing
+    trace_file = "hf_beam_trace.json"
+    prof.export_chrome_trace(trace_file)
+
+    logger.info("\n" + "=" * 80)
+    logger.info("HUGGINGFACE TRACE FILE SAVED")
+    logger.info("=" * 80)
+    logger.info(f"Chrome trace: {trace_file}")
+    logger.info(f"  -> Open chrome://tracing in Chrome")
+    logger.info(f"  -> Click 'Load' and select {trace_file}")
+    logger.info("=" * 80)
+
     return generated_texts, elapsed_time
 
 
