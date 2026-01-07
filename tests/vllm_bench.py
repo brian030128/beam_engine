@@ -6,6 +6,7 @@ Profiling is enabled by default and saves traces to ./vllm_profile/
 The traces can be visualized at: https://ui.perfetto.dev/
 """
 import time
+import os
 from transformers import AutoTokenizer
 from vllm import LLM
 from vllm.sampling_params import BeamSearchParams
