@@ -1,15 +1,12 @@
 """
 Benchmark script for comparing beam search implementations.
-FIXED VERSION: Adapted for legacy vLLM (BeamSearchParams) + Fixes token limit mismatch.
 """
 
 import torch
 import time
 import gc
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from vllm import LLM
-# Using BeamSearchParams as supported by your vLLM version
-from vllm.sampling_params import BeamSearchParams
+
 
 from beam_engine.beam import BeamSearchGenerator
 from beam_engine.beam_strategy import DiverseBeamSearchStrategy, VanillaBeamSearchStrategy
@@ -83,7 +80,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
 
     # Example prompts
     prompts = [
-        "The future of artificial intelligence is" * 100, 
+        "The future of artificial intelligence is" * 50, 
     ]
 
     for prompt in prompts:
@@ -165,8 +162,6 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         logger.info(f"Custom time:       {custom_time:.4f}s")
 
         hf_vs_custom = hf_time / custom_time
-        vllm_vs_custom = vllm_time / custom_time
-        vllm_vs_hf = hf_time / vllm_time
 
         logger.info(f"\nCustom vs HuggingFace: {hf_vs_custom:.2f}x {'faster' if hf_vs_custom > 1 else 'slower'}")
         logger.info("=" * 80)
