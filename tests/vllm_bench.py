@@ -2,18 +2,9 @@
 """
 vLLM Benchmark with Profiling Support
 
-To enable profiling, set the VLLM_TORCH_PROFILER_DIR environment variable:
-
-    Windows:
-    set VLLM_TORCH_PROFILER_DIR=./vllm_traces
-    python tests/vllm_bench.py
-
-    Linux/Mac:
-    VLLM_TORCH_PROFILER_DIR=./vllm_traces python tests/vllm_bench.py
-
+Profiling is enabled by default and saves traces to ./vllm_profile/
 The traces can be visualized at: https://ui.perfetto.dev/
 """
-import os
 import time
 from transformers import AutoTokenizer
 from vllm import LLM
@@ -27,15 +18,17 @@ MAX_NEW_TOKENS = 20
 NUM_RETURN_SEQS = 4
 TEMPERATURE = 1.0
 
+# Profiling configuration
+ENABLE_PROFILING = True
+PROFILER_OUTPUT_DIR = "./vllm_profile"
+
 
 def run_vllm_beam_search():
-    # Check if profiling is enabled
-    profiler_dir = os.environ.get('VLLM_TORCH_PROFILER_DIR')
-    if profiler_dir:
-        print(f"[vLLM] Profiling ENABLED - traces will be saved to: {profiler_dir}")
+    if ENABLE_PROFILING:
+        print(f"[vLLM] Profiling ENABLED - traces will be saved to: {PROFILER_OUTPUT_DIR}")
         print(f"[vLLM] Visualize at: https://ui.perfetto.dev/")
     else:
-        print("[vLLM] Profiling DISABLED - set VLLM_TORCH_PROFILER_DIR to enable")
+        print("[vLLM] Profiling DISABLED")
     print("=" * 80)
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
@@ -46,10 +39,18 @@ def run_vllm_beam_search():
     print(f"[vLLM] Prompt length: {prompt_len}")
     print(f"[vLLM] Max new tokens: {MAX_NEW_TOKENS}")
 
-    # vLLM engine starts here
+    # vLLM engine with profiling config
+    profiler_config = None
+    if ENABLE_PROFILING:
+        profiler_config = {
+            "profiler": "torch",
+            "torch_profiler_dir": PROFILER_OUTPUT_DIR,
+        }
+
     llm = LLM(
         model=MODEL_NAME,
         dtype="float16",
+        profiler_config=profiler_config,
     )
 
     params = BeamSearchParams(
@@ -66,7 +67,11 @@ def run_vllm_beam_search():
             prompts=[{"prompt": PROMPT}],
             params=params,
         )
-    print("[vLLM] Warmup complete. Starting benchmark...")
+    print("[vLLM] Warmup complete. Starting profiling...")
+
+    # Start profiling
+    if ENABLE_PROFILING:
+        llm.start_profile()
 
     start = time.perf_counter()
 
@@ -77,6 +82,10 @@ def run_vllm_beam_search():
 
     elapsed = time.perf_counter() - start
 
+    # Stop profiling
+    if ENABLE_PROFILING:
+        llm.stop_profile()
+
     print(f"\n[vLLM] Generation time: {elapsed:.4f}s")
     print(f"[vLLM] Number of outputs: {len(outputs)}")
 
@@ -85,13 +94,17 @@ def run_vllm_beam_search():
             print(f"\n[vLLM seq {i+1}]")
             print(seq.text[:300], "...")
 
-    if profiler_dir:
+    if ENABLE_PROFILING:
         print("\n" + "=" * 80)
         print("PROFILING COMPLETE")
         print("=" * 80)
-        print(f"Trace files saved to: {profiler_dir}")
+        print(f"Trace files saved to: {PROFILER_OUTPUT_DIR}")
         print(f"Open https://ui.perfetto.dev/ and load the trace files")
         print("=" * 80)
+
+        # Buffer time for profiler to finish writing
+        print("\n[vLLM] Waiting 10 seconds for profiler to finish writing...")
+        time.sleep(10)
 
     print("\n[vLLM] DONE — exiting process")
 
