@@ -34,7 +34,7 @@ def run_vllm_beam_search():
         beam_width=BEAM_SIZE,
         max_tokens=max_new_tokens,
         temperature=TEMPERATURE,
-        ignore_eos=False,
+        ignore_eos=True,
     )
 
 
