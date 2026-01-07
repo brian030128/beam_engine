@@ -1,7 +1,20 @@
 # run_vllm.py
+"""
+vLLM Benchmark with Profiling Support
+
+To enable profiling, set the VLLM_TORCH_PROFILER_DIR environment variable:
+
+    Windows:
+    set VLLM_TORCH_PROFILER_DIR=./vllm_traces
+    python tests/vllm_bench.py
+
+    Linux/Mac:
+    VLLM_TORCH_PROFILER_DIR=./vllm_traces python tests/vllm_bench.py
+
+The traces can be visualized at: https://ui.perfetto.dev/
+"""
+import os
 import time
-import torch
-from torch.profiler import profile, ProfilerActivity, record_function
 from transformers import AutoTokenizer
 from vllm import LLM
 from vllm.sampling_params import BeamSearchParams
@@ -16,6 +29,15 @@ TEMPERATURE = 1.0
 
 
 def run_vllm_beam_search():
+    # Check if profiling is enabled
+    profiler_dir = os.environ.get('VLLM_TORCH_PROFILER_DIR')
+    if profiler_dir:
+        print(f"[vLLM] Profiling ENABLED - traces will be saved to: {profiler_dir}")
+        print(f"[vLLM] Visualize at: https://ui.perfetto.dev/")
+    else:
+        print("[vLLM] Profiling DISABLED - set VLLM_TORCH_PROFILER_DIR to enable")
+    print("=" * 80)
+
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
     prompt_token_ids = tokenizer.encode(PROMPT)
@@ -24,7 +46,7 @@ def run_vllm_beam_search():
     print(f"[vLLM] Prompt length: {prompt_len}")
     print(f"[vLLM] Max new tokens: {MAX_NEW_TOKENS}")
 
-    # 🚨 vLLM engine starts here
+    # vLLM engine starts here
     llm = LLM(
         model=MODEL_NAME,
         dtype="float16",
@@ -44,26 +66,14 @@ def run_vllm_beam_search():
             prompts=[{"prompt": PROMPT}],
             params=params,
         )
-    print("[vLLM] Warmup complete. Starting profiling...")
-
-    # Profile with PyTorch profiler
-    activities = [ProfilerActivity.CPU]
-    if torch.cuda.is_available():
-        activities.append(ProfilerActivity.CUDA)
+    print("[vLLM] Warmup complete. Starting benchmark...")
 
     start = time.perf_counter()
 
-    with profile(
-        activities=activities,
-        record_shapes=True,
-        profile_memory=True,
-        with_stack=True,
-    ) as prof:
-        with record_function("vllm_beam_search_generation"):
-            outputs = llm.beam_search(
-                prompts=[{"prompt": PROMPT}],
-                params=params,
-            )
+    outputs = llm.beam_search(
+        prompts=[{"prompt": PROMPT}],
+        params=params,
+    )
 
     elapsed = time.perf_counter() - start
 
@@ -75,45 +85,13 @@ def run_vllm_beam_search():
             print(f"\n[vLLM seq {i+1}]")
             print(seq.text[:300], "...")
 
-    # Print profiling results
-    print("\n" + "=" * 80)
-    print("PROFILING RESULTS - TOP 40 OPERATIONS BY CUDA TIME")
-    print("=" * 80)
-    print(prof.key_averages().table(
-        sort_by="cuda_time_total",
-        row_limit=40,
-        max_name_column_width=60
-    ))
-
-    print("\n" + "=" * 80)
-    print("PROFILING RESULTS - TOP 20 OPERATIONS BY CPU TIME")
-    print("=" * 80)
-    print(prof.key_averages().table(
-        sort_by="cpu_time_total",
-        row_limit=20,
-        max_name_column_width=60
-    ))
-
-    print("\n" + "=" * 80)
-    print("MEMORY USAGE - TOP 20 OPERATIONS")
-    print("=" * 80)
-    print(prof.key_averages().table(
-        sort_by="cuda_memory_usage",
-        row_limit=20,
-        max_name_column_width=60
-    ))
-
-    # Save trace for chrome://tracing
-    trace_file = "vllm_beam_trace.json"
-    prof.export_chrome_trace(trace_file)
-
-    print("\n" + "=" * 80)
-    print("TRACE FILES SAVED")
-    print("=" * 80)
-    print(f"Chrome trace: {trace_file}")
-    print(f"  -> Open chrome://tracing in Chrome")
-    print(f"  -> Click 'Load' and select {trace_file}")
-    print("=" * 80)
+    if profiler_dir:
+        print("\n" + "=" * 80)
+        print("PROFILING COMPLETE")
+        print("=" * 80)
+        print(f"Trace files saved to: {profiler_dir}")
+        print(f"Open https://ui.perfetto.dev/ and load the trace files")
+        print("=" * 80)
 
     print("\n[vLLM] DONE — exiting process")
 
