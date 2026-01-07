@@ -5,6 +5,7 @@ Benchmark script for comparing beam search implementations.
 import torch
 import time
 import gc
+from torch.profiler import profile, ProfilerActivity, record_function
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
@@ -16,7 +17,7 @@ from beam_engine.logger import init_logger, set_logging_level, LogLevel
 logger = init_logger(__name__)
 
 def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int = 4,
-                                max_length: int = 50, num_return_sequences: int = 1,
+                                max_new_tokens: int = 50, num_return_sequences: int = 1,
                                 temperature: float = 1.0):
     """Run HuggingFace's native beam search for comparison."""
     logger.info("\n" + "=" * 80)
@@ -25,13 +26,10 @@ def run_huggingface_beam_search(hf_model, tokenizer, prompt: str, beam_size: int
 
     inputs = tokenizer(prompt, return_tensors="pt").to(hf_model.device)
     input_len = inputs.input_ids.shape[1]
-    
-    # Calculate how many tokens we actually expect to generate
-    expected_new_tokens = max_length - input_len
-    logger.info(f"Input Length: {input_len} | Max Total Length: {max_length} | Allowed New Tokens: {expected_new_tokens}")
 
-    if expected_new_tokens <= 0:
-        logger.warning("Prompt is longer than max_length! HF will generate 0 tokens.")
+    # Calculate max_length from max_new_tokens
+    max_length = input_len + max_new_tokens
+    logger.info(f"Input Length: {input_len} | Max New Tokens: {max_new_tokens} | Max Total Length: {max_length}")
 
     # Warm up GPU
     if torch.cuda.is_available():
@@ -94,13 +92,13 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         logger.info("\n[BENCHMARK] Loading HuggingFace model...")
         hf_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16, device_map="auto")
         print(hf_model.device)
-
+        max_new_tokens = 20
         hf_texts, hf_time = run_huggingface_beam_search(
             hf_model=hf_model,
             tokenizer=tokenizer,
             prompt=prompt,
             beam_size=8,
-            max_length=1000,
+            max_new_tokens=max_new_tokens,
             num_return_sequences=4,
             temperature=1.0
         )
@@ -121,28 +119,53 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
 
         logger.info(f"Loading custom model from {model_name}...")
         model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16).to(device)
+
+        # Calculate max_length from max_new_tokens
+        inputs = tokenizer(prompt, return_tensors="pt")
+        input_len = inputs.input_ids.shape[1]
         
-        generator = BeamSearchGenerator(model, tokenizer, DiverseBeamSearchStrategy())
-        generated_texts = generator.generate(
-            input_text=prompt,
-            beam_size=8,
-            max_length=1000,
-            num_return_sequences=4,
-            temperature=1.0
-        )
+        max_length = input_len + max_new_tokens
+        logger.info(f"Input Length: {input_len} | Max New Tokens: {max_new_tokens} | Max Total Length: {max_length}")
+
+        generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy())
+
+        # Warmup
+        logger.info("Warming up (3 iterations)...")
+        for _ in range(3):
+            with torch.no_grad():
+                _ = generator.generate(
+                    input_text=prompt,
+                    beam_size=8,
+                    max_length=max_length,
+                    num_return_sequences=4,
+                    temperature=1.0
+                )
+        logger.info("Warmup complete. Starting profiling...")
 
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
+        # Profile with PyTorch profiler
+        activities = [ProfilerActivity.CPU]
+        if torch.cuda.is_available():
+            activities.append(ProfilerActivity.CUDA)
+
         start_time = time.perf_counter()
-        generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy())
-        generated_texts = generator.generate(
-            input_text=prompt,
-            beam_size=8,
-            max_length=1000, 
-            num_return_sequences=4,
-            temperature=1.0
-        )
+
+        with profile(
+            activities=activities,
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True,
+        ) as prof:
+            with record_function("custom_beam_search_generation"):
+                generated_texts = generator.generate(
+                    input_text=prompt,
+                    beam_size=8,
+                    max_length=max_length,
+                    num_return_sequences=4,
+                    temperature=1.0
+                )
 
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -151,6 +174,46 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         custom_time = end_time - start_time
 
         logger.info(f"\n[CUSTOM TIMING] Total generation time: {custom_time:.4f}s")
+
+        # Print profiling results
+        logger.info("\n" + "=" * 80)
+        logger.info("PROFILING RESULTS - TOP 40 OPERATIONS BY CUDA TIME")
+        logger.info("=" * 80)
+        print(prof.key_averages().table(
+            sort_by="cuda_time_total",
+            row_limit=40,
+            max_name_column_width=60
+        ))
+
+        logger.info("\n" + "=" * 80)
+        logger.info("PROFILING RESULTS - TOP 20 OPERATIONS BY CPU TIME")
+        logger.info("=" * 80)
+        print(prof.key_averages().table(
+            sort_by="cpu_time_total",
+            row_limit=20,
+            max_name_column_width=60
+        ))
+
+        logger.info("\n" + "=" * 80)
+        logger.info("MEMORY USAGE - TOP 20 OPERATIONS")
+        logger.info("=" * 80)
+        print(prof.key_averages().table(
+            sort_by="cuda_memory_usage",
+            row_limit=20,
+            max_name_column_width=60
+        ))
+
+        # Save trace for chrome://tracing
+        trace_file = "custom_beam_trace.json"
+        prof.export_chrome_trace(trace_file)
+
+        logger.info("\n" + "=" * 80)
+        logger.info("TRACE FILES SAVED")
+        logger.info("=" * 80)
+        logger.info(f"Chrome trace: {trace_file}")
+        logger.info(f"  -> Open chrome://tracing in Chrome")
+        logger.info(f"  -> Click 'Load' and select {trace_file}")
+        logger.info("=" * 80)
 
         # ---------------------------------------------------------
         # 4. Results
