@@ -162,7 +162,6 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         logger.info("=== PERFORMANCE BENCHMARK ===")
         logger.info("=" * 80)
         logger.info(f"HuggingFace time:  {hf_time:.4f}s")
-        logger.info(f"vLLM time:         {vllm_time:.4f}s")
         logger.info(f"Custom time:       {custom_time:.4f}s")
 
         hf_vs_custom = hf_time / custom_time
@@ -170,8 +169,6 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         vllm_vs_hf = hf_time / vllm_time
 
         logger.info(f"\nCustom vs HuggingFace: {hf_vs_custom:.2f}x {'faster' if hf_vs_custom > 1 else 'slower'}")
-        logger.info(f"Custom vs vLLM:        {vllm_vs_custom:.2f}x {'faster' if vllm_vs_custom > 1 else 'slower'}")
-        logger.info(f"vLLM vs HuggingFace:   {vllm_vs_hf:.2f}x {'faster' if vllm_vs_hf > 1 else 'slower'}")
         logger.info("=" * 80)
 
 
