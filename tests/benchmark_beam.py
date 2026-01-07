@@ -95,7 +95,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         # 1. HuggingFace Benchmark
         # ---------------------------------------------------------
         logger.info("\n[BENCHMARK] Loading HuggingFace model...")
-        hf_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16, device_map="auto")
+        hf_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16, device_map=device_map={"0": "cuda:3"})
 
         hf_texts, hf_time = run_huggingface_beam_search(
             hf_model=hf_model,
