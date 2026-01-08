@@ -251,14 +251,11 @@ def flashinfer_prefill_attention_forward(
 
     logger.debug(f"Debug: Created index tensors")
 
-    # Create workspace buffer (128MB recommended)
-    workspace_size = 128 * 1024 * 1024  # 128MB
-    workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device=device)
 
     # Initialize prefill wrapper
     logger.debug(f"Debug: Initializing prefill wrapper")
     prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
-        workspace_buffer,
+        get_workspace_buffer(),
         kv_layout="NHD"
     )
     logger.debug(f"Debug: Prefill wrapper initialized")
@@ -328,7 +325,14 @@ def flashinfer_prefill_attention_forward(
     return attn_output, None  # FlashInfer doesn't return attention weights
 
 workspace_size = 128 * 1024 * 1024  # 128MB
-workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device="cuda:1")
+workspace_buffer = None
+
+def get_workspace_buffer():
+    global workspace_buffer
+    if workspace_buffer is None:
+        # Allocate only when actually called, not on import
+        workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device="cuda")
+    return workspace_buffer
 
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
@@ -397,7 +401,7 @@ class LlamaAttention(nn.Module):
         # Initialize cascade wrapper
         cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
             len(qo_indptr_arr),
-            workspace_buffer,
+            get_workspace_buffer(),
             kv_layout="NHD"
         )
 
