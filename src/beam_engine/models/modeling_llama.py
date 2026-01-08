@@ -707,6 +707,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
                 cascade_wrapper=cascade_wrapper,
+                attention_mode=attention_mode,
                 **kwargs,
             )
 
