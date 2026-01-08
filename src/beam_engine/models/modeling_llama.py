@@ -700,7 +700,6 @@ class LlamaModel(LlamaPreTrainedModel):
         )
 
 
-@torch.compile
 @auto_docstring
 class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]

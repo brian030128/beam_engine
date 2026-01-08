@@ -51,6 +51,7 @@ def run_vllm_beam_search():
     llm = LLM(
         model=MODEL_NAME,
         dtype="float16",
+        enforce_eager=True
         #profiler_config=profiler_config, not that version yet
     )
 
