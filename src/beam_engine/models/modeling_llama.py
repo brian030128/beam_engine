@@ -644,6 +644,10 @@ class LlamaModel(LlamaPreTrainedModel):
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+        seq_len, num_heads, head_dim = query.shape
+        # Extract correct head counts for Grouped Query Attention (GQA)
+        num_qo_heads = num_heads  # Query heads from query tensor
+        num_kv_heads = key.shape[1]  # KV heads from key tensor shape [seq_len, num_kv_heads, head_dim]
 
         if inputs_embeds is None:
             inputs_embeds: torch.Tensor = self.embed_tokens(input_ids)
@@ -685,10 +689,10 @@ class LlamaModel(LlamaPreTrainedModel):
             cascade_wrapper.plan(
                 use_cuda_graph=True,
                 qo_indptr_arr=cascade_qo_indptr_arr,
-                paged_kv_indptr_arr=cascade_paged_kv_indptr_arr,
-                paged_kv_indices_arr=cascade_paged_kv_indices_arr,
-                paged_kv_last_page_len=cascade_paged_kv_last_page_len_arr,
-                num_qo_heads=cascade_num_qo_heads,
+                paged_kv_indptr_arr=cascade_kv_indptr_arr,
+                paged_kv_indices_arr=cascade_kv_indices_arr,
+                paged_kv_last_page_len=cascade_kv_last_page_len_arr,
+                num_qo_heads=num_qo_heads,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
                 page_size=page_table.page_size,
