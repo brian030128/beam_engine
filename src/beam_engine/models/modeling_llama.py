@@ -397,8 +397,7 @@ class LlamaAttention(nn.Module):
 
         # Choose attention implementation based on mode
         if attention_mode == AttentionMode.PREFILL:
-            if page_table is None or page_indices is None:
-                raise ValueError("PageTable and page_indices must be provided for PREFILL attention mode")       
+
             # flashinfer.rope.apply_rope_pos_ids_inplace(
             #     query_states,
             #     key_states,
@@ -672,7 +671,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 num_qo_heads=self.num_heads,
                 num_kv_heads=self.num_kv_heads,
                 head_dim_qk=self.head_dim,
-                
+
                 page_size=page_table.page_size,
                 causal=True,
                 pos_encoding_mode="NONE"
