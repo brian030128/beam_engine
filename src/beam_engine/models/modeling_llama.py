@@ -697,6 +697,8 @@ class LlamaModel(LlamaPreTrainedModel):
                 cascade_write_positions=cascade_write_positions,
                 cascade_write_batch_indices=cascade_write_batch_indices,
                 cascade_write_kv_indptr=cascade_write_kv_indptr,
+                last_page_len=last_page_len, # for prefill 
+                page_indices=page_indices, # for prefill
                 **kwargs,
             )
 
