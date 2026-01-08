@@ -631,6 +631,14 @@ class LlamaModel(LlamaPreTrainedModel):
         inputs_embeds: Optional[torch.FloatTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
+        cascade_qo_indptr_arr=qo_indptr_arr,
+        cascade_kv_indptr_arr=paged_kv_indptr_arr,
+        cascade_kv_indices_arr=paged_kv_indices_arr,
+        cascade_kv_last_page_len_arr=paged_kv_last_page_len_arr,
+        cascade_write_page_indices=cascade_write_page_indices,
+        cascade_write_positions=cascade_write_positions,
+        cascade_write_batch_indices=write_batch_indices,
+        cascade_write_kv_indptr=write_kv_indptr,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -665,7 +673,7 @@ class LlamaModel(LlamaPreTrainedModel):
 
         # Initialize cascade wrapper
         cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
-            len(qo_indptr_arr),
+            len(cascade_qo_indptr_arr),
             get_workspace_buffer(),
             kv_layout="NHD"
         )
@@ -673,11 +681,11 @@ class LlamaModel(LlamaPreTrainedModel):
         # Plan cascade attention
         cascade_wrapper.plan(
             use_cuda_graph=True,
-            qo_indptr_arr=qo_indptr_arr,
-            paged_kv_indptr_arr=paged_kv_indptr_arr,
-            paged_kv_indices_arr=paged_kv_indices_arr,
-            paged_kv_last_page_len=paged_kv_last_page_len_arr,
-            num_qo_heads=num_qo_heads,
+            qo_indptr_arr=cascade_qo_indptr_arr,
+            paged_kv_indptr_arr=cascade_paged_kv_indptr_arr,
+            paged_kv_indices_arr=cascade_paged_kv_indices_arr,
+            paged_kv_last_page_len=cascade_paged_kv_last_page_len_arr,
+            num_qo_heads=cascade_num_qo_heads,
             num_kv_heads=num_kv_heads,
             head_dim=head_dim,
             page_size=page_table.page_size,
