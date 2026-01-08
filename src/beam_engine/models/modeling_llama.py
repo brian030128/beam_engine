@@ -665,9 +665,9 @@ class LlamaModel(LlamaPreTrainedModel):
             paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)
     
             prefill_wrapper.plan(
-                qo_indptr_arr=qo_indptr,
-                paged_kv_indptr_arr=paged_kv_indptr,
-                paged_kv_indices_arr=paged_kv_indices,
+                qo_indptr=qo_indptr,
+                paged_kv_indptr=paged_kv_indptr,
+                paged_kv_indices=paged_kv_indices,
                 paged_kv_last_page_len=paged_kv_last_page_len,
                 num_qo_heads=self.num_heads,
                 num_kv_heads=self.num_kv_heads,
