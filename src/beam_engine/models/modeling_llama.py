@@ -249,7 +249,7 @@ def flashinfer_prefill_attention_forward(
 
     try:
         logger.debug(f"Debug: Calling prefill_wrapper.run...")
-        attn_output = prefill_wrapper.run(query_flashinfer, paged_kv_cache)
+        attn_output = prefill_wrapper.run(query, paged_kv_cache)
         logger.debug(f"Debug: prefill_wrapper.run completed successfully!")
     except Exception as e:
         logger.debug(f"Debug: ERROR in prefill_wrapper.run: {e}")
