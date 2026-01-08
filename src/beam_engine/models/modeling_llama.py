@@ -644,10 +644,7 @@ class LlamaModel(LlamaPreTrainedModel):
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-        seq_len, num_heads, head_dim = query.shape
-        # Extract correct head counts for Grouped Query Attention (GQA)
-        num_qo_heads = num_heads  # Query heads from query tensor
-        num_kv_heads = key.shape[1]  # KV heads from key tensor shape [seq_len, num_kv_heads, head_dim]
+
 
         if inputs_embeds is None:
             inputs_embeds: torch.Tensor = self.embed_tokens(input_ids)
@@ -676,6 +673,10 @@ class LlamaModel(LlamaPreTrainedModel):
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
+        seq_len, num_heads, head_dim = hidden_states.shape
+        # Extract correct head counts for Grouped Query Attention (GQA)
+        num_qo_heads = num_heads  # Query heads from query tensor
+        num_kv_heads = key.shape[1]  # KV heads from key tensor shape [seq_len, num_kv_heads, head_dim]
         cascade_wrapper = None
         # Initialize cascade wrapper
         if attention_mode == AttentionMode.DECODE:
