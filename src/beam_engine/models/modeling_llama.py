@@ -620,7 +620,7 @@ class LlamaModel(LlamaPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
         self.num_heads = config.num_attention_heads
-        self.num_kv_heads = num_key_value_heads
+        self.num_kv_heads = config.num_key_value_heads
         self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         self.num_key_value_groups = config.num_attention_heads // config.num_key_value_heads
         self.scaling = self.head_dim**-0.5
