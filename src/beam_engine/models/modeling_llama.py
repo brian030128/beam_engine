@@ -207,6 +207,7 @@ def flashinfer_prefill_attention_forward(
     page_indices: list,      # <-- ADD THIS PARAMETER
     last_page_len: int,      # <-- ADD THIS PARAMETER  
     dropout: float = 0.0,
+    prefill_wrapper = None,
     **kwargs: Unpack[TransformersKwargs],
 ):
     """
@@ -253,33 +254,6 @@ def flashinfer_prefill_attention_forward(
 
 
     # Initialize prefill wrapper
-    logger.debug(f"Debug: Initializing prefill wrapper")
-    prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
-        get_workspace_buffer(),
-        kv_layout="NHD"
-    )
-    logger.debug(f"Debug: Prefill wrapper initialized")
-
-    # Plan the attention computation
-    logger.debug(f"Debug: Planning attention computation")
-    # Extract correct head counts for Grouped Query Attention (GQA)
-    num_qo_heads = num_heads  # Query heads from query tensor
-    num_kv_heads = key.shape[1]  # KV heads from key tensor shape [seq_len, num_kv_heads, head_dim]
-    logger.debug(f"Debug: num_qo_heads={num_qo_heads}, num_kv_heads={num_kv_heads}")
-
-    prefill_wrapper.plan(
-        qo_indptr,
-        paged_kv_indptr,
-        paged_kv_indices,
-        paged_kv_last_page_len,
-        num_qo_heads,  # num_qo_heads (query heads)
-        num_kv_heads,  # num_kv_heads (key-value heads)
-        head_dim,
-        page_table.page_size,
-        causal=True,
-        pos_encoding_mode="NONE"
-    )
-    logger.debug(f"Debug: Attention computation planned")
 
     # FlashInfer expects query without batch dimension: [seq_len, num_heads, head_dim]
     logger.debug(f"Debug: Query shape for FlashInfer: {query.shape}")
@@ -432,6 +406,7 @@ class LlamaAttention(nn.Module):
         cascade_write_positions: Optional[list] = None,  # Positions within page to write K/V
         cascade_write_batch_indices: Optional[torch.Tensor] = None,  # Pre-allocated batch indices for write
         cascade_write_kv_indptr: Optional[torch.Tensor] = None,  # Pre-allocated kv_indptr for write
+        prefill_wrapper = None,
         cascade_wrapper = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -473,6 +448,7 @@ class LlamaAttention(nn.Module):
                 page_indices,      # <-- Pass through
                 last_page_len,     # <-- Pass through
                 dropout=0.0 if not self.training else self.attention_dropout,
+                prefill_wrapper=prefill_wrapper,
                 **kwargs,
             )
 
@@ -680,6 +656,7 @@ class LlamaModel(LlamaPreTrainedModel):
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
         cascade_wrapper = None
+        prefill_wrapper = None
         # Initialize cascade wrapper
         if attention_mode == AttentionMode.DECODE:
             cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
@@ -703,6 +680,24 @@ class LlamaModel(LlamaPreTrainedModel):
                 sm_scale=self.scaling,
                 q_data_type=hidden_states.dtype
             )
+        else:
+            prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
+                get_workspace_buffer(),
+                kv_layout="NHD"
+            )
+
+            prefill_wrapper.plan(
+                qo_indptr_arr=cascade_qo_indptr_arr,
+                paged_kv_indptr_arr=cascade_kv_indptr_arr,
+                paged_kv_indices_arr=cascade_kv_indices_arr,
+                paged_kv_last_page_len=cascade_kv_last_page_len_arr,
+                num_qo_heads=self.num_heads,
+                num_kv_heads=self.num_kv_heads,
+                head_dim=self.head_dim,
+                page_size=page_table.page_size,
+                causal=True,
+                pos_encoding_mode="NONE"
+            )
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             hidden_states = decoder_layer(
@@ -713,6 +708,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
                 cascade_wrapper=cascade_wrapper,
+                prefill_wrapper=prefill_wrapper,
                 attention_mode=attention_mode,
                 page_table=page_table,
                 cascade_qo_indptr_arr=cascade_qo_indptr_arr,
