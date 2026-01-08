@@ -52,7 +52,8 @@ def run_vllm_beam_search():
         model=MODEL_NAME,
         dtype="float16",
         enforce_eager=True,
-        attention_config={"backend": "vllm.v1.attention.backends.flashinfer.FlashInferBackend"} 
+        attention_backend="vllm.v1.attention.backends.flashinfer.FlashInferBackend",
+        #attention_config={"backend": "vllm.v1.attention.backends.flashinfer.FlashInferBackend"} 
         #profiler_config=profiler_config, not that version yet
     )
 
