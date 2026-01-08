@@ -619,6 +619,7 @@ class LlamaModel(LlamaPreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
+        self.head_dim**-0.5
 
     @check_model_inputs()
     @auto_docstring
@@ -715,6 +716,14 @@ class LlamaModel(LlamaPreTrainedModel):
                 cascade_wrapper=cascade_wrapper,
                 attention_mode=attention_mode,
                 page_table=page_table,
+                cascade_qo_indptr_arr=cascade_qo_indptr_arr,
+                cascade_kv_indptr_arr=cascade_kv_indptr_arr,
+                cascade_kv_indices_arr=cascade_kv_indices_arr,
+                cascade_kv_last_page_len_arr=cascade_kv_last_page_len_arr,
+                cascade_write_page_indices=cascade_write_page_indices,
+                cascade_write_positions=cascade_write_positions,
+                cascade_write_batch_indices=cascade_write_batch_indices,
+                cascade_write_kv_indptr=cascade_write_kv_indptr,
                 **kwargs,
             )
 
