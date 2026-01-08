@@ -676,7 +676,7 @@ class LlamaModel(LlamaPreTrainedModel):
         seq_len, num_heads, head_dim = hidden_states.shape
         # Extract correct head counts for Grouped Query Attention (GQA)
         num_qo_heads = num_heads  # Query heads from query tensor
-        num_kv_heads = key.shape[1]  # KV heads from key tensor shape [seq_len, num_kv_heads, head_dim]
+        num_kv_heads = self.config.num_key_value_heads
         cascade_wrapper = None
         # Initialize cascade wrapper
         if attention_mode == AttentionMode.DECODE:
