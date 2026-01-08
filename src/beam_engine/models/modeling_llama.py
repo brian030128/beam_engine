@@ -244,38 +244,8 @@ def flashinfer_prefill_attention_forward(
         remaining_tokens -= tokens_in_this_page
 
     # Prepare FlashInfer - use the passed page_indices
-    device = query.device
-    qo_indptr = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
-    paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
-    paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
-    paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)
 
-    logger.debug(f"Debug: Created index tensors")
-
-
-    # Initialize prefill wrapper
-
-    # FlashInfer expects query without batch dimension: [seq_len, num_heads, head_dim]
-    logger.debug(f"Debug: Query shape for FlashInfer: {query.shape}")
-    query_flashinfer = query
-    logger.debug(f"Debug: Query ready for FlashInfer: {query_flashinfer.shape}")
-
-    # Get paged KV cache for this layer
     paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
-    logger.debug(f"Debug: Got paged KV cache shape {paged_kv_cache.shape}")
-
-    # Run prefill attention
-    logger.debug(f"Debug: Running prefill attention")
-    logger.debug(f"Debug: query_flashinfer shape: {query_flashinfer.shape}, dtype: {query_flashinfer.dtype}")
-    logger.debug(f"Debug: paged_kv_cache shape: {paged_kv_cache.shape}, dtype: {paged_kv_cache.dtype}")
-    logger.debug(f"Debug: qo_indptr: {qo_indptr}")
-    logger.debug(f"Debug: paged_kv_indices: {paged_kv_indices}")
-    logger.debug(f"Debug: paged_kv_indptr: {paged_kv_indptr}")
-    logger.debug(f"Debug: paged_kv_last_page_len: {paged_kv_last_page_len}")
-
-    logger.debug(f"Debug: About to call prefill_wrapper.run")
-    logger.debug(f"Debug: All tensors on same device? query: {query_flashinfer.device}, kv_cache: {paged_kv_cache.device}")
-    logger.debug(f"Debug: All tensors same dtype? query: {query_flashinfer.dtype}, kv_cache: {paged_kv_cache.dtype}")
 
     try:
         logger.debug(f"Debug: Calling prefill_wrapper.run...")
@@ -613,6 +583,8 @@ class LlamaModel(LlamaPreTrainedModel):
         inputs_embeds: Optional[torch.FloatTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
+        page_indices=None, #for prefill, we have to 統一 later
+        last_page_len=None,  #for prefill, we have to 統一 later
         cascade_qo_indptr_arr=None,
         cascade_kv_indptr_arr=None,
         cascade_kv_indices_arr=None,
@@ -685,12 +657,18 @@ class LlamaModel(LlamaPreTrainedModel):
                 get_workspace_buffer(),
                 kv_layout="NHD"
             )
-
+            device = hidden_states.device
+            seq_len = hidden_states.shape[1]
+            qo_indptr = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
+            paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
+            paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
+            paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)
+    
             prefill_wrapper.plan(
-                qo_indptr_arr=cascade_qo_indptr_arr,
-                paged_kv_indptr_arr=cascade_kv_indptr_arr,
-                paged_kv_indices_arr=cascade_kv_indices_arr,
-                paged_kv_last_page_len=cascade_kv_last_page_len_arr,
+                qo_indptr_arr=qo_indptr,
+                paged_kv_indptr_arr=paged_kv_indptr,
+                paged_kv_indices_arr=paged_kv_indices,
+                paged_kv_last_page_len=paged_kv_last_page_len,
                 num_qo_heads=self.num_heads,
                 num_kv_heads=self.num_kv_heads,
                 head_dim=self.head_dim,
