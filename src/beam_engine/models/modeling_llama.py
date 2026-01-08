@@ -692,7 +692,6 @@ class LlamaModel(LlamaPreTrainedModel):
 
             # Plan cascade attention
             cascade_wrapper.plan(
-                use_cuda_graph=True,
                 qo_indptr_arr=cascade_qo_indptr_arr,
                 paged_kv_indptr_arr=cascade_kv_indptr_arr,
                 paged_kv_indices_arr=cascade_kv_indices_arr,
