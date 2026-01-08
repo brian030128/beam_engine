@@ -10,6 +10,7 @@ A minimal page table implementation with three core functions:
 import torch
 from typing import List, Optional
 import logging
+import flashinfer.page
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +189,7 @@ class PageTable:
             batch_indices: Pre-allocated [0, 1, 2, ..., num_candidates-1] tensor, dtype=int32
             kv_indptr: Pre-allocated [0, 1, 2, ..., num_candidates] tensor, dtype=int32
         """
-        import flashinfer.page
+
 
         # Get the paged KV cache for this layer
         # Shape: [max_num_pages, 2, page_size, num_kv_heads, head_dim]
