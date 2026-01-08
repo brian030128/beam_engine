@@ -397,15 +397,6 @@ class LlamaAttention(nn.Module):
 
         # Choose attention implementation based on mode
         if attention_mode == AttentionMode.PREFILL:
-
-            # flashinfer.rope.apply_rope_pos_ids_inplace(
-            #     query_states,
-            #     key_states,
-            #     position_ids,
-            #     rope_scale=rope_params.get("factor", 8.0),
-            #     rope_theta=self.config.rope_theta,
-            #     interleave=False # Llama uses non-interleaved (rotate_half)
-            # )
             attn_output, attn_weights = flashinfer_prefill_attention_forward(
                 self,
                 query_states,
@@ -709,6 +700,7 @@ class LlamaModel(LlamaPreTrainedModel):
         )
 
 
+@torch.compile
 @auto_docstring
 class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
