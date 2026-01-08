@@ -51,7 +51,8 @@ def run_vllm_beam_search():
     llm = LLM(
         model=MODEL_NAME,
         dtype="float16",
-        enforce_eager=True
+        enforce_eager=True,
+        attention_config={"backend": "vllm.v1.attention.backends.flashinfer.FlashInferBackend"} 
         #profiler_config=profiler_config, not that version yet
     )
 
@@ -60,6 +61,7 @@ def run_vllm_beam_search():
         max_tokens=MAX_NEW_TOKENS,
         temperature=TEMPERATURE,
         ignore_eos=True,
+        
     )
 
     # Warmup
