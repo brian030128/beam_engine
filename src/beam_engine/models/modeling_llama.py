@@ -640,6 +640,7 @@ class LlamaModel(LlamaPreTrainedModel):
         cascade_write_positions=None,
         cascade_write_batch_indices=None,
         cascade_write_kv_indptr=None,
+        page_table=None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -713,6 +714,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 position_embeddings=position_embeddings,
                 cascade_wrapper=cascade_wrapper,
                 attention_mode=attention_mode,
+                page_table=page_table,
                 **kwargs,
             )
 
