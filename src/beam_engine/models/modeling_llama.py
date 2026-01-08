@@ -671,7 +671,8 @@ class LlamaModel(LlamaPreTrainedModel):
                 paged_kv_last_page_len=paged_kv_last_page_len,
                 num_qo_heads=self.num_heads,
                 num_kv_heads=self.num_kv_heads,
-                head_dim=self.head_dim,
+                head_dim_qk=self.head_dim,
+                
                 page_size=page_table.page_size,
                 causal=True,
                 pos_encoding_mode="NONE"
