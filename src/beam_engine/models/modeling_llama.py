@@ -704,7 +704,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 causal=True,
                 pos_encoding_mode='NONE',
                 sm_scale=self.scaling,
-                q_data_type=query.dtype
+                q_data_type=hidden_states.dtype
             )
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
