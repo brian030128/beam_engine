@@ -619,6 +619,8 @@ class LlamaModel(LlamaPreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
+        self.num_heads = config.num_attention_heads
+        self.num_kv_heads = num_key_value_heads
         self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         self.num_key_value_groups = config.num_attention_heads // config.num_key_value_heads
         self.scaling = self.head_dim**-0.5
@@ -677,10 +679,6 @@ class LlamaModel(LlamaPreTrainedModel):
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
-        seq_len, num_heads, head_dim = hidden_states.shape
-        # Extract correct head counts for Grouped Query Attention (GQA)
-        num_qo_heads = num_heads  # Query heads from query tensor
-        num_kv_heads = self.config.num_key_value_heads
         cascade_wrapper = None
         # Initialize cascade wrapper
         if attention_mode == AttentionMode.DECODE:
@@ -696,9 +694,9 @@ class LlamaModel(LlamaPreTrainedModel):
                 paged_kv_indptr_arr=cascade_kv_indptr_arr,
                 paged_kv_indices_arr=cascade_kv_indices_arr,
                 paged_kv_last_page_len=cascade_kv_last_page_len_arr,
-                num_qo_heads=num_qo_heads,
-                num_kv_heads=num_kv_heads,
-                head_dim=head_dim,
+                num_qo_heads=self.num_heads,
+                num_kv_heads=self.num_kv_heads,
+                head_dim=self.head_dim,
                 page_size=page_table.page_size,
                 causal=True,
                 pos_encoding_mode='NONE',
