@@ -624,6 +624,7 @@ class LlamaModel(LlamaPreTrainedModel):
     @auto_docstring
     def forward(
         self,
+        attention_mode,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -631,14 +632,14 @@ class LlamaModel(LlamaPreTrainedModel):
         inputs_embeds: Optional[torch.FloatTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
-        cascade_qo_indptr_arr=qo_indptr_arr,
-        cascade_kv_indptr_arr=paged_kv_indptr_arr,
-        cascade_kv_indices_arr=paged_kv_indices_arr,
-        cascade_kv_last_page_len_arr=paged_kv_last_page_len_arr,
-        cascade_write_page_indices=cascade_write_page_indices,
-        cascade_write_positions=cascade_write_positions,
-        cascade_write_batch_indices=write_batch_indices,
-        cascade_write_kv_indptr=write_kv_indptr,
+        cascade_qo_indptr_arr=None,
+        cascade_kv_indptr_arr=None,
+        cascade_kv_indices_arr=None,
+        cascade_kv_last_page_len_arr=None,
+        cascade_write_page_indices=None,
+        cascade_write_positions=None,
+        cascade_write_batch_indices=None,
+        cascade_write_kv_indptr=None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -671,29 +672,31 @@ class LlamaModel(LlamaPreTrainedModel):
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
+        cascade_wrapper = None
         # Initialize cascade wrapper
-        cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
-            len(cascade_qo_indptr_arr),
-            get_workspace_buffer(),
-            kv_layout="NHD"
-        )
+        if attention_mode == AttentionMode.DECODE:
+            cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
+                len(cascade_qo_indptr_arr),
+                get_workspace_buffer(),
+                kv_layout="NHD"
+            )
 
-        # Plan cascade attention
-        cascade_wrapper.plan(
-            use_cuda_graph=True,
-            qo_indptr_arr=cascade_qo_indptr_arr,
-            paged_kv_indptr_arr=cascade_paged_kv_indptr_arr,
-            paged_kv_indices_arr=cascade_paged_kv_indices_arr,
-            paged_kv_last_page_len=cascade_paged_kv_last_page_len_arr,
-            num_qo_heads=cascade_num_qo_heads,
-            num_kv_heads=num_kv_heads,
-            head_dim=head_dim,
-            page_size=page_table.page_size,
-            causal=True,
-            pos_encoding_mode='NONE',
-            sm_scale=self.scaling,
-            q_data_type=query.dtype
-        )
+            # Plan cascade attention
+            cascade_wrapper.plan(
+                use_cuda_graph=True,
+                qo_indptr_arr=cascade_qo_indptr_arr,
+                paged_kv_indptr_arr=cascade_paged_kv_indptr_arr,
+                paged_kv_indices_arr=cascade_paged_kv_indices_arr,
+                paged_kv_last_page_len=cascade_paged_kv_last_page_len_arr,
+                num_qo_heads=cascade_num_qo_heads,
+                num_kv_heads=num_kv_heads,
+                head_dim=head_dim,
+                page_size=page_table.page_size,
+                causal=True,
+                pos_encoding_mode='NONE',
+                sm_scale=self.scaling,
+                q_data_type=query.dtype
+            )
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             hidden_states = decoder_layer(
