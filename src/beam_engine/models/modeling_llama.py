@@ -368,6 +368,7 @@ class LlamaAttention(nn.Module):
         paged_kv_indptr_arr: list[torch.Tensor],
         paged_kv_indices_arr: list[torch.Tensor],
         paged_kv_last_page_len_arr: list[torch.Tensor],
+        cascade_wrapper: flashinfer.cascade.MultiLevelCascadeAttentionWrapper
     ) -> torch.Tensor:
         """
         Cascade decode attention using FlashInfer's MultiLevelCascadeAttentionWrapper.
@@ -392,34 +393,6 @@ class LlamaAttention(nn.Module):
         num_qo_heads = self.config.num_attention_heads
         num_kv_heads = self.config.num_key_value_heads
         head_dim = self.head_dim
-
-        # TODO: Store current token's K/V in page table for next iteration
-
-        # Create workspace buffer
-
-
-        # Initialize cascade wrapper
-        cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
-            len(qo_indptr_arr),
-            get_workspace_buffer(),
-            kv_layout="NHD"
-        )
-
-        # Plan cascade attention
-        cascade_wrapper.plan(
-            qo_indptr_arr=qo_indptr_arr,
-            paged_kv_indptr_arr=paged_kv_indptr_arr,
-            paged_kv_indices_arr=paged_kv_indices_arr,
-            paged_kv_last_page_len=paged_kv_last_page_len_arr,
-            num_qo_heads=num_qo_heads,
-            num_kv_heads=num_kv_heads,
-            head_dim=head_dim,
-            page_size=page_table.page_size,
-            causal=True,
-            pos_encoding_mode='NONE',
-            sm_scale=self.scaling,
-            q_data_type=query.dtype
-        )
 
         # Prepare query: [batch, seq_len, num_heads, head_dim] -> [seq_len, num_heads, head_dim]
         query_flashinfer = query
@@ -459,6 +432,7 @@ class LlamaAttention(nn.Module):
         cascade_write_positions: Optional[list] = None,  # Positions within page to write K/V
         cascade_write_batch_indices: Optional[torch.Tensor] = None,  # Pre-allocated batch indices for write
         cascade_write_kv_indptr: Optional[torch.Tensor] = None,  # Pre-allocated kv_indptr for write
+        cascade_wrapper = None
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -537,6 +511,7 @@ class LlamaAttention(nn.Module):
                 cascade_kv_indptr_arr,
                 cascade_kv_indices_arr,
                 cascade_kv_last_page_len_arr,
+                cascade_wrapper,
             )
 
             attn_weights = None
@@ -570,6 +545,7 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        cascade_wrapper = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
         residual = hidden_states
@@ -594,6 +570,7 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
             page_table=page_table,
             page_indices=page_indices,
             last_page_len=last_page_len,
+            cascade_wrapper=cascade_wrapper,
             **attention_kwargs,
         )
         hidden_states = residual + hidden_states
@@ -686,6 +663,30 @@ class LlamaModel(LlamaPreTrainedModel):
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
+        # Initialize cascade wrapper
+        cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
+            len(qo_indptr_arr),
+            get_workspace_buffer(),
+            kv_layout="NHD"
+        )
+
+        # Plan cascade attention
+        cascade_wrapper.plan(
+            use_cuda_graph=True,
+            qo_indptr_arr=qo_indptr_arr,
+            paged_kv_indptr_arr=paged_kv_indptr_arr,
+            paged_kv_indices_arr=paged_kv_indices_arr,
+            paged_kv_last_page_len=paged_kv_last_page_len_arr,
+            num_qo_heads=num_qo_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            page_size=page_table.page_size,
+            causal=True,
+            pos_encoding_mode='NONE',
+            sm_scale=self.scaling,
+            q_data_type=query.dtype
+        )
+
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             hidden_states = decoder_layer(
                 hidden_states,
@@ -694,6 +695,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 past_key_values=past_key_values,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
+                cascade_wrapper=cascade_wrapper,
                 **kwargs,
             )
 
