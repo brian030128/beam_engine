@@ -155,33 +155,9 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         logger.info(f"\nPrompt Length (approx chars): {len(prompt)}")
         logger.info("-" * 50)
 
-        
-        # ---------------------------------------------------------
-        # 1. HuggingFace Benchmark
-        # ---------------------------------------------------------
-        logger.info("\n[BENCHMARK] Loading HuggingFace model...")
-        hf_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16, device_map="auto")
-        print(hf_model.device)
-        max_new_tokens = 20
-        hf_texts, hf_time = run_huggingface_beam_search(
-            hf_model=hf_model,
-            tokenizer=tokenizer,
-            prompt=prompt,
-            beam_size=8,
-            max_new_tokens=max_new_tokens,
-            num_return_sequences=4,
-            temperature=1.0
-        )
-
-        # Cleanup HuggingFace
-        logger.info("[BENCHMARK] Cleaning up HuggingFace model...")
-        del hf_model
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
         # ---------------------------------------------------------
-        # 3. Custom Benchmark
+        # 1. Custom Benchmark
         # ---------------------------------------------------------
         logger.info("\n" + "=" * 80)
         logger.info("=== CUSTOM BEAM SEARCH (CASCADE ATTENTION) ===")
@@ -193,7 +169,8 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         # Calculate max_length from max_new_tokens
         inputs = tokenizer(prompt, return_tensors="pt")
         input_len = inputs.input_ids.shape[1]
-        
+        max_new_tokens = 20
+
         max_length = input_len + max_new_tokens
         logger.info(f"Input Length: {input_len} | Max New Tokens: {max_new_tokens} | Max Total Length: {max_length}")
 
@@ -284,6 +261,37 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         logger.info(f"  -> Open chrome://tracing in Chrome")
         logger.info(f"  -> Click 'Load' and select {trace_file}")
         logger.info("=" * 80)
+
+        # Cleanup custom model
+        logger.info("[BENCHMARK] Cleaning up custom model...")
+        del model
+        del generator
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # ---------------------------------------------------------
+        # 2. HuggingFace Benchmark
+        # ---------------------------------------------------------
+        logger.info("\n[BENCHMARK] Loading HuggingFace model...")
+        hf_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16, device_map="auto")
+        print(hf_model.device)
+        hf_texts, hf_time = run_huggingface_beam_search(
+            hf_model=hf_model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            beam_size=8,
+            max_new_tokens=max_new_tokens,
+            num_return_sequences=4,
+            temperature=1.0
+        )
+
+        # Cleanup HuggingFace
+        logger.info("[BENCHMARK] Cleaning up HuggingFace model...")
+        del hf_model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         # ---------------------------------------------------------
         # 4. Results
