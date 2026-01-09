@@ -2,11 +2,11 @@
 name = "beam_engine"
 version = "0.1.0"
 dependencies = [
-    "torch==2.7.1",
+    "torch==2.9.0",
     "flashinfer-python",
     "transformers==4.57.3",
     "ninja",
-    "vllm",
+    "vllm==0.13.0",
     "accelerate>=1.12.0",
 ]
 
