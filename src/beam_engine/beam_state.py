@@ -505,22 +505,7 @@ class BeamState:
                 if id(child) not in visited:
                     queue.append(child)
 
-        # Fix parent references (second pass)
-        trie_nodes_list = []
-        for candidate in self.candidates:
-            node = candidate.trie_node
-            while node is not None:
-                if id(node) not in [id(n) for n in trie_nodes_list]:
-                    trie_nodes_list.append(node)
-                node = node.parent
 
-        for i, kv_node in enumerate(tree_nodes):
-            if i < len(trie_nodes_list):
-                trie_node = trie_nodes_list[i]
-                if trie_node.parent is not None:
-                    parent_trie_id = id(trie_node.parent)
-                    if parent_trie_id in trie_to_tree_id:
-                        kv_node.parent = trie_to_tree_id[parent_trie_id]
 
         return tree_nodes, trie_to_tree_id
 

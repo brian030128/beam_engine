@@ -209,4 +209,8 @@ def prepare_fasttree_metadata_for_paged_cache(
     to_gpu(metadata.req_to_vnode_offs, req_to_vnode_offs)
     to_gpu(metadata.req_to_vnode_lens, req_to_vnode_lens)
 
+    # Key Fix: Assign the flattened page table to vnode_to_kv_entries
+    # The kernel uses indirect indexing: vnode_to_kv_offs points into this buffer
+    metadata.vnode_to_kv_entries = req_to_token.flatten().int()
+
     return metadata
