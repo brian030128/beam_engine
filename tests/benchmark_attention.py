@@ -413,7 +413,7 @@ def benchmark_attention():
     torch.cuda.synchronize()
     
     with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof_cas:
-        with record_function("cascade_decode"):
+        with record_function("run"):
             for _ in range(ITERATIONS):
                 cascade_wrapper.run(q, paged_kv_cache)
 
