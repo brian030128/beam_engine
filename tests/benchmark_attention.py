@@ -45,6 +45,9 @@ DEVICE = "cuda"
 WARMUP = 10
 ITERATIONS = 100
 
+activities = [ProfilerActivity.CPU]
+if torch.cuda.is_available():
+    activities.append(ProfilerActivity.CUDA)
 def benchmark_attention():
     print("=" * 60)
     print(f"Benchmark: FlashInfer Paged vs FastTree")
@@ -144,7 +147,12 @@ def benchmark_attention():
     
     torch.cuda.synchronize()
     
-    with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof:
+    with profile(
+        activities=activities,
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True,
+    ) as prof:
         with record_function("flashinfer_paged_decode"):
             for _ in range(ITERATIONS):
                 decode_wrapper.run(q, paged_kv_cache)
@@ -278,7 +286,12 @@ def benchmark_attention():
         )
 
     # Benchmark
-    with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof_ft:
+    with profile(
+        activities=activities,
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True,
+    ) as prof:
         with record_function("fasttree_decode"):
             for _ in range(ITERATIONS):
                 fasttree_decode(
@@ -412,7 +425,12 @@ def benchmark_attention():
         
     torch.cuda.synchronize()
     
-    with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof_cas:
+    with profile(
+        activities=activities,
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True,
+    ) as prof:
         with record_function("run"):
             for _ in range(ITERATIONS):
                 cascade_wrapper.run(q, paged_kv_cache)
