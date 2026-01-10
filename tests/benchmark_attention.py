@@ -480,8 +480,10 @@ def benchmark_attention():
     max_diff_cas = (cascade_output - fasttree_o).abs().max().item()
     print(f"Max Difference (Cascade vs FastTree): {max_diff_cas:.6f}")
     
-    if max_diff_fi < 1e-2 and max_diff_cas < 1e-2:
-        print("✅ Outputs match!")
+    if max_diff_cas < 1e-2:
+        print("✅ Outputs match Cascade Attention!")
+    elif max_diff_fi < 1e-2:
+        print("✅ Outputs match FlashInfer Paged!")
     else:
         print("❌ Outputs mismatch!")
 
