@@ -147,7 +147,12 @@ def benchmark_attention():
     
     torch.cuda.synchronize()
     
-    with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof:
+    with profile(
+        activities=activities,
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True,
+    ) as prof:
         with record_function("flashinfer_paged_decode"):
             for _ in range(ITERATIONS):
                 decode_wrapper.run(q, paged_kv_cache)
