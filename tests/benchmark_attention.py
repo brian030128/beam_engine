@@ -387,10 +387,7 @@ def benchmark_attention():
         NUM_HEADS,
         NUM_KV_HEADS,
         HEAD_DIM,
-        PAGE_SIZE,
-        pos_encoding_mode="NONE",
-        data_type=torch.float16,
-        sm_scale=sm_scale
+        PAGE_SIZE
     )
     
     # Warmup
