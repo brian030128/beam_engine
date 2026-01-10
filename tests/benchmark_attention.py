@@ -317,29 +317,6 @@ def benchmark_attention():
                     sm_scale=sm_scale,
                 )
 
-    print(prof_ft.key_averages().table(sort_by="cuda_time_total", row_limit=10))
-    fasttree_avg_time = 0
-    # Sum up kernel times for FastTree (Stage 1 + Stage 2)
-    for evt in prof_ft.key_averages():
-        if "_fwd_fasttree_" in evt.key:
-             # Check for cuda_time_total or device_time_total
-            t = getattr(evt, "cuda_time_total", 0)
-            if t == 0:
-                t = getattr(evt, "device_time_total", 0)
-            if t == 0 and hasattr(evt, "device_time"): # Fallback for old/new property
-                t = evt.device_time
-            elif t == 0 and hasattr(evt, "cuda_time"): # Deprecated fallback
-                t = evt.cuda_time
-            fasttree_avg_time += t
-
-    # Normalize by iterations
-    fasttree_avg_time /= ITERATIONS
-    print(f"FastTree Avg Time (from profiler): {fasttree_avg_time/1000:.4f} ms")
-    prof_ft.export_chrome_trace("trace_fasttree.json")
-    
-    if fasttree_avg_time > 0 and flashinfer_avg_time > 0:
-        print(f"Speedup: {flashinfer_avg_time / fasttree_avg_time:.2f}x")
-
     # -------------------------------------------------------------------------
     # Setup Cascade Attention
     # -------------------------------------------------------------------------
@@ -434,30 +411,6 @@ def benchmark_attention():
         with record_function("run"):
             for _ in range(ITERATIONS):
                 cascade_wrapper.run(q, paged_kv_cache)
-
-    print(prof_cas.key_averages().table(sort_by="cuda_time_total", row_limit=20))
-    cascade_avg_time = 0
-    # Sum up kernel times for Cascade (usually BatchDecode again, plus merge)
-    for evt in prof_cas.key_averages():
-        # Cascade calls BatchDecode kernel multiple times + merge kernel
-        # Broaden filter to catch all FlashInfer related kernels
-        if "flashinfer" in evt.key or "Decode" in evt.key or "Merge" in evt.key:
-             # Check for cuda_time_total or device_time_total
-            t = getattr(evt, "cuda_time_total", 0)
-            if t == 0:
-                t = getattr(evt, "device_time_total", 0)
-            if t == 0 and hasattr(evt, "device_time"):
-                t = evt.device_time
-            elif t == 0 and hasattr(evt, "cuda_time"):
-                t = evt.cuda_time
-            cascade_avg_time += t
-
-    cascade_avg_time /= ITERATIONS
-    print(f"Cascade Avg Time (from profiler): {cascade_avg_time/1000:.4f} ms")
-    prof_cas.export_chrome_trace("trace_cascade.json")
-    
-    if cascade_avg_time > 0:
-        print(f"Speedup vs Cascade: {cascade_avg_time / fasttree_avg_time:.2f}x")
 
     # -------------------------------------------------------------------------
     # Verification
