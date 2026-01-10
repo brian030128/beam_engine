@@ -40,6 +40,7 @@ NUM_BRANCHES = 8
 BRANCH_LEN = 1
 PAGE_SIZE = 16
 BATCH_SIZE = 1
+LEVELS = 3
 DEVICE = "cuda"
 WARMUP = 10
 ITERATIONS = 100
@@ -47,7 +48,7 @@ ITERATIONS = 100
 def benchmark_attention():
     print("=" * 60)
     print(f"Benchmark: FlashInfer Paged vs FastTree")
-    print(f"Config: BatchSize={BATCH_SIZE}, Prefix={PREFIX_LEN}, Branches={NUM_BRANCHES}, BranchLen={BRANCH_LEN}")
+    print(f"Config: BatchSize={BATCH_SIZE}, Levels={LEVELS}, Prefix={PREFIX_LEN}, Branches={NUM_BRANCHES}, BranchLen={BRANCH_LEN}")
     print(f"Heads={NUM_HEADS}, KV_Heads={NUM_KV_HEADS}, Dim={HEAD_DIM}")
     print(f"Page Size={PAGE_SIZE}")
     print("=" * 60)
@@ -56,22 +57,19 @@ def benchmark_attention():
     # Setup Data Structures
     # -------------------------------------------------------------------------
     # Scenario: BATCH_SIZE independent trees. 
-    # Each tree: 1 prefix (1024) -> 8 branches (1).
+    # Each tree: 1 prefix (PREFIX_LEN) -> 8 branches.
+    # Each branch extends for (LEVELS - 1) levels. Each level has 1 token.
     
-    # Total Requests (queries) = BATCH_SIZE * NUM_BRANCHES
     total_requests = BATCH_SIZE * NUM_BRANCHES
     
     # -------------------------------------------------------------------------
     # 1. Setup Paged KV Cache (Physical Memory)
     # -------------------------------------------------------------------------
-    # We need pages for BATCH_SIZE * (Prefix + Branches)
-    
-    # Prefix pages per batch:
     num_prefix_pages = math.ceil(PREFIX_LEN / PAGE_SIZE)
-    # Branch pages per batch:
-    num_branch_pages = NUM_BRANCHES
+    # Each branch needs (LEVELS - 1) pages (1 page per level for simplicity/isolation)
+    num_branch_pages_per_batch = NUM_BRANCHES * (LEVELS - 1)
     
-    pages_per_batch = num_prefix_pages + num_branch_pages
+    pages_per_batch = num_prefix_pages + num_branch_pages_per_batch
     total_physical_pages = BATCH_SIZE * pages_per_batch
     
     # [total_physical_pages, 2, page_size, num_kv_heads, head_dim]
@@ -95,11 +93,13 @@ def benchmark_attention():
         prefix_pages = list(range(batch_page_offset, batch_page_offset + num_prefix_pages))
         
         for i in range(NUM_BRANCHES):
-            # Branch page index for this branch in this batch
-            branch_page_idx = batch_page_offset + num_prefix_pages + i
+            # Branch pages start after prefix pages
+            # Offset for this branch: i * (LEVELS - 1)
+            branch_base_page = batch_page_offset + num_prefix_pages + i * (LEVELS - 1)
+            branch_pages = list(range(branch_base_page, branch_base_page + (LEVELS - 1)))
             
             # Request chain
-            req_pages = prefix_pages + [branch_page_idx]
+            req_pages = prefix_pages + branch_pages
             all_kv_page_indices.extend(req_pages)
             
             kv_page_indptr.append(len(all_kv_page_indices))
@@ -181,22 +181,30 @@ def benchmark_attention():
     # ... (same setup code) ...
     
     # 1. Build Trees (Multiple Batches)
-    # We use a dummy SuperRoot to connect all batch roots so we can pass a single tree to the adapter.
     super_root = TrieNode(tokens=[], page_id=-1)
     batch_roots = []
     all_candidates = []
     
     for b in range(BATCH_SIZE):
-        # Prefix for batch b (1024 tokens)
+        # Prefix for batch b (PREFIX_LEN tokens)
         b_root = TrieNode(tokens=[0]*PREFIX_LEN, parent=super_root, page_id=b*1000)
         super_root.children.append(b_root)
         batch_roots.append(b_root)
         
         for i in range(NUM_BRANCHES):
-            # Branch i for batch b (1 token)
-            child = TrieNode(tokens=[0]*BRANCH_LEN, parent=b_root, page_id=b*1000 + i)
-            b_root.children.append(child)
-            all_candidates.append(child)
+            # Chains of length (LEVELS - 1)
+            # Level 1 node
+            curr_node = TrieNode(tokens=[0]*BRANCH_LEN, parent=b_root, page_id=b*10000 + i*100 + 0)
+            b_root.children.append(curr_node)
+            
+            # Additional levels (2 to LEVELS-1)
+            for l in range(1, LEVELS - 1):
+                child = TrieNode(tokens=[0]*BRANCH_LEN, parent=curr_node, page_id=b*10000 + i*100 + l)
+                curr_node.children.append(child)
+                curr_node = child
+                
+            # The leaf node is the candidate
+            all_candidates.append(curr_node)
     
     # 2. Build req_to_token for FastTree
     # Flattened buffer size = total_physical_pages * PAGE_SIZE
@@ -204,15 +212,14 @@ def benchmark_attention():
     fasttree_k_buffer = paged_kv_cache[:, 0].reshape(total_slots, NUM_KV_HEADS, HEAD_DIM)
     fasttree_v_buffer = paged_kv_cache[:, 1].reshape(total_slots, NUM_KV_HEADS, HEAD_DIM)
     
-    # Construct req_to_token [total_requests, PREFIX_LEN + BRANCH_LEN]
-    req_to_token = torch.zeros(total_requests, PREFIX_LEN + BRANCH_LEN, dtype=torch.int32, device=DEVICE)
+    # Construct req_to_token [total_requests, PREFIX_LEN + (LEVELS-1)*BRANCH_LEN]
+    suffix_len = (LEVELS - 1) * BRANCH_LEN
+    req_to_token = torch.zeros(total_requests, PREFIX_LEN + suffix_len, dtype=torch.int32, device=DEVICE)
     
     for b in range(BATCH_SIZE):
         batch_page_offset = b * pages_per_batch
         
         # Calculate start slot index for this batch's prefix
-        # Pages batch_page_offset ... batch_page_offset + num_prefix_pages - 1
-        # Slot index = batch_page_offset * PAGE_SIZE
         prefix_start_slot = batch_page_offset * PAGE_SIZE
         prefix_slots = torch.arange(prefix_start_slot, prefix_start_slot + PREFIX_LEN, dtype=torch.int32, device=DEVICE)
         
@@ -223,10 +230,13 @@ def benchmark_attention():
             req_to_token[req_idx, :PREFIX_LEN] = prefix_slots
             
             # Map suffix
-            # Branch page = batch_page_offset + num_prefix_pages + i
-            branch_page_idx = batch_page_offset + num_prefix_pages + i
-            suffix_slot = branch_page_idx * PAGE_SIZE
-            req_to_token[req_idx, PREFIX_LEN] = suffix_slot
+            branch_base_page = batch_page_offset + num_prefix_pages + i * (LEVELS - 1)
+            
+            # Fill suffix tokens (LEVELS-1 tokens, each in a separate page at offset 0)
+            for l in range(LEVELS - 1):
+                page_idx = branch_base_page + l
+                slot = page_idx * PAGE_SIZE
+                req_to_token[req_idx, PREFIX_LEN + l] = slot
             
     # 3. Metadata
     metadata = prepare_fasttree_metadata_from_trie(
@@ -350,33 +360,39 @@ def benchmark_attention():
     cascade_kv_indices.append(torch.tensor(l0_kv_indices, dtype=torch.int32, device=DEVICE))
     cascade_kv_last_page_len.append(torch.tensor(l0_last_page_len, dtype=torch.int32, device=DEVICE))
     
-    # Level 1 Construction (Branch)
-    l1_qo_indptr = [0]
-    l1_kv_indptr = [0]
-    l1_kv_indices = []
-    l1_last_page_len = []
-    
-    for b in range(BATCH_SIZE):
-        batch_page_offset = b * pages_per_batch
-        for i in range(NUM_BRANCHES):
-            # One query per branch node
-            l1_qo_indptr.append(l1_qo_indptr[-1] + 1)
-            
-            # KV page for branch
-            branch_page_idx = batch_page_offset + num_prefix_pages + i
-            l1_kv_indices.append(branch_page_idx)
-            l1_kv_indptr.append(len(l1_kv_indices))
-            l1_last_page_len.append(1)
-            
-    cascade_qo_indptr.append(torch.tensor(l1_qo_indptr, dtype=torch.int32, device=DEVICE))
-    cascade_kv_indptr.append(torch.tensor(l1_kv_indptr, dtype=torch.int32, device=DEVICE))
-    cascade_kv_indices.append(torch.tensor(l1_kv_indices, dtype=torch.int32, device=DEVICE))
-    cascade_kv_last_page_len.append(torch.tensor(l1_last_page_len, dtype=torch.int32, device=DEVICE))
+    # Levels 1 to LEVELS-1
+    for l in range(1, LEVELS):
+        curr_qo_indptr = [0]
+        curr_kv_indptr = [0]
+        curr_kv_indices = []
+        curr_last_page_len = []
+        
+        for b in range(BATCH_SIZE):
+            batch_page_offset = b * pages_per_batch
+            for i in range(NUM_BRANCHES):
+                # One query per branch node at this level
+                curr_qo_indptr.append(curr_qo_indptr[-1] + 1)
+                
+                # KV page for branch at THIS level
+                # Branch pages start at batch_page_offset + num_prefix_pages
+                # Branch i: offset i * (LEVELS-1)
+                # Level l (1-based index 1..LEVELS-1) corresponds to index (l-1) within the branch
+                branch_base_page = batch_page_offset + num_prefix_pages + i * (LEVELS - 1)
+                page_idx = branch_base_page + (l - 1)
+                
+                curr_kv_indices.append(page_idx)
+                curr_kv_indptr.append(len(curr_kv_indices))
+                curr_last_page_len.append(1)
+                
+        cascade_qo_indptr.append(torch.tensor(curr_qo_indptr, dtype=torch.int32, device=DEVICE))
+        cascade_kv_indptr.append(torch.tensor(curr_kv_indptr, dtype=torch.int32, device=DEVICE))
+        cascade_kv_indices.append(torch.tensor(curr_kv_indices, dtype=torch.int32, device=DEVICE))
+        cascade_kv_last_page_len.append(torch.tensor(curr_last_page_len, dtype=torch.int32, device=DEVICE))
 
     # Wrapper
     workspace_buffer_cas = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=DEVICE)
     cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
-        2, workspace_buffer_cas, "NHD"
+        LEVELS, workspace_buffer_cas, "NHD"
     )
     
     cascade_wrapper.plan(
