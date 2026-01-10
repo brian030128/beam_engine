@@ -108,7 +108,12 @@ def benchmark_attention():
             kv_page_indptr.append(len(all_kv_page_indices))
             kv_last_page_len.append(1)
 
-    kv_page_indices_tensor = torch.tensor(all_kv_page_indices, dtype=torch.int32, device=DEVICE)
+    # Randomize page indices so kernels don't always fetch from the same pages.
+    # Keep the same length as the original list but sample page indices
+    # uniformly from the range of available physical pages.
+    kv_page_indices_tensor = torch.randint(
+        0, total_physical_pages, (len(all_kv_page_indices),), dtype=torch.int32, device=DEVICE
+    )
     kv_page_indptr_tensor = torch.tensor(kv_page_indptr, dtype=torch.int32, device=DEVICE)
     kv_last_page_len_tensor = torch.tensor(kv_last_page_len, dtype=torch.int32, device=DEVICE)
     
