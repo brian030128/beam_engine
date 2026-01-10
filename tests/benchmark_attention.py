@@ -162,6 +162,7 @@ def benchmark_attention():
         with record_function("flashinfer_paged_decode"):
             for _ in range(ITERATIONS):
                 g_fi.replay()
+                torch.cuda.synchronize()
     
     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
     
@@ -330,6 +331,7 @@ def benchmark_attention():
         with record_function("fasttree_decode"):
             for _ in range(ITERATIONS):
                 g.replay()
+                torch.cuda.synchronize()
 
     print(prof_ft.key_averages().table(sort_by="cuda_time_total", row_limit=10))
     fasttree_avg_time = 0
@@ -454,6 +456,7 @@ def benchmark_attention():
         with record_function("run"):
             for _ in range(ITERATIONS):
                 g_cas.replay()
+                torch.cuda.synchronize()
 
     print(prof_cas.key_averages().table(sort_by="cuda_time_total", row_limit=20))
     cascade_avg_time = 0
