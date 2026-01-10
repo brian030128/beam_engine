@@ -34,7 +34,7 @@ class TrieNode:
 NUM_HEADS = 32
 NUM_KV_HEADS = 32
 HEAD_DIM = 128
-PREFIX_LEN = 1000
+PREFIX_LEN = 1024
 NUM_BRANCHES = 8
 BRANCH_LEN = 1
 PAGE_SIZE = 16
@@ -161,9 +161,13 @@ def benchmark_attention():
     # Sum up kernel times for FlashInfer
     for evt in prof.key_averages():
         if "BatchDecodeWithPagedKVCacheKernel" in evt.key:
-            # Check for cuda_time_total, fallback if needed
+            # Check for cuda_time_total or device_time_total
             t = getattr(evt, "cuda_time_total", 0)
-            if t == 0 and hasattr(evt, "cuda_time"): # Fallback
+            if t == 0:
+                t = getattr(evt, "device_time_total", 0)
+            if t == 0 and hasattr(evt, "device_time"): # Fallback for old/new property
+                t = evt.device_time
+            elif t == 0 and hasattr(evt, "cuda_time"): # Deprecated fallback
                 t = evt.cuda_time
             flashinfer_avg_time += t
             
@@ -290,9 +294,13 @@ def benchmark_attention():
     # Sum up kernel times for FastTree (Stage 1 + Stage 2)
     for evt in prof_ft.key_averages():
         if "_fwd_fasttree_" in evt.key:
-             # Check for cuda_time_total, fallback if needed
+             # Check for cuda_time_total or device_time_total
             t = getattr(evt, "cuda_time_total", 0)
-            if t == 0 and hasattr(evt, "cuda_time"): # Fallback
+            if t == 0:
+                t = getattr(evt, "device_time_total", 0)
+            if t == 0 and hasattr(evt, "device_time"): # Fallback for old/new property
+                t = evt.device_time
+            elif t == 0 and hasattr(evt, "cuda_time"): # Deprecated fallback
                 t = evt.cuda_time
             fasttree_avg_time += t
 
