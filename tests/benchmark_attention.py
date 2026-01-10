@@ -144,7 +144,13 @@ def benchmark_attention():
     # Warmup
     for _ in range(WARMUP):
         decode_wrapper.run(q, paged_kv_cache)
-    
+        
+    # Capture Graph
+    print("Capturing CUDA Graph for FlashInfer Paged...")
+    g_fi = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(g_fi):
+        decode_wrapper.run(q, paged_kv_cache)
+
     torch.cuda.synchronize()
     
     with profile(
@@ -155,7 +161,7 @@ def benchmark_attention():
     ) as prof:
         with record_function("flashinfer_paged_decode"):
             for _ in range(ITERATIONS):
-                decode_wrapper.run(q, paged_kv_cache)
+                g_fi.replay()
     
     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
     
@@ -284,6 +290,35 @@ def benchmark_attention():
             phase_kv_tile_sizes=metadata.phase_kv_tile_sizes,
             sm_scale=sm_scale,
         )
+        
+    # Capture Graph
+    print("Capturing CUDA Graph for FastTree...")
+    g = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(g):
+        fasttree_decode(
+            q=q,
+            k_buffer=fasttree_k_buffer,
+            v_buffer=fasttree_v_buffer,
+            o=fasttree_o,
+            vnode_to_kv_entries=metadata.vnode_to_kv_entries,
+            vnode_to_kv_offs=metadata.vnode_to_kv_offs,
+            vnode_to_kv_lens=metadata.vnode_to_kv_lens,
+            vnode_to_q_entries=metadata.vnode_to_q_entries,
+            vnode_to_q_offs=metadata.vnode_to_q_offs,
+            vnode_to_q_lens=metadata.vnode_to_q_lens,
+            req_to_vnode_entries=metadata.req_to_vnode_entries,
+            req_to_vnode_offs=metadata.req_to_vnode_offs,
+            req_to_vnode_lens=metadata.req_to_vnode_lens,
+            mid_o=metadata.mid_o,
+            mid_lse=metadata.mid_lse,
+            phase_node_nums=metadata.phase_node_nums,
+            phase_node_offsets=metadata.phase_node_offsets,
+            phase_q_tile_sizes=metadata.phase_q_tile_sizes,
+            phase_kv_tile_sizes=metadata.phase_kv_tile_sizes,
+            sm_scale=sm_scale,
+        )
+
+    torch.cuda.synchronize()
 
     # Benchmark
     with profile(
@@ -294,28 +329,7 @@ def benchmark_attention():
     ) as prof_ft:
         with record_function("fasttree_decode"):
             for _ in range(ITERATIONS):
-                fasttree_decode(
-                    q=q,
-                    k_buffer=fasttree_k_buffer,
-                    v_buffer=fasttree_v_buffer,
-                    o=fasttree_o,
-                    vnode_to_kv_entries=metadata.vnode_to_kv_entries,
-                    vnode_to_kv_offs=metadata.vnode_to_kv_offs,
-                    vnode_to_kv_lens=metadata.vnode_to_kv_lens,
-                    vnode_to_q_entries=metadata.vnode_to_q_entries,
-                    vnode_to_q_offs=metadata.vnode_to_q_offs,
-                    vnode_to_q_lens=metadata.vnode_to_q_lens,
-                    req_to_vnode_entries=metadata.req_to_vnode_entries,
-                    req_to_vnode_offs=metadata.req_to_vnode_offs,
-                    req_to_vnode_lens=metadata.req_to_vnode_lens,
-                    mid_o=metadata.mid_o,
-                    mid_lse=metadata.mid_lse,
-                    phase_node_nums=metadata.phase_node_nums,
-                    phase_node_offsets=metadata.phase_node_offsets,
-                    phase_q_tile_sizes=metadata.phase_q_tile_sizes,
-                    phase_kv_tile_sizes=metadata.phase_kv_tile_sizes,
-                    sm_scale=sm_scale,
-                )
+                g.replay()
 
     print(prof_ft.key_averages().table(sort_by="cuda_time_total", row_limit=10))
     fasttree_avg_time = 0
@@ -423,6 +437,12 @@ def benchmark_attention():
     for _ in range(WARMUP):
         cascade_wrapper.run(q, paged_kv_cache)
         
+    # Capture Graph
+    print("Capturing CUDA Graph for Cascade...")
+    g_cas = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(g_cas):
+        cascade_wrapper.run(q, paged_kv_cache)
+        
     torch.cuda.synchronize()
     
     with profile(
@@ -433,7 +453,7 @@ def benchmark_attention():
     ) as prof_cas:
         with record_function("run"):
             for _ in range(ITERATIONS):
-                cascade_wrapper.run(q, paged_kv_cache)
+                g_cas.replay()
 
     print(prof_cas.key_averages().table(sort_by="cuda_time_total", row_limit=20))
     cascade_avg_time = 0
