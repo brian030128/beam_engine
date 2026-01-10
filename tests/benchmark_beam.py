@@ -182,7 +182,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
             with torch.no_grad():
                 _ = generator.generate(
                     input_text=prompt,
-                    beam_size=8,
+                    beam_size=16,
                     max_length=max_length,
                     num_return_sequences=4,
                     temperature=1.0
@@ -208,7 +208,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
             with record_function("custom_beam_search_generation"):
                 generated_texts = generator.generate(
                     input_text=prompt,
-                    beam_size=8,
+                    beam_size=16,
                     max_length=max_length,
                     num_return_sequences=4,
                     temperature=1.0

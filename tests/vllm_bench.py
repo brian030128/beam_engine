@@ -14,7 +14,7 @@ from vllm.sampling_params import BeamSearchParams
 MODEL_NAME = "meta-llama/Llama-3.1-8B"
 PROMPT = "The future of artificial intelligence is" * 50
 
-BEAM_SIZE = 8
+BEAM_SIZE = 16
 MAX_NEW_TOKENS = 20
 NUM_RETURN_SEQS = 4
 TEMPERATURE = 1.0
