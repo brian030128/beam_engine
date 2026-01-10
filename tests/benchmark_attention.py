@@ -35,11 +35,11 @@ class TrieNode:
 NUM_HEADS = 32
 NUM_KV_HEADS = 8
 HEAD_DIM = 128
-PREFIX_LEN = 1024
+PREFIX_LEN = 4096
 NUM_BRANCHES = 8
 BRANCH_LEN = 1
 PAGE_SIZE = 16
-BATCH_SIZE = 16
+BATCH_SIZE = 1
 DEVICE = "cuda"
 WARMUP = 10
 ITERATIONS = 100
@@ -401,12 +401,13 @@ def benchmark_attention():
             for _ in range(ITERATIONS):
                 cascade_wrapper.run(q, paged_kv_cache)
 
-    print(prof_cas.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    print(prof_cas.key_averages().table(sort_by="cuda_time_total", row_limit=20))
     cascade_avg_time = 0
     # Sum up kernel times for Cascade (usually BatchDecode again, plus merge)
     for evt in prof_cas.key_averages():
         # Cascade calls BatchDecode kernel multiple times + merge kernel
-        if "BatchDecodeWithPagedKVCacheKernel" in evt.key or "MergeStateKernel" in evt.key:
+        # Broaden filter to catch all FlashInfer related kernels
+        if "flashinfer" in evt.key or "Decode" in evt.key or "Merge" in evt.key:
              # Check for cuda_time_total or device_time_total
             t = getattr(evt, "cuda_time_total", 0)
             if t == 0:
