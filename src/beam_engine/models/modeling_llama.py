@@ -350,7 +350,7 @@ class LlamaAttention(nn.Module):
             k_buffer=k_buffer,
             v_buffer=v_buffer,
             o=o,
-            vnode_to_kv_entries=req_to_token.view(-1),  # Flattened page table serves as kv_entries
+            vnode_to_kv_entries=fasttree_metadata.vnode_to_kv_entries,
             vnode_to_kv_offs=fasttree_metadata.vnode_to_kv_offs,
             vnode_to_kv_lens=fasttree_metadata.vnode_to_kv_lens,
             vnode_to_q_entries=fasttree_metadata.vnode_to_q_entries,

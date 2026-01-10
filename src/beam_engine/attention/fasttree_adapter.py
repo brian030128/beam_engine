@@ -175,6 +175,7 @@ def prepare_fasttree_metadata_from_trie(
         node_token_offsets[i] = node_token_offsets[parent_id] + len(id_to_node[parent_id].tokens)
     
     # Build vnode metadata
+    vnode_to_kv_entries = []  # NEW: actual slot indices
     vnode_to_kv_offs = []
     vnode_to_kv_lens = []
     vnode_to_q_entries = []
@@ -205,8 +206,12 @@ def prepare_fasttree_metadata_from_trie(
         first_req = node_to_reqs[i][0]
         token_offset = node_token_offsets[node_idx]  # Use merged node's offset
         
-        # KV offset is into the page table (req_to_token)
-        kv_offset_start = req_to_token_stride * first_req + token_offset
+        # Extract KV entries from req_to_token for this vnode
+        # These are the actual slot indices in the K/V buffer
+        kv_entries_for_vnode = []
+        for kv_pos in range(kv_len):
+            slot_idx = req_to_token[first_req, token_offset + kv_pos].item()
+            kv_entries_for_vnode.append(slot_idx)
         
         kv_split_count = (kv_len - 1) // kv_split_size + 1
         q_split_count = (req_num - 1) // q_split_size + 1
@@ -219,11 +224,16 @@ def prepare_fasttree_metadata_from_trie(
             split_kv_off = kv_split_id * kv_split_size
             vnode_kv_len = min(split_kv_off + kv_split_size, kv_len) - split_kv_off
             
+            # Add the actual KV slot indices for this split
+            kv_entries_offset_start = len(vnode_to_kv_entries)
+            for j in range(vnode_kv_len):
+                vnode_to_kv_entries.append(kv_entries_for_vnode[split_kv_off + j])
+            
             for q_split_id in range(q_split_count):
                 split_q_off = q_split_id * q_split_size
                 vnode_q_len = min(split_q_off + q_split_size, req_num) - split_q_off
                 
-                vnode_to_kv_offs.append(kv_offset_start + split_kv_off)
+                vnode_to_kv_offs.append(kv_entries_offset_start)
                 vnode_to_kv_lens.append(vnode_kv_len)
                 vnode_to_q_offs.append(q_offset_start + split_q_off)
                 vnode_to_q_lens.append(vnode_q_len)
@@ -263,6 +273,7 @@ def prepare_fasttree_metadata_from_trie(
         t = torch.tensor(data, dtype=torch.int32, device="cpu")
         preallocated[:len(data)].copy_(t, non_blocking=True)
     
+    to_gpu(metadata.vnode_to_kv_entries, vnode_to_kv_entries)
     to_gpu(metadata.vnode_to_q_entries, vnode_to_q_entries)
     to_gpu(metadata.vnode_to_q_offs, vnode_to_q_offs)
     to_gpu(metadata.vnode_to_q_lens, vnode_to_q_lens)

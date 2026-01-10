@@ -38,6 +38,9 @@ class FastTreeMetadata:
         self.para_threshs2 = para_threshs2
 
         with torch.device(device):
+            self.vnode_to_kv_entries = torch.empty(
+                max_vnode_to_q_entries, dtype=torch.int32
+            )
             self.vnode_to_q_entries = torch.empty(
                 max_vnode_to_q_entries, dtype=torch.int32
             )
