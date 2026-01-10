@@ -38,6 +38,7 @@ PREFIX_LEN = 1024
 NUM_BRANCHES = 8
 BRANCH_LEN = 1
 PAGE_SIZE = 16
+BATCH_SIZE = 16
 DEVICE = "cuda"
 WARMUP = 10
 ITERATIONS = 100
@@ -45,7 +46,7 @@ ITERATIONS = 100
 def benchmark_attention():
     print("=" * 60)
     print(f"Benchmark: FlashInfer Paged vs FastTree")
-    print(f"Config: Prefix={PREFIX_LEN}, Branches={NUM_BRANCHES}, BranchLen={BRANCH_LEN}")
+    print(f"Config: BatchSize={BATCH_SIZE}, Prefix={PREFIX_LEN}, Branches={NUM_BRANCHES}, BranchLen={BRANCH_LEN}")
     print(f"Heads={NUM_HEADS}, KV_Heads={NUM_KV_HEADS}, Dim={HEAD_DIM}")
     print(f"Page Size={PAGE_SIZE}")
     print("=" * 60)
@@ -53,66 +54,55 @@ def benchmark_attention():
     # -------------------------------------------------------------------------
     # Setup Data Structures
     # -------------------------------------------------------------------------
-    # Scenario: 8 requests. Each has history [Prefix (1000)] + [Branch (1)]
-    # Prefix is SHARED.
+    # Scenario: BATCH_SIZE independent trees. 
+    # Each tree: 1 prefix (1024) -> 8 branches (1).
     
+    # Total Requests (queries) = BATCH_SIZE * NUM_BRANCHES
+    total_requests = BATCH_SIZE * NUM_BRANCHES
+    
+    # -------------------------------------------------------------------------
     # 1. Setup Paged KV Cache (Physical Memory)
-    # We need enough pages for Prefix + 8 * Branch
-    # Prefix pages:
+    # -------------------------------------------------------------------------
+    # We need pages for BATCH_SIZE * (Prefix + Branches)
+    
+    # Prefix pages per batch:
     num_prefix_pages = math.ceil(PREFIX_LEN / PAGE_SIZE)
-    # Branch pages: 1 per branch (since 1 token < 16)
+    # Branch pages per batch:
     num_branch_pages = NUM_BRANCHES
     
-    total_physical_pages = num_prefix_pages + num_branch_pages
+    pages_per_batch = num_prefix_pages + num_branch_pages
+    total_physical_pages = BATCH_SIZE * pages_per_batch
     
-    # [max_num_pages, 2, page_size, num_kv_heads, head_dim]
+    # [total_physical_pages, 2, page_size, num_kv_heads, head_dim]
     paged_kv_cache = torch.randn(
         total_physical_pages, 2, PAGE_SIZE, NUM_KV_HEADS, HEAD_DIM, 
         dtype=torch.float16, device=DEVICE
     )
     
+    # -------------------------------------------------------------------------
     # 2. Setup FlashInfer Metadata
-    # Each request needs a list of page indices: [prefix_pages..., branch_page]
-    # Prefix pages are 0..num_prefix_pages-1
-    prefix_page_indices = list(range(num_prefix_pages))
-    
+    # -------------------------------------------------------------------------
     all_kv_page_indices = []
     kv_page_indptr = [0]
     kv_last_page_len = []
     
-    for i in range(NUM_BRANCHES):
-        # Branch page index: num_prefix_pages + i
-        branch_page_idx = num_prefix_pages + i
+    # Loop over batches
+    for b in range(BATCH_SIZE):
+        batch_page_offset = b * pages_per_batch
         
-        # Request page chain: Shared prefix pages + Unique branch page
-        req_pages = prefix_page_indices + [branch_page_idx]
-        all_kv_page_indices.extend(req_pages)
+        # Pages for this batch's prefix
+        prefix_pages = list(range(batch_page_offset, batch_page_offset + num_prefix_pages))
         
-        kv_page_indptr.append(len(all_kv_page_indices))
-        
-        # Last page length calculations
-        # Total tokens = 1000 + 1 = 1001
-        # Last page len = 1001 % 16 or 16 if 0?
-        # Actually FlashInfer treats last_page_len as length of valid data in the *last* page of the chain.
-        # Total len 1001. 
-        # (1000 // 16) = 62 pages. 1000 % 16 = 8.
-        # So page 0..61 are full (16). Page 62 (index 62) has 8 tokens? 
-        # Wait, 1000 / 16 = 62.5 -> 63 pages (0..62). 
-        # 62 * 16 = 992. 1000 - 992 = 8. So prefix ends with 8 tokens in page 62.
-        # BUT we append a new branch token!
-        # If we append to the SAME sequence, we might fill the partial page?
-        # Paged Attention usually appends new tokens to new pages if using block management, 
-        # OR fills up the last block.
-        # For simplicity benchmark: Let's assume the prefix fills complete pages + partial,
-        # and checking implementation details usually requires the logic to handle "append".
-        # 
-        # Simpler approach matching typical "Fork" usage:
-        # The history is immutable blocks. The new token is in a new block (or the last block if we copy).
-        # Let's assume we allocated a UNIQUE page for the last token for each branch to handle divergence.
-        # So: Prefix Pages (immutable shared) + 1 New Page (mutable unique per branch).
-        # Last page len = 1 (since 1 new token in the new page).
-        # Note: FlashInfer decode wrapper usually takes "kv_last_page_len" as valid length in the last page.
-        kv_last_page_len.append(1) 
+        for i in range(NUM_BRANCHES):
+            # Branch page index for this branch in this batch
+            branch_page_idx = batch_page_offset + num_prefix_pages + i
+            
+            # Request chain
+            req_pages = prefix_pages + [branch_page_idx]
+            all_kv_page_indices.extend(req_pages)
+            
+            kv_page_indptr.append(len(all_kv_page_indices))
+            kv_last_page_len.append(1)
 
     kv_page_indices_tensor = torch.tensor(all_kv_page_indices, dtype=torch.int32, device=DEVICE)
     kv_page_indptr_tensor = torch.tensor(kv_page_indptr, dtype=torch.int32, device=DEVICE)
@@ -139,8 +129,8 @@ def benchmark_attention():
         sm_scale=sm_scale
     )
     
-    # Queries: [8, 32, 128]
-    q = torch.randn(NUM_BRANCHES, NUM_HEADS, HEAD_DIM, dtype=torch.float16, device=DEVICE)
+    # Queries: [total_requests, heads, dim]
+    q = torch.randn(total_requests, NUM_HEADS, HEAD_DIM, dtype=torch.float16, device=DEVICE)
 
     # -------------------------------------------------------------------------
     # Benchmark FlashInfer
@@ -188,50 +178,60 @@ def benchmark_attention():
     
     # ... (same setup code) ...
     
-    # 1. Build Tree
-    root = TrieNode(tokens=[0] * PREFIX_LEN, page_id=0) # Page IDs don't matter for raw kernel check, only for adapter
-    branches = []
-    for i in range(NUM_BRANCHES):
-        child = TrieNode(tokens=[0] * BRANCH_LEN, parent=root, page_id=i+1)
-        root.children.append(child)
-        branches.append(child)
+    # 1. Build Trees (Multiple Batches)
+    # We use a dummy SuperRoot to connect all batch roots so we can pass a single tree to the adapter.
+    super_root = TrieNode(tokens=[], page_id=-1)
+    batch_roots = []
+    all_candidates = []
+    
+    for b in range(BATCH_SIZE):
+        # Prefix for batch b (1024 tokens)
+        b_root = TrieNode(tokens=[0]*PREFIX_LEN, parent=super_root, page_id=b*1000)
+        super_root.children.append(b_root)
+        batch_roots.append(b_root)
+        
+        for i in range(NUM_BRANCHES):
+            # Branch i for batch b (1 token)
+            child = TrieNode(tokens=[0]*BRANCH_LEN, parent=b_root, page_id=b*1000 + i)
+            b_root.children.append(child)
+            all_candidates.append(child)
     
     # 2. Build req_to_token for FastTree
-    # FastTree needs a logical view of the KV cache.
-    # We can use the same paged physical layout concept.
-    # req_to_token maps [request, token_pos] -> slot_index (global linear index).
-    # Since FastTree kernel takes flattened K and V buffers, we need to map our paged cache to that.
-    
     # Flattened buffer size = total_physical_pages * PAGE_SIZE
     total_slots = total_physical_pages * PAGE_SIZE
     fasttree_k_buffer = paged_kv_cache[:, 0].reshape(total_slots, NUM_KV_HEADS, HEAD_DIM)
     fasttree_v_buffer = paged_kv_cache[:, 1].reshape(total_slots, NUM_KV_HEADS, HEAD_DIM)
     
-    # Construct req_to_token [8, 1001]
-    req_to_token = torch.zeros(NUM_BRANCHES, PREFIX_LEN + BRANCH_LEN, dtype=torch.int32, device=DEVICE)
+    # Construct req_to_token [total_requests, PREFIX_LEN + BRANCH_LEN]
+    req_to_token = torch.zeros(total_requests, PREFIX_LEN + BRANCH_LEN, dtype=torch.int32, device=DEVICE)
     
-    # Map logic:
-    # Prefix (0..999) -> Pages 0..62.
-    #   Token k is at: (k // 16) * 16 + (k % 16) = k.
-    #   Since our pages 0..62 are contiguous in paged_kv_cache linear memory (0..62*16),
-    #   the slot index is just 'k'.
-    prefix_indices = torch.arange(PREFIX_LEN, dtype=torch.int32, device=DEVICE)
-    
-    for i in range(NUM_BRANCHES):
-        req_to_token[i, :PREFIX_LEN] = prefix_indices
+    for b in range(BATCH_SIZE):
+        batch_page_offset = b * pages_per_batch
         
-        # Suffix token is in branch_page_idx (num_prefix_pages + i)
-        # It's at offset 0 in that page (since new page).
-        # Global slot index = (num_prefix_pages + i) * PAGE_SIZE + 0
-        suffix_slot = (num_prefix_pages + i) * PAGE_SIZE
-        req_to_token[i, PREFIX_LEN] = suffix_slot
+        # Calculate start slot index for this batch's prefix
+        # Pages batch_page_offset ... batch_page_offset + num_prefix_pages - 1
+        # Slot index = batch_page_offset * PAGE_SIZE
+        prefix_start_slot = batch_page_offset * PAGE_SIZE
+        prefix_slots = torch.arange(prefix_start_slot, prefix_start_slot + PREFIX_LEN, dtype=torch.int32, device=DEVICE)
         
+        for i in range(NUM_BRANCHES):
+            req_idx = b * NUM_BRANCHES + i
+            
+            # Map prefix
+            req_to_token[req_idx, :PREFIX_LEN] = prefix_slots
+            
+            # Map suffix
+            # Branch page = batch_page_offset + num_prefix_pages + i
+            branch_page_idx = batch_page_offset + num_prefix_pages + i
+            suffix_slot = branch_page_idx * PAGE_SIZE
+            req_to_token[req_idx, PREFIX_LEN] = suffix_slot
+            
     # 3. Metadata
     metadata = prepare_fasttree_metadata_from_trie(
-        root=root,
-        candidates=branches,
+        root=super_root,
+        candidates=all_candidates,
         req_to_token=req_to_token,
-        batch_size=NUM_BRANCHES,
+        batch_size=total_requests,
         num_qo_heads=NUM_HEADS,
         num_kv_heads=NUM_KV_HEADS,
         head_dim=HEAD_DIM,
