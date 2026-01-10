@@ -375,8 +375,9 @@ def benchmark_attention():
 
     # Wrapper
     workspace_buffer_cas = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=DEVICE)
+    float_workspace_buffer_cas = torch.empty(128 * 1024 * 1024, dtype=torch.float32, device=DEVICE)
     cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
-        workspace_buffer_cas, kv_layout="NHD"
+        2, workspace_buffer_cas, float_workspace_buffer_cas, "NHD"
     )
     
     cascade_wrapper.plan(
