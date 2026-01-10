@@ -7,6 +7,7 @@ import torch
 import math
 from torch.profiler import profile, record_function, ProfilerActivity
 import flashinfer
+import flashinfer.cascade
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -32,7 +33,7 @@ class TrieNode:
 # Benchmark Configuration
 # -----------------------------------------------------------------------------
 NUM_HEADS = 32
-NUM_KV_HEADS = 32
+NUM_KV_HEADS = 8
 HEAD_DIM = 128
 PREFIX_LEN = 1024
 NUM_BRANCHES = 8
@@ -169,6 +170,7 @@ def benchmark_attention():
     # and the kernel was called ITERATIONS times, cuda_time_total is the SUM.
     flashinfer_avg_time /= ITERATIONS
     print(f"FlashInfer Avg Time (from profiler): {flashinfer_avg_time/1000:.4f} ms")
+    prof.export_chrome_trace("trace_flashinfer.json")
 
 
     # -------------------------------------------------------------------------
@@ -310,17 +312,129 @@ def benchmark_attention():
     # Normalize by iterations
     fasttree_avg_time /= ITERATIONS
     print(f"FastTree Avg Time (from profiler): {fasttree_avg_time/1000:.4f} ms")
+    prof_ft.export_chrome_trace("trace_fasttree.json")
     
     if fasttree_avg_time > 0 and flashinfer_avg_time > 0:
         print(f"Speedup: {flashinfer_avg_time / fasttree_avg_time:.2f}x")
+
+    # -------------------------------------------------------------------------
+    # Setup Cascade Attention
+    # -------------------------------------------------------------------------
+    print("\nBenchmarking Cascade Attention...")
+    
+    cascade_qo_indptr = []
+    cascade_kv_indptr = []
+    cascade_kv_indices = []
+    cascade_kv_last_page_len = []
+    
+    # Level 0 Construction (Prefix)
+    l0_qo_indptr = [0]
+    l0_kv_indptr = [0]
+    l0_kv_indices = []
+    l0_last_page_len = []
+    
+    for b in range(BATCH_SIZE):
+        # Queries 0..(NUM_BRANCHES-1) map to this prefix node
+        l0_qo_indptr.append(l0_qo_indptr[-1] + NUM_BRANCHES)
+        
+        # KV pages for node b
+        batch_page_offset = b * pages_per_batch
+        prefix_pages = list(range(batch_page_offset, batch_page_offset + num_prefix_pages))
+        l0_kv_indices.extend(prefix_pages)
+        
+        l0_kv_indptr.append(len(l0_kv_indices))
+        l0_last_page_len.append(PAGE_SIZE if (PREFIX_LEN % PAGE_SIZE == 0) else (PREFIX_LEN % PAGE_SIZE))
+
+    cascade_qo_indptr.append(torch.tensor(l0_qo_indptr, dtype=torch.int32, device=DEVICE))
+    cascade_kv_indptr.append(torch.tensor(l0_kv_indptr, dtype=torch.int32, device=DEVICE))
+    cascade_kv_indices.append(torch.tensor(l0_kv_indices, dtype=torch.int32, device=DEVICE))
+    cascade_kv_last_page_len.append(torch.tensor(l0_last_page_len, dtype=torch.int32, device=DEVICE))
+    
+    # Level 1 Construction (Branch)
+    l1_qo_indptr = [0]
+    l1_kv_indptr = [0]
+    l1_kv_indices = []
+    l1_last_page_len = []
+    
+    for b in range(BATCH_SIZE):
+        batch_page_offset = b * pages_per_batch
+        for i in range(NUM_BRANCHES):
+            # One query per branch node
+            l1_qo_indptr.append(l1_qo_indptr[-1] + 1)
+            
+            # KV page for branch
+            branch_page_idx = batch_page_offset + num_prefix_pages + i
+            l1_kv_indices.append(branch_page_idx)
+            l1_kv_indptr.append(len(l1_kv_indices))
+            l1_last_page_len.append(1)
+            
+    cascade_qo_indptr.append(torch.tensor(l1_qo_indptr, dtype=torch.int32, device=DEVICE))
+    cascade_kv_indptr.append(torch.tensor(l1_kv_indptr, dtype=torch.int32, device=DEVICE))
+    cascade_kv_indices.append(torch.tensor(l1_kv_indices, dtype=torch.int32, device=DEVICE))
+    cascade_kv_last_page_len.append(torch.tensor(l1_last_page_len, dtype=torch.int32, device=DEVICE))
+
+    # Wrapper
+    workspace_buffer_cas = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=DEVICE)
+    cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
+        workspace_buffer_cas, kv_layout="NHD"
+    )
+    
+    cascade_wrapper.plan(
+        cascade_qo_indptr,
+        cascade_kv_indptr,
+        cascade_kv_indices,
+        cascade_kv_last_page_len,
+        NUM_HEADS,
+        NUM_KV_HEADS,
+        HEAD_DIM,
+        PAGE_SIZE,
+        pos_encoding_mode="NONE",
+        data_type=torch.float16,
+        sm_scale=sm_scale
+    )
+    
+    # Warmup
+    for _ in range(WARMUP):
+        cascade_wrapper.run(q, paged_kv_cache)
+        
+    torch.cuda.synchronize()
+    
+    with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof_cas:
+        with record_function("cascade_decode"):
+            for _ in range(ITERATIONS):
+                cascade_wrapper.run(q, paged_kv_cache)
+
+    print(prof_cas.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    cascade_avg_time = 0
+    # Sum up kernel times for Cascade (usually BatchDecode again, plus merge)
+    for evt in prof_cas.key_averages():
+        # Cascade calls BatchDecode kernel multiple times + merge kernel
+        if "BatchDecodeWithPagedKVCacheKernel" in evt.key or "MergeStateKernel" in evt.key:
+             # Check for cuda_time_total or device_time_total
+            t = getattr(evt, "cuda_time_total", 0)
+            if t == 0:
+                t = getattr(evt, "device_time_total", 0)
+            if t == 0 and hasattr(evt, "device_time"):
+                t = evt.device_time
+            elif t == 0 and hasattr(evt, "cuda_time"):
+                t = evt.cuda_time
+            cascade_avg_time += t
+
+    cascade_avg_time /= ITERATIONS
+    print(f"Cascade Avg Time (from profiler): {cascade_avg_time/1000:.4f} ms")
+    prof_cas.export_chrome_trace("trace_cascade.json")
+    
+    if cascade_avg_time > 0:
+        print(f"Speedup vs Cascade: {cascade_avg_time / fasttree_avg_time:.2f}x")
 
     # -------------------------------------------------------------------------
     # Verification
     # -------------------------------------------------------------------------
     print("\nVerifying Correctness...")
     
-    # Run both once to ensure we have clean outputs
+    # Run all once to ensure we have clean outputs
     flashinfer_output = decode_wrapper.run(q, paged_kv_cache)
+    cascade_output = cascade_wrapper.run(q, paged_kv_cache)
     
     fasttree_decode(
         q=q,
@@ -346,11 +460,13 @@ def benchmark_attention():
     )
     
     # Compare
-    # Note: Outputs might have slight numerical differences due to order of operations/tile sizes
-    max_diff = (flashinfer_output - fasttree_o).abs().max().item()
-    print(f"Max Difference: {max_diff:.6f}")
+    max_diff_fi = (flashinfer_output - fasttree_o).abs().max().item()
+    print(f"Max Difference (FlashInfer vs FastTree): {max_diff_fi:.6f}")
     
-    if max_diff < 1e-2: # Relaxed tolerance for float16
+    max_diff_cas = (cascade_output - fasttree_o).abs().max().item()
+    print(f"Max Difference (Cascade vs FastTree): {max_diff_cas:.6f}")
+    
+    if max_diff_fi < 1e-2 and max_diff_cas < 1e-2:
         print("✅ Outputs match!")
     else:
         print("❌ Outputs mismatch!")
