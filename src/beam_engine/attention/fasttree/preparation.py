@@ -211,6 +211,15 @@ def prepare_fasttree_metadata_for_paged_cache(
 
     # Key Fix: Assign the flattened page table to vnode_to_kv_entries
     # The kernel uses indirect indexing: vnode_to_kv_offs points into this buffer
-    metadata.vnode_to_kv_entries = req_to_token.flatten().int()
+    #
+    # We MUST pad this tensor because the kernel performs unmasked loads of block size KV_TILE_SIZE.
+    # Reads past the end of the valid data (at the very end of the buffer) will cause
+    # Illegal Memory Access if not padded.
+    # Max KV_TILE_SIZE is usually 32 or 64. 256 is safe + efficient.
+    flat_req_to_token = req_to_token.flatten().int()
+    padding_size = 256 
+    padded_req_to_token = torch.nn.functional.pad(flat_req_to_token, (0, padding_size), value=-1)
+    
+    metadata.vnode_to_kv_entries = padded_req_to_token
 
     return metadata
