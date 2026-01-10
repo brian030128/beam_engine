@@ -196,7 +196,7 @@ def prepare_fasttree_metadata_from_trie(
         while node_assignments[node_idx] == 1:
             node = id_to_node[node_idx]
             node_idx = node_to_id[id(node.parent)]
-            kv_len += L[node_idx]
+            # kv_len is already computed in BFS (L[i] accumulated)
         
         phase = 0 if req_num > phase_q_tile_sizes[1] else 1
         kv_split_size = phase_kv_split_sizes[phase]
