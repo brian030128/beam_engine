@@ -124,6 +124,8 @@ def benchmark_attention():
         workspace_buffer, kv_layout="NHD"
     )
     
+    sm_scale = 1.0 / math.sqrt(HEAD_DIM)
+    
     decode_wrapper.plan(
         indptr=kv_page_indptr_tensor,
         indices=kv_page_indices_tensor,
@@ -133,7 +135,8 @@ def benchmark_attention():
         head_dim=HEAD_DIM,
         page_size=PAGE_SIZE,
         pos_encoding_mode="NONE",
-        data_type=torch.float16
+        data_type=torch.float16,
+        sm_scale=sm_scale
     )
     
     # Queries: [8, 32, 128]
@@ -259,7 +262,7 @@ def benchmark_attention():
             phase_node_offsets=metadata.phase_node_offsets,
             phase_q_tile_sizes=metadata.phase_q_tile_sizes,
             phase_kv_tile_sizes=metadata.phase_kv_tile_sizes,
-            sm_scale=1.0,
+            sm_scale=sm_scale,
         )
 
     # Benchmark
@@ -286,7 +289,7 @@ def benchmark_attention():
                     phase_node_offsets=metadata.phase_node_offsets,
                     phase_q_tile_sizes=metadata.phase_q_tile_sizes,
                     phase_kv_tile_sizes=metadata.phase_kv_tile_sizes,
-                    sm_scale=1.0,
+                    sm_scale=sm_scale,
                 )
 
     print(prof_ft.key_averages().table(sort_by="cuda_time_total", row_limit=10))
@@ -339,7 +342,7 @@ def benchmark_attention():
         phase_node_offsets=metadata.phase_node_offsets,
         phase_q_tile_sizes=metadata.phase_q_tile_sizes,
         phase_kv_tile_sizes=metadata.phase_kv_tile_sizes,
-        sm_scale=1.0,
+        sm_scale=sm_scale,
     )
     
     # Compare
