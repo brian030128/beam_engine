@@ -156,11 +156,21 @@ def benchmark_attention():
                 decode_wrapper.run(q, paged_kv_cache)
     
     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    
     flashinfer_avg_time = 0
+    # Sum up kernel times for FlashInfer
     for evt in prof.key_averages():
-        if "flashinfer_paged_decode" in evt.key:
-            flashinfer_avg_time = evt.cuda_time_total / ITERATIONS
-            break
+        if "BatchDecodeWithPagedKVCacheKernel" in evt.key:
+            # Check for cuda_time_total, fallback if needed
+            t = getattr(evt, "cuda_time_total", 0)
+            if t == 0 and hasattr(evt, "cuda_time"): # Fallback
+                t = evt.cuda_time
+            flashinfer_avg_time += t
+            
+    # Normalize by iterations if the profiler aggregated all of them
+    # key_averages aggregates by kernel name. If we ran ITERATIONS times, 
+    # and the kernel was called ITERATIONS times, cuda_time_total is the SUM.
+    flashinfer_avg_time /= ITERATIONS
     print(f"FlashInfer Avg Time (from profiler): {flashinfer_avg_time/1000:.4f} ms")
 
 
@@ -168,6 +178,8 @@ def benchmark_attention():
     # Setup FastTree
     # -------------------------------------------------------------------------
     print("\nBenchmarking FastTree...")
+    
+    # ... (same setup code) ...
     
     # 1. Build Tree
     root = TrieNode(tokens=[0] * PREFIX_LEN, page_id=0) # Page IDs don't matter for raw kernel check, only for adapter
@@ -275,10 +287,17 @@ def benchmark_attention():
 
     print(prof_ft.key_averages().table(sort_by="cuda_time_total", row_limit=10))
     fasttree_avg_time = 0
+    # Sum up kernel times for FastTree (Stage 1 + Stage 2)
     for evt in prof_ft.key_averages():
-        if "fasttree_decode" in evt.key:
-            fasttree_avg_time = evt.cuda_time_total / ITERATIONS
-            break
+        if "_fwd_fasttree_" in evt.key:
+             # Check for cuda_time_total, fallback if needed
+            t = getattr(evt, "cuda_time_total", 0)
+            if t == 0 and hasattr(evt, "cuda_time"): # Fallback
+                t = evt.cuda_time
+            fasttree_avg_time += t
+
+    # Normalize by iterations
+    fasttree_avg_time /= ITERATIONS
     print(f"FastTree Avg Time (from profiler): {fasttree_avg_time/1000:.4f} ms")
     
     if fasttree_avg_time > 0 and flashinfer_avg_time > 0:
