@@ -410,6 +410,89 @@ class BeamState:
                 paged_kv_last_page_len, query_token_ids_tensor,
                 self._cached_write_batch_indices, self._cached_write_kv_indptr)
 
+    def get_fasttree_input(self, device: torch.device):
+        """
+        Prepare FastTree input data for decode attention.
+        
+        Works directly with TrieNode structure to generate FastTree metadata.
+        
+        Args:
+            device: Device to allocate tensors on
+            
+        Returns:
+            Tuple of (metadata, req_to_token) where:
+            - metadata: FastTreeMetadata with prepared buffers
+            - req_to_token: Page table tensor (batch_size, max_seqlen)
+        """
+        logger.debug(f"\n[FASTTREE] Building FastTree input for {len(self.candidates)} candidates")
+        
+        if not self.candidates:
+            return None, None
+        
+        # Build req_to_token page table
+        # Find max sequence length
+        max_seqlen = 0
+        for candidate in self.candidates:
+            seqlen = 0
+            node = candidate.trie_node
+            while node is not None:
+                seqlen += len(node.tokens)
+                node = node.parent
+            max_seqlen = max(max_seqlen, seqlen)
+        
+        batch_size = len(self.candidates)
+        req_to_token = torch.zeros(
+            (batch_size, max_seqlen), dtype=torch.int32, device=device
+        )
+        
+        # Fill req_to_token for each candidate
+        for req_id, candidate in enumerate(self.candidates):
+            # Collect path from root to leaf
+            path = []
+            node = candidate.trie_node
+            while node is not None:
+                path.append(node)
+                node = node.parent
+            path = path[::-1]  # Root to leaf
+            
+            # Fill in slot indices for each token position
+            pos = 0
+            for trie_node in path:
+                for i in range(len(trie_node.tokens)):
+                    # Calculate slot index for this token
+                    # Slot = page_id * page_size + position_in_page
+                    slot_idx = trie_node.page_id * self.page_table.page_size + i
+                    req_to_token[req_id, pos] = slot_idx
+                    pos += 1
+        
+        logger.debug(f"  [FASTTREE] req_to_token shape: {req_to_token.shape}")
+        
+        # Prepare metadata using adapter - works directly with TrieNode
+        from beam_engine.attention.fasttree_adapter import prepare_fasttree_metadata_from_trie
+        
+        # Get model config from page_table
+        num_qo_heads = self.page_table.head_num
+        num_kv_heads = self.page_table.head_num  # Assuming same for simplicity
+        head_dim = self.page_table.head_dim
+        
+        # Extract leaf nodes from candidates
+        candidate_nodes = [candidate.trie_node for candidate in self.candidates]
+        
+        metadata = prepare_fasttree_metadata_from_trie(
+            root=self.root,
+            candidates=candidate_nodes,
+            req_to_token=req_to_token,
+            batch_size=batch_size,
+            num_qo_heads=num_qo_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            device=str(device)
+        )
+        
+        logger.debug(f"  [FASTTREE] Metadata prepared successfully")
+        
+        return metadata, req_to_token
+
     def get_best_finished(self, num_return: int) -> List[BeamCandidate]:
         """Get the best finished candidates, normalized by length."""
         if not self.finished_candidates:

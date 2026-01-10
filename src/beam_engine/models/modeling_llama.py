@@ -46,6 +46,7 @@ from transformers.utils.generic import check_model_inputs
 from .configuration_llama import LlamaConfig
 from beam_engine.attention_mode import AttentionMode
 from beam_engine.page_table import PageTable
+from beam_engine.attention.fasttree import fasttree_decode, FastTreeMetadata
 import flashinfer
 
 
@@ -304,51 +305,71 @@ class LlamaAttention(nn.Module):
             config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
         )
 
-    def _cascade_decode_attention(
+
+    def _decode_attention(
         self,
         query: torch.Tensor,
         page_table: PageTable,
-        qo_indptr_arr: list[torch.Tensor],
-        paged_kv_indptr_arr: list[torch.Tensor],
-        paged_kv_indices_arr: list[torch.Tensor],
-        paged_kv_last_page_len_arr: list[torch.Tensor],
-        cascade_wrapper: flashinfer.cascade.MultiLevelCascadeAttentionWrapper
+        fasttree_metadata: FastTreeMetadata,
+        req_to_token: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Cascade decode attention using FlashInfer's MultiLevelCascadeAttentionWrapper.
+        Decode attention using FastTree kernel.
 
-        Handles beam search decode where sequences share prefixes in a hierarchical structure.
-
-        Note: kv_last_page_len excludes the current query token for the attention kernel,
-        but we still store the query's K/V in the page table for the next iteration.
+        Handles beam search decode where sequences share prefixes in a tree structure.
 
         Args:
-            query: Query tensor [batch=1, seq_len, num_qo_heads, head_dim] (RoPE applied)
+            query: Query tensor [num_candidates, num_qo_heads, head_dim] (RoPE applied)
             page_table: PageTable with KV cache
-            qo_indptr_arr: QO index pointers per cascade level
-            paged_kv_indptr_arr: KV index pointers per cascade level
-            paged_kv_indices_arr: Page indices per cascade level
-            paged_kv_last_page_len_arr: Last page lengths per cascade level
+            fasttree_metadata: FastTree metadata with prepared buffers
+            req_to_token: Page table mapping (batch_size, max_seqlen)
 
         Returns:
-            Attention output tensor
+            Attention output tensor [1, num_candidates, num_qo_heads, head_dim]
         """
         device = query.device
         num_qo_heads = self.config.num_attention_heads
         num_kv_heads = self.config.num_key_value_heads
         head_dim = self.head_dim
 
-        # Prepare query: [batch, seq_len, num_heads, head_dim] -> [seq_len, num_heads, head_dim]
-        query_flashinfer = query
-
-        # Get KV cache for this layer
+        # Get KV buffers for this layer - FastTree expects separate K/V buffers
+        # Extract from interleaved format: [max_num_pages, 2, page_size, num_kv_heads, head_dim]
         paged_kv_cache = page_table.kv_cache_at_layer[self.layer_idx]
+        
+        # FastTree kernel expects flattened K/V buffers: (total_slots, num_kv_heads, head_dim)
+        total_slots = paged_kv_cache.shape[0] * paged_kv_cache.shape[2]  # max_num_pages * page_size
+        k_buffer = paged_kv_cache[:, 0, :, :, :].reshape(total_slots, num_kv_heads, head_dim)
+        v_buffer = paged_kv_cache[:, 1, :, :, :].reshape(total_slots, num_kv_heads, head_dim)
+        
+        # Prepare output tensor
+        o = torch.empty_like(query)
 
-        # Run cascade attention
-        attn_output = cascade_wrapper.run(query_flashinfer, paged_kv_cache)
+        # Run FastTree decode
+        fasttree_decode(
+            q=query,
+            k_buffer=k_buffer,
+            v_buffer=v_buffer,
+            o=o,
+            vnode_to_kv_entries=req_to_token.view(-1),  # Flattened page table serves as kv_entries
+            vnode_to_kv_offs=fasttree_metadata.vnode_to_kv_offs,
+            vnode_to_kv_lens=fasttree_metadata.vnode_to_kv_lens,
+            vnode_to_q_entries=fasttree_metadata.vnode_to_q_entries,
+            vnode_to_q_offs=fasttree_metadata.vnode_to_q_offs,
+            vnode_to_q_lens=fasttree_metadata.vnode_to_q_lens,
+            req_to_vnode_entries=fasttree_metadata.req_to_vnode_entries,
+            req_to_vnode_offs=fasttree_metadata.req_to_vnode_offs,
+            req_to_vnode_lens=fasttree_metadata.req_to_vnode_lens,
+            mid_o=fasttree_metadata.mid_o,
+            mid_lse=fasttree_metadata.mid_lse,
+            phase_node_nums=fasttree_metadata.phase_node_nums,
+            phase_node_offsets=fasttree_metadata.phase_node_offsets,
+            phase_q_tile_sizes=fasttree_metadata.phase_q_tile_sizes,
+            phase_kv_tile_sizes=fasttree_metadata.phase_kv_tile_sizes,
+            sm_scale=self.scaling,
+        )
 
-        # Add batch dimension back
-        attn_output = attn_output.unsqueeze(0)
+        # Add batch dimension back: [num_candidates, heads, dim] -> [1, num_candidates, heads, dim]
+        attn_output = o.unsqueeze(0)
 
         return attn_output
 
@@ -365,19 +386,14 @@ class LlamaAttention(nn.Module):
         page_table: Optional[PageTable] = None,
         page_indices: Optional[list] = None,
         last_page_len: Optional[int] = None,
-        batch_page_indices: Optional[list] = None,  # List of page_indices for batch decode
-        batch_last_page_lens: Optional[list] = None,  # List of last_page_lens for batch decode
-        # Cascade decode parameters
-        cascade_qo_indptr_arr: Optional[list[torch.Tensor]] = None,
-        cascade_kv_indptr_arr: Optional[list[torch.Tensor]] = None,
-        cascade_kv_indices_arr: Optional[list[torch.Tensor]] = None,
-        cascade_kv_last_page_len_arr: Optional[list[torch.Tensor]] = None,
-        cascade_write_page_indices: Optional[list] = None,  # Page IDs to write K/V for each candidate
-        cascade_write_positions: Optional[list] = None,  # Positions within page to write K/V
+        # FastTree decode parameters
+        fasttree_metadata: Optional[FastTreeMetadata] = None,
+        req_to_token: Optional[torch.Tensor] = None,
+        cascade_write_page_indices: Optional[torch.Tensor] = None,  # Page IDs to write K/V for each candidate
+        cascade_write_positions: Optional[torch.Tensor] = None,  # Positions within page to write K/V
         cascade_write_batch_indices: Optional[torch.Tensor] = None,  # Pre-allocated batch indices for write
         cascade_write_kv_indptr: Optional[torch.Tensor] = None,  # Pre-allocated kv_indptr for write
         prefill_wrapper = None,
-        cascade_wrapper = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -414,20 +430,17 @@ class LlamaAttention(nn.Module):
 
         elif attention_mode == AttentionMode.DECODE:
 
-            # Validate cascade decode parameters
+            # Validate FastTree decode parameters
             if page_table is None:
                 raise ValueError("PageTable must be provided for DECODE attention mode")
-            if cascade_qo_indptr_arr is None or cascade_kv_indptr_arr is None or \
-               cascade_kv_indices_arr is None or cascade_kv_last_page_len_arr is None:
-                raise ValueError("Cascade parameters must be provided for DECODE attention mode")
+            if fasttree_metadata is None or req_to_token is None:
+                raise ValueError("FastTree metadata and req_to_token must be provided for DECODE attention mode")
             if cascade_write_page_indices is None or cascade_write_positions is None:
                 raise ValueError("cascade_write_page_indices and cascade_write_positions must be provided for DECODE attention mode")
 
             num_candidates = key_states.shape[0]
 
             # Vectorized write - much more efficient than looping through candidates
-            # Convert lists to tensors for vectorized indexing
-
             # Write all candidates at once
             page_table.write_blocks_vectorized(
                 layer=self.layer_idx,
@@ -439,15 +452,12 @@ class LlamaAttention(nn.Module):
                 kv_indptr=cascade_write_kv_indptr
             )
 
-            # Run cascade decode attention
-            attn_output = self._cascade_decode_attention(
+            # Run FastTree decode attention
+            attn_output = self._decode_attention(
                 query_states,
                 page_table,
-                cascade_qo_indptr_arr,
-                cascade_kv_indptr_arr,
-                cascade_kv_indices_arr,
-                cascade_kv_last_page_len_arr,
-                cascade_wrapper,
+                fasttree_metadata,
+                req_to_token,
             )
 
             attn_weights = None

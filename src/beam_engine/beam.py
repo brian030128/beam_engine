@@ -162,12 +162,19 @@ class BeamSearchGenerator:
                 logger.debug("Stopping condition met")
                 break
 
-            # Get cascade input including query token IDs and pre-allocated write tensors
-            (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
-             paged_kv_last_page_len_arr, query_token_ids,
-             write_batch_indices, write_kv_indptr) = beam_state.get_cascade_input()
+            # Get FastTree input including metadata and req_to_token
+            fasttree_metadata, req_to_token = beam_state.get_fasttree_input(self.device)
 
-            logger.debug(f"\n[DECODE INPUT] Cascade levels: {len(qo_indptr_arr)}, Candidates: {len(beam_state.candidates)}, Query tokens: {len(query_token_ids)}")
+            # Extract query token IDs from metadata
+            # Since get_cascade_input also returned query_token_ids, we need to get them from candidates
+            query_token_ids = torch.tensor(
+                [candidate.trie_node.tokens[-1] if candidate.trie_node.tokens else 0 
+                 for candidate in beam_state.candidates],
+                dtype=torch.long,
+                device=self.device
+            )
+
+            logger.debug(f"\n[DECODE INPUT] FastTree - Candidates: {len(beam_state.candidates)}, Query tokens: {len(query_token_ids)}")
             query_texts = [self.tokenizer.decode([tid], skip_special_tokens=False) for tid in query_token_ids.tolist()]
             logger.debug(f"[DECODE INPUT] Query tokens: {query_token_ids.tolist()}")
             logger.debug(f"[DECODE INPUT] Query texts: {query_texts}")
@@ -183,6 +190,10 @@ class BeamSearchGenerator:
                 dtype=torch.int32,
                 device=self.device
             )
+
+            # Pre-allocated write tensors (same as before)
+            write_batch_indices = torch.arange(len(beam_state.candidates), dtype=torch.int32, device=self.device)
+            write_kv_indptr = torch.arange(len(beam_state.candidates) + 1, dtype=torch.int32, device=self.device)
 
             # Compute position IDs for each candidate's query token
             # Position ID = total sequence length - 1 (0-indexed position of current query token)
@@ -203,20 +214,18 @@ class BeamSearchGenerator:
             logger.debug(f"[DECODE INPUT] Write positions: {cascade_write_positions}")
             logger.debug(f"[DECODE INPUT] Position IDs: {position_ids_list}")
 
-            # query_token_ids are already in correct cascade order, just reshape for model
+            # query_token_ids are already in correct order, just reshape for model
             decode_input_ids = query_token_ids.unsqueeze(0)  # [1, num_candidates]
 
-            # Run model with cascade decode
+            # Run model with FastTree decode
             with torch.no_grad():
                 outputs = self.model(
                     decode_input_ids,
                     position_ids=position_ids,
                     attention_mode=AttentionMode.DECODE,
                     page_table=self.page_table,
-                    cascade_qo_indptr_arr=qo_indptr_arr,
-                    cascade_kv_indptr_arr=paged_kv_indptr_arr,
-                    cascade_kv_indices_arr=paged_kv_indices_arr,
-                    cascade_kv_last_page_len_arr=paged_kv_last_page_len_arr,
+                    fasttree_metadata=fasttree_metadata,
+                    req_to_token=req_to_token,
                     cascade_write_page_indices=cascade_write_page_indices,
                     cascade_write_positions=cascade_write_positions,
                     cascade_write_batch_indices=write_batch_indices,
