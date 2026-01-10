@@ -53,6 +53,7 @@ def run_vllm_beam_search():
         dtype="float16",
         enforce_eager=True,
         attention_backend="FLASHINFER",
+        max_logprobs=100,
         #attention_config={"backend": "vllm.v1.attention.backends.flashinfer.FlashInferBackend"} 
         #profiler_config=profiler_config, not that version yet
     )
