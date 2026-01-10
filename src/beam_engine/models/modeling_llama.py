@@ -631,27 +631,28 @@ class LlamaModel(LlamaPreTrainedModel):
         prefill_wrapper = None
         # Initialize cascade wrapper
         if attention_mode == AttentionMode.DECODE:
-            cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
-                len(cascade_qo_indptr_arr),
-                get_workspace_buffer(),
-                kv_layout="NHD"
-            )
+            pass
+            # cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
+            #     len(cascade_qo_indptr_arr),
+            #     get_workspace_buffer(),
+            #     kv_layout="NHD"
+            # )
 
-            # Plan cascade attention
-            cascade_wrapper.plan(
-                qo_indptr_arr=cascade_qo_indptr_arr,
-                paged_kv_indptr_arr=cascade_kv_indptr_arr,
-                paged_kv_indices_arr=cascade_kv_indices_arr,
-                paged_kv_last_page_len=cascade_kv_last_page_len_arr,
-                num_qo_heads=self.num_heads,
-                num_kv_heads=self.num_kv_heads,
-                head_dim=self.head_dim,
-                page_size=page_table.page_size,
-                causal=True,
-                pos_encoding_mode='NONE',
-                sm_scale=self.scaling,
-                q_data_type=hidden_states.dtype
-            )
+            # # Plan cascade attention
+            # cascade_wrapper.plan(
+            #     qo_indptr_arr=cascade_qo_indptr_arr,
+            #     paged_kv_indptr_arr=cascade_kv_indptr_arr,
+            #     paged_kv_indices_arr=cascade_kv_indices_arr,
+            #     paged_kv_last_page_len=cascade_kv_last_page_len_arr,
+            #     num_qo_heads=self.num_heads,
+            #     num_kv_heads=self.num_kv_heads,
+            #     head_dim=self.head_dim,
+            #     page_size=page_table.page_size,
+            #     causal=True,
+            #     pos_encoding_mode='NONE',
+            #     sm_scale=self.scaling,
+            #     q_data_type=hidden_states.dtype
+            # )
         else:
             prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
                 get_workspace_buffer(),
