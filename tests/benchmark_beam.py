@@ -174,7 +174,7 @@ def demo_diverse_beam_search(model, tokenizer, model_name, device):
         max_length = input_len + max_new_tokens
         logger.info(f"Input Length: {input_len} | Max New Tokens: {max_new_tokens} | Max Total Length: {max_length}")
 
-        generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy())
+        generator = BeamSearchGenerator(model, tokenizer, VanillaBeamSearchStrategy(), kernel_type="fasttree") 
 
         # Warmup
         logger.info("Warming up (3 iterations)...")

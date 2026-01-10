@@ -48,6 +48,20 @@ from beam_engine.attention_mode import AttentionMode
 from beam_engine.page_table import PageTable
 import flashinfer
 
+# FastTree kernel imports (vendored)
+try:
+    from beam_engine.attention.fasttree import (
+        FastTreeMetadata,
+        fasttree_decode,
+        prepare_fasttree_metadata_for_paged_cache
+    )
+    FASTTREE_AVAILABLE = True
+except ImportError:
+    FASTTREE_AVAILABLE = False
+    FastTreeMetadata = None
+    fasttree_decode = None
+    prepare_fasttree_metadata_for_paged_cache = None
+
 
 logger = logging.get_logger(__name__)
 
@@ -352,6 +366,64 @@ class LlamaAttention(nn.Module):
 
         return attn_output
 
+    def _fasttree_decode_attention(
+        self,
+        query: torch.Tensor,
+        page_table: PageTable,
+        fasttree_metadata
+    ) -> torch.Tensor:
+        """
+        FastTree decode attention using FastTree kernel.
+
+        Args:
+            query: Query tensor [batch=1, seq_len, num_qo_heads, head_dim] (RoPE applied)
+            page_table: PageTable with KV cache
+            fasttree_metadata: Pre-computed FastTree metadata
+
+        Returns:
+            Attention output tensor [batch=1, seq_len, num_qo_heads, head_dim]
+        """
+        # Get flattened K/V buffers for FastTree
+        k_buffer = page_table.get_k_buffer(self.layer_idx)  # [total_slots, num_kv_heads, head_dim]
+        v_buffer = page_table.get_v_buffer(self.layer_idx)  # [total_slots, num_kv_heads, head_dim]
+
+        # Reshape query to FastTree format: [batch_size, num_qo_heads, head_dim]
+        # Input query is [batch=1, seq_len, num_qo_heads, head_dim]
+        query_flashinfer = query.squeeze(0)  # [seq_len, num_qo_heads, head_dim]
+
+        # Allocate output tensor
+        output = torch.empty_like(query_flashinfer)
+
+        # Compute softmax scale
+        sm_scale = 1.0 / (self.head_dim ** 0.5)
+
+        # Run FastTree kernel
+        fasttree_decode(
+            query_flashinfer,
+            k_buffer,
+            v_buffer,
+            output,
+            fasttree_metadata.vnode_to_kv_entries,
+            fasttree_metadata.vnode_to_kv_offs,
+            fasttree_metadata.vnode_to_kv_lens,
+            fasttree_metadata.vnode_to_q_entries,
+            fasttree_metadata.vnode_to_q_offs,
+            fasttree_metadata.vnode_to_q_lens,
+            fasttree_metadata.req_to_vnode_entries,
+            fasttree_metadata.req_to_vnode_offs,
+            fasttree_metadata.req_to_vnode_lens,
+            fasttree_metadata.mid_o,
+            fasttree_metadata.mid_lse,
+            fasttree_metadata.phase_node_nums,
+            fasttree_metadata.phase_node_offsets,
+            fasttree_metadata.phase_q_tile_sizes,
+            fasttree_metadata.phase_kv_tile_sizes,
+            sm_scale,
+        )
+
+        # Restore batch dimension: [1, seq_len, num_qo_heads, head_dim]
+        return output.unsqueeze(0)
+
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
@@ -362,6 +434,7 @@ class LlamaAttention(nn.Module):
         past_key_values: Optional[Cache] = None,
         cache_position: Optional[torch.LongTensor] = None,
         attention_mode: Optional[AttentionMode] = None,
+        kernel_type: str = "cascade",  # NEW: "cascade" or "fasttree"
         page_table: Optional[PageTable] = None,
         page_indices: Optional[list] = None,
         last_page_len: Optional[int] = None,
@@ -378,6 +451,7 @@ class LlamaAttention(nn.Module):
         cascade_write_kv_indptr: Optional[torch.Tensor] = None,  # Pre-allocated kv_indptr for write
         prefill_wrapper = None,
         cascade_wrapper = None,
+        fasttree_metadata = None,  # NEW: FastTree metadata
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -414,41 +488,69 @@ class LlamaAttention(nn.Module):
 
         elif attention_mode == AttentionMode.DECODE:
 
-            # Validate cascade decode parameters
+            # Validate common decode parameters
             if page_table is None:
                 raise ValueError("PageTable must be provided for DECODE attention mode")
-            if cascade_qo_indptr_arr is None or cascade_kv_indptr_arr is None or \
-               cascade_kv_indices_arr is None or cascade_kv_last_page_len_arr is None:
-                raise ValueError("Cascade parameters must be provided for DECODE attention mode")
-            if cascade_write_page_indices is None or cascade_write_positions is None:
-                raise ValueError("cascade_write_page_indices and cascade_write_positions must be provided for DECODE attention mode")
 
-            num_candidates = key_states.shape[0]
+            if kernel_type == "cascade":
+                # Validate cascade parameters
+                if cascade_qo_indptr_arr is None or cascade_kv_indptr_arr is None or \
+                   cascade_kv_indices_arr is None or cascade_kv_last_page_len_arr is None:
+                    raise ValueError("Cascade parameters must be provided for cascade DECODE mode")
+                if cascade_write_page_indices is None or cascade_write_positions is None:
+                    raise ValueError("cascade_write_page_indices and cascade_write_positions must be provided for cascade DECODE mode")
 
-            # Vectorized write - much more efficient than looping through candidates
-            # Convert lists to tensors for vectorized indexing
+                num_candidates = key_states.shape[0]
 
-            # Write all candidates at once
-            page_table.write_blocks_vectorized(
-                layer=self.layer_idx,
-                page_indices=cascade_write_page_indices,
-                keys=key_states,
-                values=value_states,
-                indices=cascade_write_positions,
-                batch_indices=cascade_write_batch_indices,
-                kv_indptr=cascade_write_kv_indptr
-            )
+                # Vectorized write - much more efficient than looping through candidates
+                page_table.write_blocks_vectorized(
+                    layer=self.layer_idx,
+                    page_indices=cascade_write_page_indices,
+                    keys=key_states,
+                    values=value_states,
+                    indices=cascade_write_positions,
+                    batch_indices=cascade_write_batch_indices,
+                    kv_indptr=cascade_write_kv_indptr
+                )
 
-            # Run cascade decode attention
-            attn_output = self._cascade_decode_attention(
-                query_states,
-                page_table,
-                cascade_qo_indptr_arr,
-                cascade_kv_indptr_arr,
-                cascade_kv_indices_arr,
-                cascade_kv_last_page_len_arr,
-                cascade_wrapper,
-            )
+                # Run cascade decode attention
+                attn_output = self._cascade_decode_attention(
+                    query_states,
+                    page_table,
+                    cascade_qo_indptr_arr,
+                    cascade_kv_indptr_arr,
+                    cascade_kv_indices_arr,
+                    cascade_kv_last_page_len_arr,
+                    cascade_wrapper,
+                )
+
+            elif kernel_type == "fasttree":
+                # Validate FastTree parameters
+                if fasttree_metadata is None:
+                    raise ValueError("fasttree_metadata must be provided for fasttree DECODE mode")
+                if cascade_write_page_indices is None or cascade_write_positions is None:
+                    raise ValueError("write_page_indices and write_positions must be provided for fasttree DECODE mode")
+
+                # Vectorized write (same as cascade)
+                page_table.write_blocks_vectorized(
+                    layer=self.layer_idx,
+                    page_indices=cascade_write_page_indices,
+                    keys=key_states,
+                    values=value_states,
+                    indices=cascade_write_positions,
+                    batch_indices=cascade_write_batch_indices,
+                    kv_indptr=cascade_write_kv_indptr
+                )
+
+                # Run FastTree decode attention
+                attn_output = self._fasttree_decode_attention(
+                    query_states,
+                    page_table,
+                    fasttree_metadata
+                )
+
+            else:
+                raise ValueError(f"Unknown kernel_type: {kernel_type}. Must be 'cascade' or 'fasttree'.")
 
             attn_weights = None
 
@@ -575,6 +677,8 @@ class LlamaModel(LlamaPreTrainedModel):
         use_cache: Optional[bool] = None,
         page_indices=None, #for prefill, we have to 統一 later
         last_page_len=None,  #for prefill, we have to 統一 later
+        kernel_type: str = "cascade",  # NEW: "cascade" or "fasttree"
+        # Cascade parameters
         cascade_qo_indptr_arr=None,
         cascade_kv_indptr_arr=None,
         cascade_kv_indices_arr=None,
@@ -583,6 +687,9 @@ class LlamaModel(LlamaPreTrainedModel):
         cascade_write_positions=None,
         cascade_write_batch_indices=None,
         cascade_write_kv_indptr=None,
+        # FastTree parameters (NEW)
+        fasttree_tree_nodes=None,
+        fasttree_req_to_token=None,
         page_table=None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
@@ -619,29 +726,51 @@ class LlamaModel(LlamaPreTrainedModel):
 
         cascade_wrapper = None
         prefill_wrapper = None
-        # Initialize cascade wrapper
-        if attention_mode == AttentionMode.DECODE:
-            cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
-                len(cascade_qo_indptr_arr),
-                get_workspace_buffer(),
-                kv_layout="NHD"
-            )
+        fasttree_metadata = None
 
-            # Plan cascade attention
-            cascade_wrapper.plan(
-                qo_indptr_arr=cascade_qo_indptr_arr,
-                paged_kv_indptr_arr=cascade_kv_indptr_arr,
-                paged_kv_indices_arr=cascade_kv_indices_arr,
-                paged_kv_last_page_len=cascade_kv_last_page_len_arr,
-                num_qo_heads=self.num_heads,
-                num_kv_heads=self.num_kv_heads,
-                head_dim=self.head_dim,
-                page_size=page_table.page_size,
-                causal=True,
-                pos_encoding_mode='NONE',
-                sm_scale=self.scaling,
-                q_data_type=hidden_states.dtype
-            )
+        # Initialize attention wrapper based on mode and kernel type
+        if attention_mode == AttentionMode.DECODE:
+            if kernel_type == "cascade":
+                # Initialize cascade wrapper
+                cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
+                    len(cascade_qo_indptr_arr),
+                    get_workspace_buffer(),
+                    kv_layout="NHD"
+                )
+
+                # Plan cascade attention
+                cascade_wrapper.plan(
+                    qo_indptr_arr=cascade_qo_indptr_arr,
+                    paged_kv_indptr_arr=cascade_kv_indptr_arr,
+                    paged_kv_indices_arr=cascade_kv_indices_arr,
+                    paged_kv_last_page_len=cascade_kv_last_page_len_arr,
+                    num_qo_heads=self.num_heads,
+                    num_kv_heads=self.num_kv_heads,
+                    head_dim=self.head_dim,
+                    page_size=page_table.page_size,
+                    causal=True,
+                    pos_encoding_mode='NONE',
+                    sm_scale=self.scaling,
+                    q_data_type=hidden_states.dtype
+                )
+
+            elif kernel_type == "fasttree":
+                # Initialize FastTree metadata
+                if not FASTTREE_AVAILABLE:
+                    raise ImportError("FastTree kernel is not available. Please install fasttree_sglang_plugin.")
+
+                fasttree_metadata = prepare_fasttree_metadata_for_paged_cache(
+                    fasttree_tree_nodes,
+                    fasttree_req_to_token,
+                    batch_size=input_ids.shape[1] if input_ids is not None else inputs_embeds.shape[1],
+                    num_qo_heads=self.num_heads,
+                    num_kv_heads=self.num_kv_heads,
+                    head_dim=self.head_dim,
+                    device=hidden_states.device
+                )
+
+            else:
+                raise ValueError(f"Unknown kernel_type: {kernel_type}. Must be 'cascade' or 'fasttree'.")
         else:
             prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
                 get_workspace_buffer(),
@@ -679,6 +808,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 cascade_wrapper=cascade_wrapper,
                 prefill_wrapper=prefill_wrapper,
                 attention_mode=attention_mode,
+                kernel_type=kernel_type,  # NEW
                 page_table=page_table,
                 cascade_qo_indptr_arr=cascade_qo_indptr_arr,
                 cascade_kv_indptr_arr=cascade_kv_indptr_arr,
@@ -687,6 +817,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 cascade_write_page_indices=cascade_write_page_indices,
                 cascade_write_positions=cascade_write_positions,
                 cascade_write_batch_indices=cascade_write_batch_indices,
+                fasttree_metadata=fasttree_metadata,  # NEW
                 cascade_write_kv_indptr=cascade_write_kv_indptr,
                 last_page_len=last_page_len, # for prefill 
                 page_indices=page_indices, # for prefill

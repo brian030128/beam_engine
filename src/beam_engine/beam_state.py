@@ -6,6 +6,7 @@ from collections import defaultdict
 
 from beam_engine.page_table import PageTable
 from beam_engine.logger import init_logger
+from beam_engine.kv_tree_node import KVTreeNode
 
 logger = init_logger(__name__)
 class TrieNode:
@@ -409,6 +410,242 @@ class BeamState:
         return (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
                 paged_kv_last_page_len, query_token_ids_tensor,
                 self._cached_write_batch_indices, self._cached_write_kv_indptr)
+
+    def _build_kv_tree_structure(self) -> Tuple[List[KVTreeNode], Dict[int, int]]:
+        """
+        Convert TrieNode structure to KVTreeNode list for FastTree.
+
+        Returns:
+            Tuple of (tree_nodes, trie_to_tree_id_map):
+                - tree_nodes: List of KVTreeNode objects
+                - trie_to_tree_id_map: Mapping from id(TrieNode) to KVTreeNode.id
+        """
+        tree_nodes = []
+        trie_to_tree_id = {}
+        node_id_counter = 0
+
+        # BFS traversal to build tree structure
+        visited = set()
+        queue = []
+
+        # Find all root nodes (nodes with no parent)
+        roots = set()
+        all_nodes = set()
+
+        # Collect all nodes from candidates
+        for candidate in self.candidates:
+            node = candidate.trie_node
+            while node is not None:
+                all_nodes.add(id(node))
+                if node.parent is None:
+                    roots.add(id(node))
+                node = node.parent
+
+        # Start BFS from roots
+        for root_id in roots:
+            # Find the actual root node
+            for candidate in self.candidates:
+                node = candidate.trie_node
+                while node is not None:
+                    if id(node) == root_id:
+                        queue.append(node)
+                        break
+                    node = node.parent
+
+        # BFS to process all nodes
+        while queue:
+            trie_node = queue.pop(0)
+            trie_id = id(trie_node)
+
+            if trie_id in visited:
+                continue
+            visited.add(trie_id)
+
+            # Create KVTreeNode
+            kv_node = KVTreeNode()
+            kv_node.id = node_id_counter
+            trie_to_tree_id[trie_id] = node_id_counter
+            node_id_counter += 1
+
+            # Set parent reference
+            if trie_node.parent is None:
+                kv_node.parent = -1
+            else:
+                parent_id = id(trie_node.parent)
+                if parent_id in trie_to_tree_id:
+                    kv_node.parent = trie_to_tree_id[parent_id]
+                else:
+                    kv_node.parent = -1  # Parent not yet processed
+
+            # Calculate seqlen (cumulative from root to this node)
+            seqlen = 0
+            current = trie_node
+            while current is not None:
+                seqlen += len(current.tokens)
+                current = current.parent
+            kv_node.seqlen = seqlen
+
+            # Count children
+            kv_node.num_children = len(trie_node.children)
+
+            # Find which requests (candidates) use this node
+            for cand_idx, candidate in enumerate(self.candidates):
+                # Check if this trie_node is in the candidate's path
+                node = candidate.trie_node
+                while node is not None:
+                    if id(node) == trie_id:
+                        kv_node.requests.append(cand_idx)
+                        break
+                    node = node.parent
+
+            tree_nodes.append(kv_node)
+
+            # Add children to queue
+            for child in trie_node.children:
+                if id(child) not in visited:
+                    queue.append(child)
+
+        # Fix parent references (second pass)
+        trie_nodes_list = []
+        for candidate in self.candidates:
+            node = candidate.trie_node
+            while node is not None:
+                if id(node) not in [id(n) for n in trie_nodes_list]:
+                    trie_nodes_list.append(node)
+                node = node.parent
+
+        for i, kv_node in enumerate(tree_nodes):
+            if i < len(trie_nodes_list):
+                trie_node = trie_nodes_list[i]
+                if trie_node.parent is not None:
+                    parent_trie_id = id(trie_node.parent)
+                    if parent_trie_id in trie_to_tree_id:
+                        kv_node.parent = trie_to_tree_id[parent_trie_id]
+
+        return tree_nodes, trie_to_tree_id
+
+    def _build_req_to_token(self, tree_nodes: List[KVTreeNode]) -> torch.Tensor:
+        """
+        Build req_to_token page table mapping (request_id, token_pos) -> slot_id.
+
+        Args:
+            tree_nodes: List of KVTreeNode objects
+
+        Returns:
+            torch.Tensor: Shape [num_candidates, max_seq_len]
+                         Maps (request_idx, token_position) -> slot_id
+                         where slot_id = page_id * page_size + position_in_page
+        """
+        num_candidates = len(self.candidates)
+
+        # Find max sequence length
+        max_seq_len = 0
+        for candidate in self.candidates:
+            seq_len = 0
+            node = candidate.trie_node
+            while node is not None:
+                seq_len += len(node.tokens)
+                node = node.parent
+            max_seq_len = max(max_seq_len, seq_len)
+
+        # Initialize req_to_token tensor
+        req_to_token = torch.zeros(
+            (num_candidates, max_seq_len),
+            dtype=torch.int32,
+            device=self.page_table.device
+        )
+
+        # Build mapping for each candidate
+        for cand_idx, candidate in enumerate(self.candidates):
+            # Build path from root to leaf
+            path = []
+            node = candidate.trie_node
+            while node is not None:
+                path.append(node)
+                node = node.parent
+            path.reverse()  # Root to leaf
+
+            # Map each token position to its slot
+            token_pos = 0
+            for trie_node in path:
+                page_id = trie_node.page_id
+                num_tokens = len(trie_node.tokens)
+
+                for i in range(num_tokens):
+                    slot_id = page_id * self.page_table.page_size + i
+                    req_to_token[cand_idx, token_pos] = slot_id
+                    token_pos += 1
+
+        return req_to_token
+
+    def get_fasttree_input(self) -> Tuple[
+        List[KVTreeNode],
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor
+    ]:
+        """
+        Generate FastTree kernel inputs from current beam state.
+
+        Returns:
+            Tuple of:
+                - tree_nodes: List[KVTreeNode] - Tree structure
+                - req_to_token: torch.Tensor - Page table mapping [num_candidates, max_seq_len]
+                - query_token_ids: torch.Tensor - Query token IDs [num_candidates]
+                - write_page_indices: torch.Tensor - Page indices for writing [num_candidates]
+                - write_positions: torch.Tensor - Positions within pages [num_candidates]
+        """
+        # Build KV tree structure
+        tree_nodes, _ = self._build_kv_tree_structure()
+
+        # Build req_to_token mapping
+        req_to_token = self._build_req_to_token(tree_nodes)
+
+        # Extract query token IDs (last token from each candidate's leaf)
+        query_token_ids = []
+        for candidate in self.candidates:
+            leaf = candidate.trie_node
+            if leaf.tokens:
+                query_token_ids.append(leaf.tokens[-1])
+            else:
+                query_token_ids.append(0)
+
+        query_token_ids_tensor = torch.tensor(
+            query_token_ids,
+            dtype=torch.long,
+            device=self.page_table.device
+        )
+
+        # Build write page indices and positions
+        write_page_indices = []
+        write_positions = []
+
+        for candidate in self.candidates:
+            leaf = candidate.trie_node
+            write_page_indices.append(leaf.page_id)
+            # Position is the current number of tokens in the leaf node minus 1
+            # (since we're writing the query token which is the last one)
+            write_positions.append(len(leaf.tokens) - 1)
+
+        write_page_indices_tensor = torch.tensor(
+            write_page_indices,
+            dtype=torch.int32,
+            device=self.page_table.device
+        )
+        write_positions_tensor = torch.tensor(
+            write_positions,
+            dtype=torch.int32,
+            device=self.page_table.device
+        )
+
+        return (
+            tree_nodes,
+            req_to_token,
+            query_token_ids_tensor,
+            write_page_indices_tensor,
+            write_positions_tensor
+        )
 
     def get_best_finished(self, num_return: int) -> List[BeamCandidate]:
         """Get the best finished candidates, normalized by length."""

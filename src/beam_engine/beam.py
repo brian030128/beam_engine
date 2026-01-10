@@ -17,19 +17,21 @@ logger = init_logger(__name__)
 class BeamSearchGenerator:
     """Main beam search generator with pluggable strategies."""
 
-    def __init__(self, model, tokenizer, strategy: BeamStrategy, page_size: int = 8):
+    def __init__(self, model, tokenizer, strategy: BeamStrategy, page_size: int = 8, kernel_type: str = "cascade"):
         """
         Args:
             model: The language model
             tokenizer: The tokenizer
             strategy: The beam search strategy to use
             page_size: Size of each page in the page table (tokens per page)
+            kernel_type: Attention kernel type - "cascade" or "fasttree" (default: "cascade")
         """
         self.model = model
         self.tokenizer = tokenizer
         self.strategy = strategy
         self.device = next(model.parameters()).device
         self.page_size = page_size
+        self.kernel_type = kernel_type
 
         # Extract model configuration for page table
         config = self.model.config
@@ -162,27 +164,46 @@ class BeamSearchGenerator:
                 logger.debug("Stopping condition met")
                 break
 
-            # Get cascade input including query token IDs and pre-allocated write tensors
-            (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
-             paged_kv_last_page_len_arr, query_token_ids,
-             write_batch_indices, write_kv_indptr) = beam_state.get_cascade_input()
+            # Get attention kernel input based on kernel type
+            if self.kernel_type == "cascade":
+                # Get cascade input including query token IDs and pre-allocated write tensors
+                (qo_indptr_arr, paged_kv_indptr_arr, paged_kv_indices_arr,
+                 paged_kv_last_page_len_arr, query_token_ids,
+                 write_batch_indices, write_kv_indptr) = beam_state.get_cascade_input()
 
-            logger.debug(f"\n[DECODE INPUT] Cascade levels: {len(qo_indptr_arr)}, Candidates: {len(beam_state.candidates)}, Query tokens: {len(query_token_ids)}")
-            query_texts = [self.tokenizer.decode([tid], skip_special_tokens=False) for tid in query_token_ids.tolist()]
-            logger.debug(f"[DECODE INPUT] Query tokens: {query_token_ids.tolist()}")
-            logger.debug(f"[DECODE INPUT] Query texts: {query_texts}")
+                logger.debug(f"\n[DECODE INPUT] Cascade levels: {len(qo_indptr_arr)}, Candidates: {len(beam_state.candidates)}, Query tokens: {len(query_token_ids)}")
+                query_texts = [self.tokenizer.decode([tid], skip_special_tokens=False) for tid in query_token_ids.tolist()]
+                logger.debug(f"[DECODE INPUT] Query tokens: {query_token_ids.tolist()}")
+                logger.debug(f"[DECODE INPUT] Query texts: {query_texts}")
 
-            # Prepare write locations for K/V cache
-            cascade_write_page_indices = torch.tensor(
-                [candidate.trie_node.page_id for candidate in beam_state.candidates],
-                dtype=torch.int32,
-                device=self.device
-            )
-            cascade_write_positions = torch.tensor(
-                [len(candidate.trie_node.tokens) - 1 for candidate in beam_state.candidates],
-                dtype=torch.int32,
-                device=self.device
-            )
+                # Prepare write locations for K/V cache
+                cascade_write_page_indices = torch.tensor(
+                    [candidate.trie_node.page_id for candidate in beam_state.candidates],
+                    dtype=torch.int32,
+                    device=self.device
+                )
+                cascade_write_positions = torch.tensor(
+                    [len(candidate.trie_node.tokens) - 1 for candidate in beam_state.candidates],
+                    dtype=torch.int32,
+                    device=self.device
+                )
+
+            elif self.kernel_type == "fasttree":
+                # Get FastTree input including tree structure and req_to_token mapping
+                (tree_nodes, req_to_token, query_token_ids,
+                 cascade_write_page_indices, cascade_write_positions) = beam_state.get_fasttree_input()
+
+                logger.debug(f"\n[DECODE INPUT] FastTree nodes: {len(tree_nodes)}, Candidates: {len(beam_state.candidates)}, Query tokens: {len(query_token_ids)}")
+                query_texts = [self.tokenizer.decode([tid], skip_special_tokens=False) for tid in query_token_ids.tolist()]
+                logger.debug(f"[DECODE INPUT] Query tokens: {query_token_ids.tolist()}")
+                logger.debug(f"[DECODE INPUT] Query texts: {query_texts}")
+
+                # For FastTree, we use the same write tensors that cascade uses
+                write_batch_indices = torch.arange(len(beam_state.candidates), dtype=torch.int32, device=self.device)
+                write_kv_indptr = torch.arange(len(beam_state.candidates) + 1, dtype=torch.int32, device=self.device)
+
+            else:
+                raise ValueError(f"Unknown kernel_type: {self.kernel_type}. Must be 'cascade' or 'fasttree'.")
 
             # Compute position IDs for each candidate's query token
             # Position ID = total sequence length - 1 (0-indexed position of current query token)
@@ -206,22 +227,40 @@ class BeamSearchGenerator:
             # query_token_ids are already in correct cascade order, just reshape for model
             decode_input_ids = query_token_ids.unsqueeze(0)  # [1, num_candidates]
 
-            # Run model with cascade decode
+            # Run model with appropriate decode kernel
             with torch.no_grad():
-                outputs = self.model(
-                    decode_input_ids,
-                    position_ids=position_ids,
-                    attention_mode=AttentionMode.DECODE,
-                    page_table=self.page_table,
-                    cascade_qo_indptr_arr=qo_indptr_arr,
-                    cascade_kv_indptr_arr=paged_kv_indptr_arr,
-                    cascade_kv_indices_arr=paged_kv_indices_arr,
-                    cascade_kv_last_page_len_arr=paged_kv_last_page_len_arr,
-                    cascade_write_page_indices=cascade_write_page_indices,
-                    cascade_write_positions=cascade_write_positions,
-                    cascade_write_batch_indices=write_batch_indices,
-                    cascade_write_kv_indptr=write_kv_indptr,
-                )
+                if self.kernel_type == "cascade":
+                    outputs = self.model(
+                        decode_input_ids,
+                        position_ids=position_ids,
+                        attention_mode=AttentionMode.DECODE,
+                        kernel_type="cascade",
+                        page_table=self.page_table,
+                        cascade_qo_indptr_arr=qo_indptr_arr,
+                        cascade_kv_indptr_arr=paged_kv_indptr_arr,
+                        cascade_kv_indices_arr=paged_kv_indices_arr,
+                        cascade_kv_last_page_len_arr=paged_kv_last_page_len_arr,
+                        cascade_write_page_indices=cascade_write_page_indices,
+                        cascade_write_positions=cascade_write_positions,
+                        cascade_write_batch_indices=write_batch_indices,
+                        cascade_write_kv_indptr=write_kv_indptr,
+                    )
+
+                elif self.kernel_type == "fasttree":
+                    outputs = self.model(
+                        decode_input_ids,
+                        position_ids=position_ids,
+                        attention_mode=AttentionMode.DECODE,
+                        kernel_type="fasttree",
+                        page_table=self.page_table,
+                        fasttree_tree_nodes=tree_nodes,
+                        fasttree_req_to_token=req_to_token,
+                        cascade_write_page_indices=cascade_write_page_indices,
+                        cascade_write_positions=cascade_write_positions,
+                        cascade_write_batch_indices=write_batch_indices,
+                        cascade_write_kv_indptr=write_kv_indptr,
+                    )
+
                 logits = outputs.logits  # [1, num_candidates, vocab_size]
 
             # Vectorized operations: process all candidates at once

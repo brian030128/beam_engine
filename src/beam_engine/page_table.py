@@ -207,3 +207,35 @@ class PageTable:
             kv_last_page_len=indices,     # [num_candidates] - current length before append
             kv_layout='NHD'               # Layout: [N, H, D] = [seq, heads, dim]
         )
+
+    def get_k_buffer(self, layer: int) -> torch.Tensor:
+        """
+        Get flattened key buffer for FastTree kernel.
+
+        Args:
+            layer: Layer index (0 to layer_num-1)
+
+        Returns:
+            torch.Tensor: Shape [total_slots, num_kv_heads, head_dim]
+                         where total_slots = max_num_pages * page_size
+        """
+        # kv_cache_at_layer[layer]: [max_num_pages, 2, page_size, num_kv_heads, head_dim]
+        kv_cache = self.kv_cache_at_layer[layer]
+        k_cache = kv_cache[:, 0, :, :, :]  # [max_num_pages, page_size, num_kv_heads, head_dim]
+        total_slots = self.max_num_pages * self.page_size
+        return k_cache.reshape(total_slots, self.head_num, self.head_dim)
+
+    def get_v_buffer(self, layer: int) -> torch.Tensor:
+        """
+        Get flattened value buffer for FastTree kernel.
+
+        Args:
+            layer: Layer index (0 to layer_num-1)
+
+        Returns:
+            torch.Tensor: Shape [total_slots, num_kv_heads, head_dim]
+                         where total_slots = max_num_pages * page_size
+        """
+        kv_cache = self.kv_cache_at_layer[layer]
+        v_cache = kv_cache[:, 1, :, :, :]  # [max_num_pages, page_size, num_kv_heads, head_dim]
+        return v_cache.reshape(self.max_num_pages * self.page_size, self.head_num, self.head_dim)
