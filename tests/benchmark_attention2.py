@@ -15,6 +15,7 @@ import math
 import time
 import flashinfer
 import flashinfer.cascade
+import argparse
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -25,6 +26,18 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
 
 from beam_engine.attention.fasttree.attn_kernels import fasttree_decode
 from beam_engine.attention.fasttree_adapter import prepare_fasttree_metadata_from_trie
+
+
+# -----------------------------------------------------------------------------
+# CLI
+# -----------------------------------------------------------------------------
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--use-cuda-graph",
+        action="store_true",
+    )
+    return parser.parse_args()
 
 
 # -----------------------------------------------------------------------------
@@ -55,9 +68,10 @@ WARMUP = 10
 ITERATIONS = 100
 
 
-def benchmark_attention():
+def benchmark_attention(use_cuda_graph: bool = False):
     print("=" * 80)
     print("Benchmark: FlashInfer Paged vs FastTree vs Cascade")
+    print(f"CUDA Graphs : {'ON' if use_cuda_graph else 'OFF'}")
     print(f"BatchSize={BATCH_SIZE}, Levels={LEVELS}")
     print(f"Prefix={PREFIX_LEN}, Branches={NUM_BRANCHES}, BranchLen={BRANCH_LEN}")
     print(f"Heads={NUM_HEADS}, KV_Heads={NUM_KV_HEADS}, HeadDim={HEAD_DIM}")
@@ -158,17 +172,23 @@ def benchmark_attention():
     for _ in range(WARMUP):
         decode_wrapper.run(q, paged_kv_cache)
 
-    g_fi = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(g_fi):
-        decode_wrapper.run(q, paged_kv_cache)
-
     torch.cuda.synchronize()
 
-    start = time.perf_counter()
-    for _ in range(ITERATIONS):
-        g_fi.replay()
-    torch.cuda.synchronize()
+    if use_cuda_graph:
+        g_fi = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_fi):
+            decode_wrapper.run(q, paged_kv_cache)
 
+        torch.cuda.synchronize()
+        start = time.perf_counter()
+        for _ in range(ITERATIONS):
+            g_fi.replay()
+    else:
+        start = time.perf_counter()
+        for _ in range(ITERATIONS):
+            decode_wrapper.run(q, paged_kv_cache)
+
+    torch.cuda.synchronize()
     flashinfer_time = (time.perf_counter() - start) * 1000 / ITERATIONS
     print(f"Avg latency: {flashinfer_time:.4f} ms")
 
@@ -188,7 +208,7 @@ def benchmark_attention():
             curr = TrieNode(tokens=[0] * BRANCH_LEN, parent=b_root)
             b_root.children.append(curr)
 
-            for l in range(1, LEVELS - 1):
+            for _ in range(1, LEVELS - 1):
                 child = TrieNode(tokens=[0] * BRANCH_LEN, parent=curr)
                 curr.children.append(child)
                 curr = child
@@ -269,38 +289,65 @@ def benchmark_attention():
             sm_scale,
         )
 
-    g_ft = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(g_ft):
-        fasttree_decode(
-            q,
-            fasttree_k_buffer,
-            fasttree_v_buffer,
-            fasttree_o,
-            metadata.vnode_to_kv_entries,
-            metadata.vnode_to_kv_offs,
-            metadata.vnode_to_kv_lens,
-            metadata.vnode_to_q_entries,
-            metadata.vnode_to_q_offs,
-            metadata.vnode_to_q_lens,
-            metadata.req_to_vnode_entries,
-            metadata.req_to_vnode_offs,
-            metadata.req_to_vnode_lens,
-            metadata.mid_o,
-            metadata.mid_lse,
-            metadata.phase_node_nums,
-            metadata.phase_node_offsets,
-            metadata.phase_q_tile_sizes,
-            metadata.phase_kv_tile_sizes,
-            sm_scale,
-        )
-
     torch.cuda.synchronize()
 
-    start = time.perf_counter()
-    for _ in range(ITERATIONS):
-        g_ft.replay()
-    torch.cuda.synchronize()
+    if use_cuda_graph:
+        g_ft = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_ft):
+            fasttree_decode(
+                q,
+                fasttree_k_buffer,
+                fasttree_v_buffer,
+                fasttree_o,
+                metadata.vnode_to_kv_entries,
+                metadata.vnode_to_kv_offs,
+                metadata.vnode_to_kv_lens,
+                metadata.vnode_to_q_entries,
+                metadata.vnode_to_q_offs,
+                metadata.vnode_to_q_lens,
+                metadata.req_to_vnode_entries,
+                metadata.req_to_vnode_offs,
+                metadata.req_to_vnode_lens,
+                metadata.mid_o,
+                metadata.mid_lse,
+                metadata.phase_node_nums,
+                metadata.phase_node_offsets,
+                metadata.phase_q_tile_sizes,
+                metadata.phase_kv_tile_sizes,
+                sm_scale,
+            )
 
+        torch.cuda.synchronize()
+        start = time.perf_counter()
+        for _ in range(ITERATIONS):
+            g_ft.replay()
+    else:
+        start = time.perf_counter()
+        for _ in range(ITERATIONS):
+            fasttree_decode(
+                q,
+                fasttree_k_buffer,
+                fasttree_v_buffer,
+                fasttree_o,
+                metadata.vnode_to_kv_entries,
+                metadata.vnode_to_kv_offs,
+                metadata.vnode_to_kv_lens,
+                metadata.vnode_to_q_entries,
+                metadata.vnode_to_q_offs,
+                metadata.vnode_to_q_lens,
+                metadata.req_to_vnode_entries,
+                metadata.req_to_vnode_offs,
+                metadata.req_to_vnode_lens,
+                metadata.mid_o,
+                metadata.mid_lse,
+                metadata.phase_node_nums,
+                metadata.phase_node_offsets,
+                metadata.phase_q_tile_sizes,
+                metadata.phase_kv_tile_sizes,
+                sm_scale,
+            )
+
+    torch.cuda.synchronize()
     fasttree_time = (time.perf_counter() - start) * 1000 / ITERATIONS
     print(f"Avg latency: {fasttree_time:.4f} ms")
 
@@ -380,17 +427,23 @@ def benchmark_attention():
     for _ in range(WARMUP):
         cascade_wrapper.run(q, paged_kv_cache)
 
-    g_cas = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(g_cas):
-        cascade_wrapper.run(q, paged_kv_cache)
-
     torch.cuda.synchronize()
 
-    start = time.perf_counter()
-    for _ in range(ITERATIONS):
-        g_cas.replay()
-    torch.cuda.synchronize()
+    if use_cuda_graph:
+        g_cas = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_cas):
+            cascade_wrapper.run(q, paged_kv_cache)
 
+        torch.cuda.synchronize()
+        start = time.perf_counter()
+        for _ in range(ITERATIONS):
+            g_cas.replay()
+    else:
+        start = time.perf_counter()
+        for _ in range(ITERATIONS):
+            cascade_wrapper.run(q, paged_kv_cache)
+
+    torch.cuda.synchronize()
     cascade_time = (time.perf_counter() - start) * 1000 / ITERATIONS
     print(f"Avg latency: {cascade_time:.4f} ms")
 
@@ -404,8 +457,10 @@ def benchmark_attention():
 
     print("\nSpeedups:")
     print(f"FlashInfer / FastTree : {flashinfer_time / fasttree_time:.2f}x")
+    print(f"FlashInfer / Cascade  : {flashinfer_time / cascade_time:.2f}x")
     print(f"Cascade    / FastTree : {cascade_time / fasttree_time:.2f}x")
 
 
 if __name__ == "__main__":
-    benchmark_attention()
+    args = parse_args()
+    benchmark_attention(use_cuda_graph=args.use_cuda_graph)
