@@ -412,7 +412,12 @@ def benchmark_attention(use_cuda_graph: bool = False):
     cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
         LEVELS, workspace_cas, "NHD"
     )
-
+    print(        
+        cascade_qo_indptr,
+        cascade_kv_indptr,
+        cascade_kv_indices,
+        cascade_kv_last_page_len
+    )
     cascade_wrapper.plan(
         cascade_qo_indptr,
         cascade_kv_indptr,
