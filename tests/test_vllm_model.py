@@ -42,6 +42,7 @@ def create_vllm_config(model_name: str) -> VllmConfig:
         max_num_seqs=256,
         max_num_batched_tokens=8192,
         max_model_len=model_config.max_model_len,
+        is_encoder_decoder=False,
     )
 
     load_config = LoadConfig()
