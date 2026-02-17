@@ -2,6 +2,10 @@
 Test script for token-by-token generation with greedy decoding using LlamaForCausalLM.
 """
 
+import os
+os.environ["VLLM_USE_V1"] = "0"  # Use V0 engine
+os.environ["VLLM_TORCH_COMPILE_LEVEL"] = "0"  # Disable torch.compile
+
 import torch
 from transformers import AutoTokenizer, LlamaConfig
 from vllm.config import VllmConfig, ModelConfig, CacheConfig, SchedulerConfig, LoadConfig, ParallelConfig, DeviceConfig
