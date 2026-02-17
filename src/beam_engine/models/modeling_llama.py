@@ -1,4 +1,9 @@
-# coding=utf-8
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
+# Adapted from
+# https://github.com/huggingface/transformers/blob/v4.28.0/src/transformers/models/llama/modeling_llama.py
+# Copyright 2023 The vLLM team.
 # Copyright 2022 EleutherAI and the HuggingFace Inc. team. All rights reserved.
 #
 # This code is based on EleutherAI's GPT-NeoX library and the GPT-NeoX
@@ -17,780 +22,596 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Callable, Optional, Union
+"""Inference-only LLaMA model compatible with HuggingFace weights."""
+
+from collections.abc import Iterable
+from itertools import islice
 
 import torch
 from torch import nn
+from transformers import LlamaConfig
 
-from transformers.activations import ACT2FN
-from transformers.cache_utils import Cache, DynamicCache
-from transformers.generation import GenerationMixin
-from transformers.integrations import use_kernel_forward_from_hub
-from transformers.masking_utils import create_causal_mask
-from transformers.modeling_layers import (
-    GenericForQuestionAnswering,
-    GenericForSequenceClassification,
-    GenericForTokenClassification,
-    GradientCheckpointingLayer,
+from vllm.config import CacheConfig, VllmConfig
+from vllm.distributed import get_pp_group, get_tensor_model_parallel_world_size
+from vllm.model_executor.layers.activation import SiluAndMul
+from vllm.model_executor.layers.attention import (
+    Attention,
+    EncoderOnlyAttention,
 )
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
-    CausalLMOutputWithPast,
+from vllm.model_executor.layers.layernorm import RMSNorm
+from vllm.model_executor.layers.linear import (
+    MergedColumnParallelLinear,
+    QKVParallelLinear,
+    RowParallelLinear,
 )
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
-from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
-from transformers.processing_utils import Unpack
-from transformers.utils import TransformersKwargs, auto_docstring, can_return_tuple, logging
-from transformers.utils.deprecation import deprecate_kwarg
-from transformers.utils.generic import check_model_inputs
-from .configuration_llama import LlamaConfig
-from beam_engine.attention_mode import AttentionMode
-from beam_engine.page_table import PageTable
-import flashinfer
+from vllm.model_executor.layers.logits_processor import LogitsProcessor
+from vllm.model_executor.layers.quantization import QuantizationConfig
+from vllm.model_executor.layers.rotary_embedding import get_rope
+from vllm.model_executor.layers.vocab_parallel_embedding import (
+    ParallelLMHead,
+    VocabParallelEmbedding,
+)
+from vllm.model_executor.model_loader.weight_utils import (
+    default_weight_loader,
+    maybe_remap_kv_scale_name,
+)
+from vllm.sequence import IntermediateTensors
+from vllm.v1.attention.backend import AttentionType
 
-
-logger = logging.get_logger(__name__)
-
-
-@use_kernel_forward_from_hub("RMSNorm")
-class LlamaRMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
-        """
-        LlamaRMSNorm is equivalent to T5LayerNorm
-        """
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
-
-    def forward(self, hidden_states):
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states.to(input_dtype)
-
-    def extra_repr(self):
-        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
-
-
-class LlamaRotaryEmbedding(nn.Module):
-    inv_freq: torch.Tensor  # fix linting for `register_buffer`
-
-    def __init__(self, config: LlamaConfig, device=None):
-        super().__init__()
-        # BC: "rope_type" was originally "type"
-        if hasattr(config, "rope_scaling") and isinstance(config.rope_scaling, dict):
-            self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-        else:
-            self.rope_type = "default"
-        self.max_seq_len_cached = config.max_position_embeddings
-        self.original_max_seq_len = config.max_position_embeddings
-
-        self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.original_inv_freq = self.inv_freq
-
-    @torch.no_grad()
-    @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
-    def forward(self, x, position_ids):
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
-        position_ids_expanded = position_ids[:, None, :].float()
-
-        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
-        with torch.autocast(device_type=device_type, enabled=False):  # Force float32
-            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
-            emb = torch.cat((freqs, freqs), dim=-1)
-            cos = emb.cos() * self.attention_scaling
-            sin = emb.sin() * self.attention_scaling
-
-        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
-
-
-def rotate_half(x):
-    """Rotates half the hidden dims of the input."""
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
-
-
-def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
-    """Applies Rotary Position Embedding to the query and key tensors.
-
-    Args:
-        q (`torch.Tensor`): The query tensor.
-        k (`torch.Tensor`): The key tensor.
-        cos (`torch.Tensor`): The cosine part of the rotary embedding.
-        sin (`torch.Tensor`): The sine part of the rotary embedding.
-        position_ids (`torch.Tensor`, *optional*):
-            Deprecated and unused.
-        unsqueeze_dim (`int`, *optional*, defaults to 1):
-            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
-            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
-            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
-            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
-            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
-            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
-    Returns:
-        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
-    """
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
+from .adapters import as_embedding_model, as_seq_cls_model
+from .interfaces import (
+    SupportsEagle,
+    SupportsEagle3,
+    SupportsLoRA,
+    SupportsPP,
+)
+from .utils import (
+    AutoWeightsLoader,
+    PPMissingLayer,
+    extract_layer_index,
+    is_pp_missing_parameter,
+    make_empty_intermediate_tensors_factory,
+    make_layers,
+    maybe_prefix,
+)
 
 
 class LlamaMLP(nn.Module):
-    def __init__(self, config):
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        hidden_act: str,
+        quant_config: QuantizationConfig | None = None,
+        bias: bool = False,
+        prefix: str = "",
+        reduce_results: bool = True,
+        disable_tp: bool = False,
+    ) -> None:
         super().__init__()
-        self.config = config
-        self.hidden_size = config.hidden_size
-        self.intermediate_size = config.intermediate_size
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=config.mlp_bias)
-        self.act_fn = ACT2FN[config.hidden_act]
+        self.gate_up_proj = MergedColumnParallelLinear(
+            input_size=hidden_size,
+            output_sizes=[intermediate_size] * 2,
+            bias=bias,
+            quant_config=quant_config,
+            disable_tp=disable_tp,
+            prefix=f"{prefix}.gate_up_proj",
+        )
+        self.down_proj = RowParallelLinear(
+            input_size=intermediate_size,
+            output_size=hidden_size,
+            bias=bias,
+            quant_config=quant_config,
+            reduce_results=reduce_results,
+            disable_tp=disable_tp,
+            prefix=f"{prefix}.down_proj",
+        )
+        if hidden_act != "silu":
+            raise ValueError(
+                f"Unsupported activation: {hidden_act}. Only silu is supported for now."
+            )
+        self.act_fn = SiluAndMul()
 
     def forward(self, x):
-        down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-        return down_proj
+        x, _ = self.gate_up_proj(x)
+        x = self.act_fn(x)
+        x, _ = self.down_proj(x)
+        return x
 
-
-def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
-    """
-    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
-    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
-    """
-    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
-    if n_rep == 1:
-        return hidden_states
-    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
-    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
-
-
-def eager_attention_forward(
-    module: nn.Module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
-    scaling: float,
-    dropout: float = 0.0,
-    **kwargs: Unpack[TransformersKwargs],
-):
-    key_states = repeat_kv(key, module.num_key_value_groups)
-    value_states = repeat_kv(value, module.num_key_value_groups)
-
-    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    if attention_mask is not None:
-        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-        attn_weights = attn_weights + causal_mask
-
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
-    attn_output = torch.matmul(attn_weights, value_states)
-    attn_output = attn_output.transpose(1, 2).contiguous()
-
-    return attn_output, attn_weights
-
-def flashinfer_prefill_attention_forward(
-    module: nn.Module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
-    scaling: float,
-    page_table: PageTable,
-    page_indices: list,      # <-- ADD THIS PARAMETER
-    last_page_len: int,      # <-- ADD THIS PARAMETER  
-    dropout: float = 0.0,
-    prefill_wrapper = None,
-    **kwargs: Unpack[TransformersKwargs],
-):
-    """
-    FlashInfer prefill attention using batch prefill with paged KV cache.
-    page_indices must be pre-allocated BEFORE calling this function.
-    """
-    seq_len, num_heads, head_dim = query.shape
-
-
-    # DON'T allocate pages here - use the pre-allocated page_indices
-    # Write KV states to the pre-allocated pages for THIS LAYER
-    remaining_tokens = seq_len
-    current_pos = 0
-
-    for i, page_idx in enumerate(page_indices):
-        tokens_in_this_page = min(remaining_tokens, page_table.page_size)
-
-        if tokens_in_this_page > 0:
-            page_key = key[current_pos:current_pos + tokens_in_this_page, :, :]
-            page_value = value[current_pos:current_pos + tokens_in_this_page, :, :]
-
-            # Determine the write index for this page
-            write_index = 0 if i < len(page_indices) - 1 else 0  # Always start at 0 for prefill
-            
-            page_table.write_block(
-                layer=module.layer_idx,
-                page_idx=page_idx,
-                key=page_key,
-                value=page_value,
-                index=write_index
-            )
-
-        current_pos += tokens_in_this_page
-        remaining_tokens -= tokens_in_this_page
-
-    # Prepare FlashInfer - use the passed page_indices
-
-    paged_kv_cache = page_table.kv_cache_at_layer[module.layer_idx]
-
-    try:
-        logger.debug(f"Debug: Calling prefill_wrapper.run...")
-        attn_output = prefill_wrapper.run(query, paged_kv_cache)
-        logger.debug(f"Debug: prefill_wrapper.run completed successfully!")
-    except Exception as e:
-        logger.debug(f"Debug: ERROR in prefill_wrapper.run: {e}")
-        logger.debug(f"Debug: Error type: {type(e)}")
-        logger.debug(f"Debug: Full traceback:")
-        import traceback
-        traceback.print_exc()
-        raise
-    logger.debug(f"Debug: Prefill attention completed, output shape {attn_output.shape}")
-
-    # Reshape output back to original format
-    logger.debug(f"Debug: Reshaping output back to original format")
-    # FlashInfer returns [seq_len, num_qo_heads, head_dim], we need [batch, num_heads, seq_len, head_dim]
-    attn_output = attn_output.unsqueeze(0)
-    logger.debug(f"Debug: Final output shape {attn_output.shape}")
-
-    return attn_output, None  # FlashInfer doesn't return attention weights
-
-workspace_size = 128 * 1024 * 1024  # 128MB
-workspace_buffer = None
-
-def get_workspace_buffer():
-    global workspace_buffer
-    if workspace_buffer is None:
-        # Allocate only when actually called, not on import
-        workspace_buffer = torch.empty(workspace_size, dtype=torch.uint8, device="cuda")
-    return workspace_buffer
 
 class LlamaAttention(nn.Module):
-    """Multi-headed attention from 'Attention Is All You Need' paper"""
-
-    def __init__(self, config: LlamaConfig, layer_idx: int):
+    def __init__(
+        self,
+        config: LlamaConfig,
+        hidden_size: int,
+        num_heads: int,
+        num_kv_heads: int,
+        max_position_embeddings: int = 8192,
+        quant_config: QuantizationConfig | None = None,
+        bias: bool = False,
+        bias_o_proj: bool = False,
+        cache_config: CacheConfig | None = None,
+        prefix: str = "",
+        attn_type: str = AttentionType.DECODER,
+    ) -> None:
         super().__init__()
-        self.config = config
-        self.layer_idx = layer_idx
-        self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
-        self.num_key_value_groups = config.num_attention_heads // config.num_key_value_heads
-        self.scaling = self.head_dim**-0.5
-        self.attention_dropout = config.attention_dropout
-        self.is_causal = True
-
-        self.q_proj = nn.Linear(
-            config.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.k_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.v_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.o_proj = nn.Linear(
-            config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
-        )
-
-    def _cascade_decode_attention(
-        self,
-        query: torch.Tensor,
-        page_table: PageTable,
-        qo_indptr_arr: list[torch.Tensor],
-        paged_kv_indptr_arr: list[torch.Tensor],
-        paged_kv_indices_arr: list[torch.Tensor],
-        paged_kv_last_page_len_arr: list[torch.Tensor],
-        cascade_wrapper: flashinfer.cascade.MultiLevelCascadeAttentionWrapper
-    ) -> torch.Tensor:
-        """
-        Cascade decode attention using FlashInfer's MultiLevelCascadeAttentionWrapper.
-
-        Handles beam search decode where sequences share prefixes in a hierarchical structure.
-
-        Note: kv_last_page_len excludes the current query token for the attention kernel,
-        but we still store the query's K/V in the page table for the next iteration.
-
-        Args:
-            query: Query tensor [batch=1, seq_len, num_qo_heads, head_dim] (RoPE applied)
-            page_table: PageTable with KV cache
-            qo_indptr_arr: QO index pointers per cascade level
-            paged_kv_indptr_arr: KV index pointers per cascade level
-            paged_kv_indices_arr: Page indices per cascade level
-            paged_kv_last_page_len_arr: Last page lengths per cascade level
-
-        Returns:
-            Attention output tensor
-        """
-        device = query.device
-        num_qo_heads = self.config.num_attention_heads
-        num_kv_heads = self.config.num_key_value_heads
-        head_dim = self.head_dim
-
-        # Prepare query: [batch, seq_len, num_heads, head_dim] -> [seq_len, num_heads, head_dim]
-        query_flashinfer = query
-
-        # Get KV cache for this layer
-        paged_kv_cache = page_table.kv_cache_at_layer[self.layer_idx]
-
-        # Run cascade attention
-        attn_output = cascade_wrapper.run(query_flashinfer, paged_kv_cache)
-
-        # Add batch dimension back
-        attn_output = attn_output.unsqueeze(0)
-
-        return attn_output
-
-    @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        position_ids: Optional[torch.Tensor],
-        position_embeddings: tuple[torch.Tensor, torch.Tensor],
-        attention_mask: Optional[torch.Tensor],
-        past_key_values: Optional[Cache] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        attention_mode: Optional[AttentionMode] = None,
-        page_table: Optional[PageTable] = None,
-        page_indices: Optional[list] = None,
-        last_page_len: Optional[int] = None,
-        batch_page_indices: Optional[list] = None,  # List of page_indices for batch decode
-        batch_last_page_lens: Optional[list] = None,  # List of last_page_lens for batch decode
-        # Cascade decode parameters
-        cascade_qo_indptr_arr: Optional[list[torch.Tensor]] = None,
-        cascade_kv_indptr_arr: Optional[list[torch.Tensor]] = None,
-        cascade_kv_indices_arr: Optional[list[torch.Tensor]] = None,
-        cascade_kv_last_page_len_arr: Optional[list[torch.Tensor]] = None,
-        cascade_write_page_indices: Optional[list] = None,  # Page IDs to write K/V for each candidate
-        cascade_write_positions: Optional[list] = None,  # Positions within page to write K/V
-        cascade_write_batch_indices: Optional[torch.Tensor] = None,  # Pre-allocated batch indices for write
-        cascade_write_kv_indptr: Optional[torch.Tensor] = None,  # Pre-allocated kv_indptr for write
-        prefill_wrapper = None,
-        cascade_wrapper = None,
-        **kwargs: Unpack[TransformersKwargs],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, self.head_dim)
-
-        query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-
-        cos, sin = position_embeddings
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
-
-        key_states = key_states.transpose(1, 2).squeeze(0)    # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
-        query_states = query_states.transpose(1, 2).squeeze(0)  # [1, num_candidates, num_heads, head_dim] -> [num_candidates, num_heads, head_dim]
-        value_states = value_states.transpose(1, 2).squeeze(0)  # [1, num_candidates, num_kv_heads, head_dim] -> [num_candidates, num_kv_heads, head_dim]
-
-
-        # Choose attention implementation based on mode
-        if attention_mode == AttentionMode.PREFILL:
-            attn_output, attn_weights = flashinfer_prefill_attention_forward(
-                self,
-                query_states,
-                key_states,
-                value_states,
-                attention_mask,
-                self.scaling,
-                page_table,
-                page_indices,      # <-- Pass through
-                last_page_len,     # <-- Pass through
-                dropout=0.0 if not self.training else self.attention_dropout,
-                prefill_wrapper=prefill_wrapper,
-                **kwargs,
-            )
-
-        elif attention_mode == AttentionMode.DECODE:
-
-            # Validate cascade decode parameters
-            if page_table is None:
-                raise ValueError("PageTable must be provided for DECODE attention mode")
-            if cascade_qo_indptr_arr is None or cascade_kv_indptr_arr is None or \
-               cascade_kv_indices_arr is None or cascade_kv_last_page_len_arr is None:
-                raise ValueError("Cascade parameters must be provided for DECODE attention mode")
-            if cascade_write_page_indices is None or cascade_write_positions is None:
-                raise ValueError("cascade_write_page_indices and cascade_write_positions must be provided for DECODE attention mode")
-
-            num_candidates = key_states.shape[0]
-
-            # Vectorized write - much more efficient than looping through candidates
-            # Convert lists to tensors for vectorized indexing
-
-            # Write all candidates at once
-            page_table.write_blocks_vectorized(
-                layer=self.layer_idx,
-                page_indices=cascade_write_page_indices,
-                keys=key_states,
-                values=value_states,
-                indices=cascade_write_positions,
-                batch_indices=cascade_write_batch_indices,
-                kv_indptr=cascade_write_kv_indptr
-            )
-
-            # Run cascade decode attention
-            attn_output = self._cascade_decode_attention(
-                query_states,
-                page_table,
-                cascade_qo_indptr_arr,
-                cascade_kv_indptr_arr,
-                cascade_kv_indices_arr,
-                cascade_kv_last_page_len_arr,
-                cascade_wrapper,
-            )
-
-            attn_weights = None
-
+        layer_idx = extract_layer_index(prefix)
+        self.hidden_size = hidden_size
+        tp_size = get_tensor_model_parallel_world_size()
+        self.total_num_heads = num_heads
+        assert self.total_num_heads % tp_size == 0
+        self.num_heads = self.total_num_heads // tp_size
+        self.total_num_kv_heads = num_kv_heads
+        if self.total_num_kv_heads >= tp_size:
+            # Number of KV heads is greater than TP size, so we partition
+            # the KV heads across multiple tensor parallel GPUs.
+            assert self.total_num_kv_heads % tp_size == 0
         else:
-            raise ValueError(f"Invalid attention mode: {attention_mode}. Must be PREFILL or DECODE")
+            # Number of KV heads is less than TP size, so we replicate
+            # the KV heads across multiple tensor parallel GPUs.
+            assert tp_size % self.total_num_kv_heads == 0
+        self.num_kv_heads = max(1, self.total_num_kv_heads // tp_size)
 
-        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        attn_output = self.o_proj(attn_output)
-        return attn_output, attn_weights
+        head_dim = getattr(config, "head_dim", None)
+        self.head_dim = head_dim or self.hidden_size // self.total_num_heads
+        self.q_size = self.num_heads * self.head_dim
+        self.kv_size = self.num_kv_heads * self.head_dim
+        self.scaling = self.head_dim**-0.5
+        self.max_position_embeddings = max_position_embeddings
 
+        self.qkv_proj = QKVParallelLinear(
+            hidden_size=hidden_size,
+            head_size=self.head_dim,
+            total_num_heads=self.total_num_heads,
+            total_num_kv_heads=self.total_num_kv_heads,
+            bias=bias,
+            quant_config=quant_config,
+            prefix=f"{prefix}.qkv_proj",
+        )
 
-class LlamaDecoderLayer(GradientCheckpointingLayer):
-    def __init__(self, config: LlamaConfig, layer_idx: int):
-        super().__init__()
-        self.hidden_size = config.hidden_size
+        self.o_proj = RowParallelLinear(
+            input_size=self.total_num_heads * self.head_dim,
+            output_size=hidden_size,
+            bias=bias_o_proj,
+            quant_config=quant_config,
+            prefix=f"{prefix}.o_proj",
+        )
 
-        self.self_attn = LlamaAttention(config=config, layer_idx=layer_idx)
+        self._init_rotary_emb(config, quant_config=quant_config)
 
-        self.mlp = LlamaMLP(config)
-        self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        sliding_window = None
+        if layer_types := getattr(config, "layer_types", None):
+            # Fix for Eagle3 compatibility:
+            # for draft models, subtract target layer count
+            # to get draft-relative layer index starting from 0
+            if hasattr(config, "target_layer_count"):
+                # This is a draft model,
+                # adjust layer_idx to be relative to draft layers
+                effective_layer_idx = layer_idx - config.target_layer_count
+            else:
+                # This is a target model, use layer_idx directly
+                effective_layer_idx = layer_idx
+            assert effective_layer_idx < len(layer_types), (
+                f"effective_layer_idx: {effective_layer_idx} "
+                f"is out of bounds for layer_types: {layer_types}"
+            )
 
-    @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
+            is_sliding = layer_types[effective_layer_idx] == "sliding_attention"
+            if is_sliding:
+                sliding_window = config.sliding_window
+
+        attn_cls = (
+            EncoderOnlyAttention
+            if attn_type == AttentionType.ENCODER_ONLY
+            else Attention
+        )
+
+        self.attn = attn_cls(
+            self.num_heads,
+            self.head_dim,
+            self.scaling,
+            num_kv_heads=self.num_kv_heads,
+            cache_config=cache_config,
+            quant_config=quant_config,
+            per_layer_sliding_window=sliding_window,
+            attn_type=attn_type,
+            prefix=f"{prefix}.attn",
+        )
+
     def forward(
         self,
+        positions: torch.Tensor,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        use_cache: Optional[bool] = False,
-        cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
-        cascade_wrapper = None,
-        **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
-        residual = hidden_states
-        hidden_states = self.input_layernorm(hidden_states)
-        # Extract FlashInfer parameters from kwargs to avoid duplicate arguments
-        attention_kwargs = kwargs.copy()
-        attention_mode = attention_kwargs.pop('attention_mode', None)
-        page_table = attention_kwargs.pop('page_table', None)
-        page_indices = attention_kwargs.pop('page_indices', None)
-        last_page_len = attention_kwargs.pop('last_page_len', None)
+        qkv, _ = self.qkv_proj(hidden_states)
+        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        q, k = self.rotary_emb(positions, q, k)
+        attn_output = self.attn(q, k, v)
+        output, _ = self.o_proj(attn_output)
+        return output
 
-        # Self Attention
-        hidden_states, _ = self.self_attn(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            cache_position=cache_position,
-            position_embeddings=position_embeddings,
-            attention_mode=attention_mode,
-            page_table=page_table,
-            page_indices=page_indices,
-            last_page_len=last_page_len,
-            cascade_wrapper=cascade_wrapper,
-            **attention_kwargs,
+    def _init_rotary_emb(
+        self,
+        config: LlamaConfig,
+        quant_config: QuantizationConfig | None,
+    ) -> None:
+        is_neox_style = True
+        is_gguf = quant_config and quant_config.get_name() == "gguf"
+        if is_gguf and config.model_type == "llama":
+            is_neox_style = False
+
+        self.rotary_emb = get_rope(
+            self.head_dim,
+            max_position=self.max_position_embeddings,
+            rope_parameters=getattr(config, "rope_parameters", None),
+            is_neox_style=is_neox_style,
         )
-        hidden_states = residual + hidden_states
+
+
+class LlamaDecoderLayer(nn.Module):
+    def __init__(
+        self,
+        vllm_config: VllmConfig,
+        prefix: str = "",
+        config: LlamaConfig | None = None,
+        attn_layer_type: type[nn.Module] = LlamaAttention,
+    ) -> None:
+        super().__init__()
+
+        config = config or vllm_config.model_config.hf_config
+        cache_config = vllm_config.cache_config
+        quant_config = self.get_quant_config(vllm_config)
+
+        self.hidden_size = config.hidden_size
+        max_position_embeddings = getattr(config, "max_position_embeddings", 8192)
+        # Support abacusai/Smaug-72B-v0.1 with attention_bias
+        # Support internlm/internlm-7b with bias
+        attention_bias = getattr(config, "attention_bias", False) or getattr(
+            config, "bias", False
+        )
+        bias_o_proj = attention_bias
+        # support internlm/internlm3-8b with qkv_bias
+        if hasattr(config, "qkv_bias"):
+            attention_bias = config.qkv_bias
+
+        # By default, Llama uses causal attention as it is a decoder-only model.
+        # You can override the HF config with `is_causal=False` to enable
+        # bidirectional attention, which is used in some embedding models
+        # (e.g. parasail-ai/GritLM-7B-vllm)
+        if getattr(config, "is_causal", True):
+            attn_type = AttentionType.DECODER
+        else:
+            attn_type = AttentionType.ENCODER_ONLY
+
+        self.self_attn = attn_layer_type(
+            config=config,
+            hidden_size=self.hidden_size,
+            num_heads=config.num_attention_heads,
+            num_kv_heads=getattr(
+                config, "num_key_value_heads", config.num_attention_heads
+            ),
+            max_position_embeddings=max_position_embeddings,
+            quant_config=quant_config,
+            bias=attention_bias,
+            bias_o_proj=bias_o_proj,
+            cache_config=cache_config,
+            prefix=f"{prefix}.self_attn",
+            attn_type=attn_type,
+        )
+        self.mlp = LlamaMLP(
+            hidden_size=self.hidden_size,
+            intermediate_size=config.intermediate_size,
+            hidden_act=config.hidden_act,
+            quant_config=quant_config,
+            bias=getattr(config, "mlp_bias", False),
+            prefix=f"{prefix}.mlp",
+        )
+        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+
+    def forward(
+        self,
+        positions: torch.Tensor,
+        hidden_states: torch.Tensor,
+        residual: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # Self Attention
+        if residual is None:
+            residual = hidden_states
+            hidden_states = self.input_layernorm(hidden_states)
+        else:
+            hidden_states, residual = self.input_layernorm(hidden_states, residual)
+        hidden_states = self.self_attn(positions=positions, hidden_states=hidden_states)
 
         # Fully Connected
-        residual = hidden_states
-        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
         hidden_states = self.mlp(hidden_states)
-        hidden_states = residual + hidden_states
-        return hidden_states
+        return hidden_states, residual
+
+    def get_quant_config(self, vllm_config: VllmConfig) -> QuantizationConfig | None:
+        """Get quantization config for this layer. Override in subclasses."""
+        return vllm_config.quant_config
 
 
-@auto_docstring
-class LlamaPreTrainedModel(PreTrainedModel):
-    config: LlamaConfig
-    base_model_prefix = "model"
-    supports_gradient_checkpointing = True
-    _no_split_modules = ["LlamaDecoderLayer"]
-    _skip_keys_device_placement = ["past_key_values"]
-    _supports_flash_attn = True
-    _supports_sdpa = True
-    _supports_flex_attn = True
-
-    _can_compile_fullgraph = True
-    _supports_attention_backend = True
-    _can_record_outputs = {
-        "hidden_states": LlamaDecoderLayer,
-        "attentions": LlamaAttention,
-    }
+def llama_model_invariants(
+    input_ids, positions, intermediate_tensors=None, inputs_embeds=None
+):
+    """Shape invariants for Llama model compilation, those are translated to
+    runtime assertions for unbacked dynamic shapes and are compiled away for
+    backed"""
+    if input_ids is not None:
+        torch._check(positions.size()[0] == input_ids.size()[0])
 
 
-@auto_docstring
-class LlamaModel(LlamaPreTrainedModel):
-    def __init__(self, config: LlamaConfig):
-        super().__init__(config)
-        self.padding_idx = config.pad_token_id
+@support_torch_compile(
+    # TODO[#32068]: Investigate recompilation
+    # mark_unbacked_dims={"input_ids": 0},
+    shape_invariants=llama_model_invariants
+)
+class LlamaModel(nn.Module):
+    def __init__(
+        self,
+        *,
+        vllm_config: VllmConfig,
+        prefix: str = "",
+        layer_type: type[nn.Module] = LlamaDecoderLayer,
+    ):
+        super().__init__()
+
+        config = vllm_config.model_config.hf_config
+        quant_config = vllm_config.quant_config
+
+        self.config = config
+        self.quant_config = quant_config
+
         self.vocab_size = config.vocab_size
 
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.layers = nn.ModuleList(
-            [LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
-        )
-        self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.rotary_emb = LlamaRotaryEmbedding(config=config)
-        self.gradient_checkpointing = False
-
-        # Initialize weights and apply final processing
-        self.post_init()
-        self.num_heads = config.num_attention_heads
-        self.num_kv_heads = config.num_key_value_heads
-        self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
-        self.num_key_value_groups = config.num_attention_heads // config.num_key_value_heads
-        self.scaling = self.head_dim**-0.5
-
-    @check_model_inputs()
-    @auto_docstring
-    def forward(
-        self,
-        attention_mode,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        page_indices=None, #for prefill, we have to 統一 later
-        last_page_len=None,  #for prefill, we have to 統一 later
-        cascade_qo_indptr_arr=None,
-        cascade_kv_indptr_arr=None,
-        cascade_kv_indices_arr=None,
-        cascade_kv_last_page_len_arr=None,
-        cascade_write_page_indices=None,
-        cascade_write_positions=None,
-        cascade_write_batch_indices=None,
-        cascade_write_kv_indptr=None,
-        page_table=None,
-        **kwargs: Unpack[TransformersKwargs],
-    ) -> BaseModelOutputWithPast:
-        if (input_ids is None) ^ (inputs_embeds is not None):
-            raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-
-
-        if inputs_embeds is None:
-            inputs_embeds: torch.Tensor = self.embed_tokens(input_ids)
-
-        if use_cache and past_key_values is None:
-            past_key_values = DynamicCache(config=self.config)
-
-        if cache_position is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position: torch.Tensor = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-            )
-
-        if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
-
-        causal_mask = create_causal_mask(
-            config=self.config,
-            input_embeds=inputs_embeds,
-            attention_mask=attention_mask,
-            cache_position=cache_position,
-            past_key_values=past_key_values,
-            position_ids=position_ids,
-        )
-
-        hidden_states = inputs_embeds
-        position_embeddings = self.rotary_emb(hidden_states, position_ids)
-
-        cascade_wrapper = None
-        prefill_wrapper = None
-        # Initialize cascade wrapper
-        if attention_mode == AttentionMode.DECODE:
-            cascade_wrapper = flashinfer.cascade.MultiLevelCascadeAttentionWrapper(
-                len(cascade_qo_indptr_arr),
-                get_workspace_buffer(),
-                kv_layout="NHD"
-            )
-
-            # Plan cascade attention
-            cascade_wrapper.plan(
-                qo_indptr_arr=cascade_qo_indptr_arr,
-                paged_kv_indptr_arr=cascade_kv_indptr_arr,
-                paged_kv_indices_arr=cascade_kv_indices_arr,
-                paged_kv_last_page_len=cascade_kv_last_page_len_arr,
-                num_qo_heads=self.num_heads,
-                num_kv_heads=self.num_kv_heads,
-                head_dim=self.head_dim,
-                page_size=page_table.page_size,
-                causal=True,
-                pos_encoding_mode='NONE',
-                sm_scale=self.scaling,
-                q_data_type=hidden_states.dtype
+        if get_pp_group().is_first_rank or (
+            config.tie_word_embeddings and get_pp_group().is_last_rank
+        ):
+            self.embed_tokens = VocabParallelEmbedding(
+                self.vocab_size,
+                config.hidden_size,
+                quant_config=quant_config,
             )
         else:
-            prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
-                get_workspace_buffer(),
-                kv_layout="NHD"
-            )
-            device = hidden_states.device
-            seq_len = hidden_states.shape[1]
-            qo_indptr = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
-            paged_kv_indices = torch.tensor(page_indices, dtype=torch.int32, device=device)
-            paged_kv_indptr = torch.tensor([0, len(page_indices)], dtype=torch.int32, device=device)
-            paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=device)
-    
-            prefill_wrapper.plan(
-                qo_indptr=qo_indptr,
-                paged_kv_indptr=paged_kv_indptr,
-                paged_kv_indices=paged_kv_indices,
-                paged_kv_last_page_len=paged_kv_last_page_len,
-                num_qo_heads=self.num_heads,
-                num_kv_heads=self.num_kv_heads,
-                head_dim_qk=self.head_dim,
+            self.embed_tokens = PPMissingLayer()
+        self.start_layer, self.end_layer, self.layers = make_layers(
+            config.num_hidden_layers,
+            lambda prefix: layer_type(vllm_config=vllm_config, prefix=prefix),
+            prefix=f"{prefix}.layers",
+        )
+        if get_pp_group().is_last_rank:
+            self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        else:
+            self.norm = PPMissingLayer()
 
-                page_size=page_table.page_size,
-                causal=True,
-                pos_encoding_mode="NONE"
-            )
+        self.aux_hidden_state_layers = tuple[int, ...]()
 
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
-            hidden_states = decoder_layer(
-                hidden_states,
-                attention_mask=causal_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                cache_position=cache_position,
-                position_embeddings=position_embeddings,
-                cascade_wrapper=cascade_wrapper,
-                prefill_wrapper=prefill_wrapper,
-                attention_mode=attention_mode,
-                page_table=page_table,
-                cascade_qo_indptr_arr=cascade_qo_indptr_arr,
-                cascade_kv_indptr_arr=cascade_kv_indptr_arr,
-                cascade_kv_indices_arr=cascade_kv_indices_arr,
-                cascade_kv_last_page_len_arr=cascade_kv_last_page_len_arr,
-                cascade_write_page_indices=cascade_write_page_indices,
-                cascade_write_positions=cascade_write_positions,
-                cascade_write_batch_indices=cascade_write_batch_indices,
-                cascade_write_kv_indptr=cascade_write_kv_indptr,
-                last_page_len=last_page_len, # for prefill 
-                page_indices=page_indices, # for prefill
-                **kwargs,
-            )
-
-        hidden_states = self.norm(hidden_states)
-        return BaseModelOutputWithPast(
-            last_hidden_state=hidden_states,
-            past_key_values=past_key_values,
+        self.make_empty_intermediate_tensors = make_empty_intermediate_tensors_factory(
+            ["hidden_states", "residual"], config.hidden_size
         )
 
+    def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
+        return self.embed_tokens(input_ids)
 
-@auto_docstring
-class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
-    _tied_weights_keys = ["lm_head.weight"]
-    _tp_plan = {"lm_head": "colwise_rep"}
-    _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
-
-    def __init__(self, config):
-        super().__init__(config)
-        self.model = LlamaModel(config)
-        self.vocab_size = config.vocab_size
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @can_return_tuple
-    @auto_docstring
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
-        **kwargs: Unpack[TransformersKwargs],
-    ) -> CausalLMOutputWithPast:
-        r"""
-        Example:
+        input_ids: torch.Tensor | None,
+        positions: torch.Tensor,
+        intermediate_tensors: IntermediateTensors | None,
+        inputs_embeds: torch.Tensor | None = None,
+        **extra_layer_kwargs,
+    ) -> torch.Tensor | IntermediateTensors | tuple[torch.Tensor, list[torch.Tensor]]:
+        if get_pp_group().is_first_rank:
+            if inputs_embeds is not None:
+                hidden_states = inputs_embeds
+            else:
+                hidden_states = self.embed_input_ids(input_ids)
+            residual = None
+        else:
+            assert intermediate_tensors is not None
+            hidden_states = intermediate_tensors["hidden_states"]
+            residual = intermediate_tensors["residual"]
 
-        ```python
-        >>> from transformers import AutoTokenizer, LlamaForCausalLM
+        aux_hidden_states = []
+        for idx, layer in enumerate(
+            islice(self.layers, self.start_layer, self.end_layer)
+        ):
+            if idx in self.aux_hidden_state_layers:
+                aux_hidden_states.append(hidden_states + residual)
+            hidden_states, residual = layer(
+                positions, hidden_states, residual, **extra_layer_kwargs
+            )
 
-        >>> model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf")
-        >>> tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+        if not get_pp_group().is_last_rank:
+            return IntermediateTensors(
+                {"hidden_states": hidden_states, "residual": residual}
+            )
 
-        >>> prompt = "Hey, are you conscious? Can you talk to me?"
-        >>> inputs = tokenizer(prompt, return_tensors="pt")
+        hidden_states, _ = self.norm(hidden_states, residual)
 
-        >>> # Generate
-        >>> generate_ids = model.generate(inputs.input_ids, max_length=30)
-        >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-        "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
-        ```"""
-        outputs: BaseModelOutputWithPast = self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            inputs_embeds=inputs_embeds,
-            use_cache=use_cache,
-            cache_position=cache_position,
-            **kwargs,
+        if len(aux_hidden_states) > 0:
+            return hidden_states, aux_hidden_states
+        return hidden_states
+
+    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        stacked_params_mapping = [
+            # (param_name, shard_name, shard_id)
+            (".qkv_proj", ".q_proj", "q"),
+            (".qkv_proj", ".k_proj", "k"),
+            (".qkv_proj", ".v_proj", "v"),
+            (".gate_up_proj", ".gate_proj", 0),
+            (".gate_up_proj", ".up_proj", 1),
+        ]
+        params_dict = dict(self.named_parameters())
+        loaded_params: set[str] = set()
+        for name, loaded_weight in weights:
+            if "rotary_emb.inv_freq" in name:
+                continue
+            if "rotary_emb.cos_cached" in name or "rotary_emb.sin_cached" in name:
+                # Models trained using ColossalAI may include these tensors in
+                # the checkpoint. Skip them.
+                continue
+            if self.quant_config is not None and (
+                scale_name := self.quant_config.get_cache_scale(name)
+            ):
+                # Loading kv cache quantization scales
+                param = params_dict[scale_name]
+                weight_loader = getattr(param, "weight_loader", default_weight_loader)
+                loaded_weight = (
+                    loaded_weight if loaded_weight.dim() == 0 else loaded_weight[0]
+                )
+                weight_loader(param, loaded_weight)
+                loaded_params.add(scale_name)
+                continue
+            if "scale" in name or "zero_point" in name:
+                # Remapping the name of FP8 kv-scale or zero point.
+                name = maybe_remap_kv_scale_name(name, params_dict)
+                if name is None:
+                    continue
+            for param_name, weight_name, shard_id in stacked_params_mapping:
+                if weight_name not in name:
+                    continue
+                name = name.replace(weight_name, param_name)
+                # Skip loading extra bias for GPTQ models.
+                if name.endswith(".bias") and name not in params_dict:
+                    continue
+
+                if is_pp_missing_parameter(name, self):
+                    continue
+
+                param = params_dict[name]
+                weight_loader = param.weight_loader
+                weight_loader(param, loaded_weight, shard_id)
+                break
+            else:
+                # Skip loading extra bias for GPTQ models.
+                if name.endswith(".bias") and name not in params_dict:
+                    continue
+
+                if is_pp_missing_parameter(name, self):
+                    continue
+
+                param = params_dict[name]
+                weight_loader = getattr(param, "weight_loader", default_weight_loader)
+                weight_loader(param, loaded_weight)
+            loaded_params.add(name)
+        return loaded_params
+
+
+class LlamaForCausalLM(
+    nn.Module, SupportsLoRA, SupportsPP, SupportsEagle, SupportsEagle3
+):
+    packed_modules_mapping = {
+        "qkv_proj": ["q_proj", "k_proj", "v_proj"],
+        "gate_up_proj": ["gate_proj", "up_proj"],
+    }
+
+    # LoRA specific attributes
+    embedding_modules = {
+        "embed_tokens": "input_embeddings",
+        "lm_head": "output_embeddings",
+    }
+
+    def __init__(
+        self,
+        *,
+        vllm_config: VllmConfig,
+        prefix: str = "",
+        layer_type: type[nn.Module] = LlamaDecoderLayer,
+    ):
+        super().__init__()
+        config = vllm_config.model_config.hf_config
+        quant_config = vllm_config.quant_config
+        self.config = config
+
+        self.model = self._init_model(
+            vllm_config=vllm_config,
+            prefix=maybe_prefix(prefix, "model"),
+            layer_type=layer_type,
         )
 
-        hidden_states = outputs.last_hidden_state
-        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
-        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-        logits = self.lm_head(hidden_states[:, slice_indices, :])
+        if get_pp_group().is_last_rank:
+            self.lm_head = ParallelLMHead(
+                config.vocab_size,
+                config.hidden_size,
+                quant_config=quant_config,
+                prefix=maybe_prefix(prefix, "lm_head"),
+            )
+            if config.tie_word_embeddings:
+                self.lm_head = self.lm_head.tie_weights(self.model.embed_tokens)
 
-        loss = None
-        if labels is not None:
-            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
+            logit_scale = getattr(config, "logit_scale", 1.0)
+            self.logits_processor = LogitsProcessor(
+                config.vocab_size, scale=logit_scale
+            )
+        else:
+            self.lm_head = PPMissingLayer()
 
-        return CausalLMOutputWithPast(
-            loss=loss,
-            logits=logits,
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
+        self.make_empty_intermediate_tensors = (
+            self.model.make_empty_intermediate_tensors
         )
 
+    def set_aux_hidden_state_layers(self, layers: tuple[int, ...]) -> None:
+        self.model.aux_hidden_state_layers = layers
 
-class LlamaForSequenceClassification(GenericForSequenceClassification, LlamaPreTrainedModel): ...
+    def get_eagle3_aux_hidden_state_layers(self) -> tuple[int, ...]:
+        """Override to return default layers for Llama
+
+        Note: The GPU model runner will override this with layers from
+        the speculative config if available, providing dynamic configuration.
+        """
+        num_layers = len(self.model.layers)
+        return (2, num_layers // 2, num_layers - 3)
+
+    def _init_model(
+        self,
+        vllm_config: VllmConfig,
+        prefix: str = "",
+        layer_type: type[nn.Module] = LlamaDecoderLayer,
+    ):
+        return LlamaModel(vllm_config=vllm_config, prefix=prefix, layer_type=layer_type)
+
+    def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
+        return self.model.embed_input_ids(input_ids)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor | None,
+        positions: torch.Tensor,
+        intermediate_tensors: IntermediateTensors | None = None,
+        inputs_embeds: torch.Tensor | None = None,
+    ) -> torch.Tensor | IntermediateTensors:
+        model_output = self.model(
+            input_ids, positions, intermediate_tensors, inputs_embeds
+        )
+        return model_output
+
+    def compute_logits(
+        self,
+        hidden_states: torch.Tensor,
+    ) -> torch.Tensor | None:
+        logits = self.logits_processor(self.lm_head, hidden_states)
+        return logits
+
+    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        loader = AutoWeightsLoader(
+            self,
+            skip_prefixes=(["lm_head."] if self.config.tie_word_embeddings else None),
+        )
+        return loader.load_weights(weights)
 
 
-class LlamaForQuestionAnswering(GenericForQuestionAnswering, LlamaPreTrainedModel):
-    base_model_prefix = "transformer"  # For BC, where `transformer` was used instead of `model`
+class LlamaBidirectionalForSequenceClassification(as_seq_cls_model(LlamaForCausalLM)):
+    # This class sets the correct attention type and pooling type
+    # through LlamaBidirectionalConfig.
+    pass
 
 
-class LlamaForTokenClassification(GenericForTokenClassification, LlamaPreTrainedModel): ...
-
-
-__all__ = [
-    "LlamaForCausalLM",
-    "LlamaModel",
-    "LlamaPreTrainedModel",
-    "LlamaForSequenceClassification",
-    "LlamaForQuestionAnswering",
-    "LlamaForTokenClassification",
-]
+class LlamaBidirectionalModel(as_embedding_model(LlamaForCausalLM)):
+    # This class sets the correct attention type and pooling type
+    # through LlamaBidirectionalConfig.
+    pass
