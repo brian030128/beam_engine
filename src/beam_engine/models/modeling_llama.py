@@ -58,14 +58,14 @@ from vllm.model_executor.model_loader.weight_utils import (
 from vllm.sequence import IntermediateTensors
 from vllm.v1.attention.backend import AttentionType
 
-from .adapters import as_embedding_model, as_seq_cls_model
-from .interfaces import (
+from vllm.model_executor.models.adapters import as_embedding_model, as_seq_cls_model
+from vllm.model_executor.models.interfaces import (
     SupportsEagle,
     SupportsEagle3,
     SupportsLoRA,
     SupportsPP,
 )
-from .utils import (
+from vllm.model_executor.models.utils import (
     AutoWeightsLoader,
     PPMissingLayer,
     extract_layer_index,
