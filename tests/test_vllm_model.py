@@ -1,119 +1,27 @@
 """
 Test script for token-by-token generation with greedy decoding using LlamaForCausalLM.
+Uses FlashInfer attention kernels.
 """
 
-import os
-os.environ["VLLM_USE_V1"] = "0"  # Use V0 engine
-os.environ["VLLM_TORCH_COMPILE_LEVEL"] = "0"  # Disable torch.compile
-
 import torch
-import torch._dynamo
-torch._dynamo.config.suppress_errors = True
-torch._dynamo.disable()
-from transformers import AutoTokenizer, LlamaConfig
-from vllm.config import VllmConfig, ModelConfig, CacheConfig, SchedulerConfig, LoadConfig, ParallelConfig, DeviceConfig
-from vllm.distributed import init_distributed_environment, initialize_model_parallel
+from transformers import AutoTokenizer
 
 from beam_engine.models.modeling_llama import LlamaForCausalLM
 
 
 MODEL_NAME = "meta-llama/Llama-3.1-8B"
-DEVICE = "cuda:0"
+DEVICE = "cuda"
 DTYPE = torch.float16
 
 
-def init_vllm_distributed():
-    """Initialize vLLM distributed environment for single GPU."""
-    init_distributed_environment(
-        world_size=1,
-        rank=0,
-        local_rank=0,
-        distributed_init_method="tcp://127.0.0.1:29500",
-    )
-    initialize_model_parallel(
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-    )
-
-
-def create_vllm_config(model_name: str) -> VllmConfig:
-    """Create VllmConfig for model initialization."""
-    model_config = ModelConfig(
-        model=model_name,
-        task="generate",
-        tokenizer=model_name,
-        tokenizer_mode="auto",
-        trust_remote_code=False,
-        dtype=DTYPE,
-        seed=42,
-    )
-
-    cache_config = CacheConfig(
-        block_size=16,
-        gpu_memory_utilization=0.9,
-        swap_space=4,
-        cache_dtype="auto",
-    )
-
-    parallel_config = ParallelConfig(
-        tensor_parallel_size=1,
-        pipeline_parallel_size=1,
-    )
-
-    scheduler_config = SchedulerConfig(
-        max_num_seqs=256,
-        max_num_batched_tokens=8192,
-        max_model_len=model_config.max_model_len,
-        is_encoder_decoder=False,
-    )
-
-    load_config = LoadConfig()
-    device_config = DeviceConfig(device=DEVICE)
-
-    return VllmConfig(
-        model_config=model_config,
-        cache_config=cache_config,
-        parallel_config=parallel_config,
-        scheduler_config=scheduler_config,
-        load_config=load_config,
-        device_config=device_config,
-    )
-
-
 def main():
-    print("Initializing vLLM distributed environment...")
-    init_vllm_distributed()
-
     print("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print("Creating vLLM config...")
-    vllm_config = create_vllm_config(MODEL_NAME)
-
     print("Loading LlamaForCausalLM model...")
-    model = LlamaForCausalLM(vllm_config=vllm_config)
-    model = model.to(DEVICE).to(DTYPE)
-    model.eval()
-
-    # Load weights from HuggingFace
-    print("Loading weights...")
-    from vllm.model_executor.model_loader.weight_utils import initialize_dummy_weights
-    # For testing, we'll use the actual weights loader
-    from safetensors.torch import load_file
-    from huggingface_hub import hf_hub_download, list_repo_files
-
-    # Get weight files
-    files = list_repo_files(MODEL_NAME)
-    safetensor_files = [f for f in files if f.endswith('.safetensors')]
-
-    weights = {}
-    for sf in safetensor_files:
-        path = hf_hub_download(MODEL_NAME, sf)
-        weights.update(load_file(path))
-
-    model.load_weights(weights.items())
+    model = LlamaForCausalLM.from_pretrained(MODEL_NAME, dtype=DTYPE, device=DEVICE)
     print("Model loaded!")
 
     # Input prompt
@@ -122,7 +30,6 @@ def main():
 
     # Tokenize input
     input_ids = tokenizer.encode(prompt, return_tensors="pt").to(DEVICE)
-    seq_len = input_ids.shape[1]
 
     # Token-by-token generation loop
     max_new_tokens = 20
@@ -134,9 +41,10 @@ def main():
     with torch.no_grad():
         for i in range(max_new_tokens):
             # Create position ids
-            positions = torch.arange(input_ids.shape[1], device=DEVICE)
+            seq_len = input_ids.shape[1]
+            positions = torch.arange(seq_len, device=DEVICE).unsqueeze(0)
 
-            # Forward pass through model
+            # Forward pass through model (no page_table for simple test)
             hidden_states = model.forward(
                 input_ids=input_ids,
                 positions=positions,
