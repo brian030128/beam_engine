@@ -5,6 +5,7 @@ Test script for token-by-token generation with greedy decoding using LlamaForCau
 import torch
 from transformers import AutoTokenizer, LlamaConfig
 from vllm.config import VllmConfig, ModelConfig, CacheConfig, SchedulerConfig, LoadConfig, ParallelConfig, DeviceConfig
+from vllm.distributed import init_distributed_environment, initialize_model_parallel
 
 from beam_engine.models.modeling_llama import LlamaForCausalLM
 
@@ -12,6 +13,20 @@ from beam_engine.models.modeling_llama import LlamaForCausalLM
 MODEL_NAME = "meta-llama/Llama-3.1-8B"
 DEVICE = "cuda:0"
 DTYPE = torch.float16
+
+
+def init_vllm_distributed():
+    """Initialize vLLM distributed environment for single GPU."""
+    init_distributed_environment(
+        world_size=1,
+        rank=0,
+        local_rank=0,
+        distributed_init_method="tcp://127.0.0.1:29500",
+    )
+    initialize_model_parallel(
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=1,
+    )
 
 
 def create_vllm_config(model_name: str) -> VllmConfig:
@@ -59,6 +74,9 @@ def create_vllm_config(model_name: str) -> VllmConfig:
 
 
 def main():
+    print("Initializing vLLM distributed environment...")
+    init_vllm_distributed()
+
     print("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     if tokenizer.pad_token is None:
