@@ -7,6 +7,9 @@ os.environ["VLLM_USE_V1"] = "0"  # Use V0 engine
 os.environ["VLLM_TORCH_COMPILE_LEVEL"] = "0"  # Disable torch.compile
 
 import torch
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+torch._dynamo.disable()
 from transformers import AutoTokenizer, LlamaConfig
 from vllm.config import VllmConfig, ModelConfig, CacheConfig, SchedulerConfig, LoadConfig, ParallelConfig, DeviceConfig
 from vllm.distributed import init_distributed_environment, initialize_model_parallel
