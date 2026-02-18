@@ -35,11 +35,8 @@ class RotaryEmbedding(nn.Module):
             if rope_type == "llama3":
                 inv_freq = self._apply_llama3_scaling(inv_freq, rope_scaling)
 
-        self.register_buffer(
-            "inv_freq",
-            torch.tensor(inv_freq, dtype=torch.float32),
-            persistent=False,
-        )
+        # Store as plain list — not a buffer — so it survives meta device init
+        self._inv_freq_list = inv_freq
         self._cos_cached = None
         self._sin_cached = None
         self._cached_seq_len = 0
@@ -79,8 +76,9 @@ class RotaryEmbedding(nn.Module):
         if max_seq_len <= self._cached_seq_len and self._cos_cached is not None:
             return
         self._cached_seq_len = max_seq_len
+        inv_freq = torch.tensor(self._inv_freq_list, dtype=torch.float32, device=device)
         t = torch.arange(max_seq_len, device=device, dtype=torch.float32)
-        freqs = torch.outer(t, self.inv_freq.to(device))
+        freqs = torch.outer(t, inv_freq)
         emb = torch.cat([freqs, freqs], dim=-1)
         self._cos_cached = emb.cos().to(dtype)
         self._sin_cached = emb.sin().to(dtype)
