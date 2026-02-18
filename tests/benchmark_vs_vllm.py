@@ -20,6 +20,7 @@ from flashinfer import (
     BatchDecodeWithPagedKVCacheWrapper,
     BatchPrefillWithPagedKVCacheWrapper,
 )
+from transformers import AutoTokenizer
 
 from beam_engine.models.attention import AttentionMetadata
 from beam_engine.models.modeling_llama import LlamaForCausalLM
@@ -60,8 +61,14 @@ def _be_run_once_batch(
     config,
     prompts: list[list[int]],
     output_len: int,
-) -> tuple[float, list[float]]:
-    """One full batch prefill + batch decode run. Returns (prefill_s, list[decode_s])."""
+    collect_tokens: bool = False,
+) -> tuple[float, list[float], list[list[int]] | None]:
+    """One full batch prefill + batch decode run.
+
+    Returns (prefill_s, list[decode_s], generated_tokens).
+    generated_tokens is list[list[int]] (one per sequence) when collect_tokens=True,
+    else None.
+    """
     num_qo_heads = config.num_attention_heads
     num_kv_heads = config.num_key_value_heads
     head_dim = config.head_dim
@@ -166,6 +173,10 @@ def _be_run_once_batch(
     # current_positions[i]: position to write the next token for seq i
     current_positions = list(prompt_lens)
 
+    generated_tokens: list[list[int]] | None = None
+    if collect_tokens:
+        generated_tokens = [[t] for t in next_tokens.squeeze(-1).tolist()]
+
     # --- Decode loop ---
     decode_times: list[float] = []
 
@@ -234,17 +245,28 @@ def _be_run_once_batch(
             torch.cuda.synchronize()
             decode_times.append(time.perf_counter() - t_step)
 
+            if collect_tokens:
+                for i, t in enumerate(next_tokens.squeeze(-1).tolist()):
+                    generated_tokens[i].append(t)
+
             current_positions = [pos + 1 for pos in current_positions]
 
-    return prefill_time, decode_times
+    return prefill_time, decode_times, generated_tokens
 
 
 def run_beam_engine_benchmark(prompts: list[list[int]], output_len: int,
-                               num_warmup: int, num_iters: int):
+                               num_warmup: int, num_iters: int, tokenizer):
     print("Loading beam_engine model...")
     model = LlamaForCausalLM.from_pretrained(MODEL_NAME, dtype=DTYPE, device=DEVICE)
     config = model.config
     print("beam_engine model loaded.\n")
+
+    print("[beam_engine] Verification pass (first 20 tokens per sequence):")
+    _, _, gen = _be_run_once_batch(model, config, prompts, output_len, collect_tokens=True)
+    for i, tokens in enumerate(gen):
+        text = tokenizer.decode(tokens[:20], skip_special_tokens=True)
+        print(f"  seq[{i}] (prompt_len={len(prompts[i])}): {text!r}")
+    print()
 
     print(f"[beam_engine] Warming up ({num_warmup} iters)...")
     for _ in range(num_warmup):
@@ -254,7 +276,7 @@ def run_beam_engine_benchmark(prompts: list[list[int]], output_len: int,
     all_prefill: list[float] = []
     all_decode: list[float] = []
     for i in range(num_iters):
-        p, d = _be_run_once_batch(model, config, prompts, output_len)
+        p, d, _ = _be_run_once_batch(model, config, prompts, output_len)
         all_prefill.append(p)
         all_decode.extend(d)
         print(f"  iter {i + 1:2d}/{num_iters}: prefill={p * 1e3:.1f} ms  "
@@ -271,7 +293,7 @@ def run_beam_engine_benchmark(prompts: list[list[int]], output_len: int,
 # ---------------------------------------------------------------------------
 
 def run_vllm_benchmark(prompts: list[list[int]], output_len: int,
-                        num_warmup: int, num_iters: int):
+                        num_warmup: int, num_iters: int, tokenizer):
     print("\nLoading vllm model (FlashInfer backend, eager mode)...")
     llm = LLM(
         model=MODEL_NAME,
@@ -293,21 +315,29 @@ def run_vllm_benchmark(prompts: list[list[int]], output_len: int,
     # cannot reuse KV cache across sequences even if prefix caching were on.
     vllm_prompts = [{"prompt_token_ids": ids} for ids in prompts]
 
-    def run_once() -> float:
+    def run_once():
         torch.cuda.synchronize()
         t0 = time.perf_counter()
-        llm.generate(vllm_prompts, sampling_params=sampling_params, use_tqdm=False)
+        outputs = llm.generate(vllm_prompts, sampling_params=sampling_params, use_tqdm=False)
         torch.cuda.synchronize()
-        return time.perf_counter() - t0
+        return time.perf_counter() - t0, outputs
 
-    print(f"[vllm] Warming up ({num_warmup} iters)...")
-    for _ in range(num_warmup):
+    print("[vllm] Verification pass (first 20 tokens per sequence):")
+    _, outputs = run_once()
+    for i, out in enumerate(outputs):
+        tokens = out.outputs[0].token_ids[:20]
+        text = tokenizer.decode(tokens, skip_special_tokens=True)
+        print(f"  seq[{i}] (prompt_len={len(prompts[i])}): {text!r}")
+    print()
+
+    print(f"[vllm] Warming up ({num_warmup - 1} iters)...")  # first call above counts as 1
+    for _ in range(num_warmup - 1):
         run_once()
 
     print(f"[vllm] Benchmarking ({num_iters} iters)...")
     latencies: list[float] = []
     for i in range(num_iters):
-        t = run_once()
+        t, _ = run_once()
         latencies.append(t)
         print(f"  iter {i + 1:2d}/{num_iters}: total={t * 1e3:.1f} ms")
 
@@ -325,6 +355,9 @@ if __name__ == "__main__":
     rng = np.random.default_rng(42)
     prompts = _make_prompts(rng)
 
+    print("Loading tokenizer...")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+
     input_lens_str = ", ".join(str(len(p)) for p in prompts)
     total_input = sum(len(p) for p in prompts)
 
@@ -338,11 +371,11 @@ if __name__ == "__main__":
     print("=" * 65)
 
     be_prefill_ms, be_decode_ms = run_beam_engine_benchmark(
-        prompts, OUTPUT_LEN, NUM_WARMUP, NUM_ITERS
+        prompts, OUTPUT_LEN, NUM_WARMUP, NUM_ITERS, tokenizer
     )
 
     vllm_total_ms = run_vllm_benchmark(
-        prompts, OUTPUT_LEN, NUM_WARMUP, NUM_ITERS
+        prompts, OUTPUT_LEN, NUM_WARMUP, NUM_ITERS, tokenizer
     )
 
     be_total_ms = be_prefill_ms + be_decode_ms * (OUTPUT_LEN - 1)
