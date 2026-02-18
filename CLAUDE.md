@@ -8,8 +8,8 @@ Standalone LLaMA inference engine. Originally forked from vLLM, rewritten to rem
 src/beam_engine/
   models/
     modeling_llama.py   # LlamaForCausalLM — main model (no vLLM deps)
-    attention.py        # FlashInferAttention + AttentionMetadata
-    rotary_embedding.py # Pure PyTorch RoPE (supports llama3 scaling)
+    attention.py        # FlashInfer paged attention + AttentionMetadata
+    rotary_embedding.py # FlashInfer RoPE kernels (supports llama3 scaling)
     rmsnorm.py          # RMSNorm with fused residual add
     configuration_llama.py # HF-compatible LlamaConfig
   page_table.py         # Paged KV cache (FlashInfer 5D format)
@@ -22,7 +22,7 @@ tests/
 
 - **Fused projections**: q/k/v → single `qkv_proj`, gate/up → single `gate_up_proj`
 - **Weight loading**: HF safetensors are remapped at load time (concat q+k+v, gate+up)
-- **Two-phase attention**: Phase 1 uses naive `F.scaled_dot_product_attention` (no KV cache). Phase 2 adds FlashInfer paged attention.
+- **Paged attention**: FlashInfer paged KV cache with prefill + decode wrappers. Naive `F.scaled_dot_product_attention` fallback when no `attn_metadata` is provided.
 - **No quantization, torch.compile, or CUDA graphs** for now
 
 ## Development Workflow
@@ -32,8 +32,10 @@ Development happens locally (Windows). Testing runs on a remote Linux GPU machin
 ### Remote test machine
 - Host: `brain_l@140.113.24.210`
 - Test command: `ssh brain_l@140.113.24.210 "bash -i ./test.sh"`
-- `test.sh` on the remote pulls latest code and runs `tests/test_vllm_model.py`
+- `test.sh` on the remote: activates conda env `flashtree`, cd's to `~/flashtree/base/beam_engine`, runs `git pull`, then `uv run python tests/test_vllm_model.py`
 - Model: `meta-llama/Llama-3.1-8B` (needs HF access token on remote)
+- Python environment: conda `flashtree` + uv virtualenv at `.venv/`
+- To inspect the remote environment (e.g. check installed package versions or function signatures): `ssh brain_l@140.113.24.210 "bash -i -c 'conda activate flashtree && cd ~/flashtree/base/beam_engine && uv run python -c \"...\"'"`
 
 ### Typical deploy + test cycle
 ```bash

@@ -14,10 +14,12 @@ class AttentionMetadata:
     prefill_wrapper: Any | None = None  # flashinfer BatchPrefillWithPagedKVCacheWrapper
     decode_wrapper: Any | None = None   # flashinfer BatchDecodeWithPagedKVCacheWrapper
     page_table: Any | None = None       # PageTable instance
+    kv_page_indices: torch.Tensor | None = None  # [nnz] int32 — physical page for each token to write
+    kv_page_offsets: torch.Tensor | None = None   # [nnz] int32 — offset within page for each token to write
 
 
 class FlashInferAttention(nn.Module):
-    """Attention layer with naive SDPA fallback and future flashinfer paged attention."""
+    """Attention layer with naive SDPA fallback and flashinfer paged attention."""
 
     def __init__(
         self,
@@ -90,7 +92,22 @@ class FlashInferAttention(nn.Module):
         v: torch.Tensor,
         attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
-        raise NotImplementedError("FlashInfer prefill not yet implemented (Phase 2)")
+        page_table = attn_metadata.page_table
+        kv_cache = page_table.kv_cache_at_layer[self.layer_idx]
+
+        # Write k/v to paged cache
+        # kv_cache shape: [max_num_pages, 2, page_size, num_kv_heads, head_dim]
+        k_3d = k.view(-1, self.num_kv_heads, self.head_dim)
+        v_3d = v.view(-1, self.num_kv_heads, self.head_dim)
+        pi = attn_metadata.kv_page_indices
+        po = attn_metadata.kv_page_offsets
+        kv_cache[pi, 0, po] = k_3d
+        kv_cache[pi, 1, po] = v_3d
+
+        # Attention against full paged cache
+        q_3d = q.view(-1, self.num_heads, self.head_dim)
+        output = attn_metadata.prefill_wrapper.run(q_3d, kv_cache)
+        return output.reshape(*q.shape[:-1], self.num_heads * self.head_dim)
 
     def _flashinfer_decode(
         self,
@@ -99,4 +116,19 @@ class FlashInferAttention(nn.Module):
         v: torch.Tensor,
         attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
-        raise NotImplementedError("FlashInfer decode not yet implemented (Phase 2)")
+        page_table = attn_metadata.page_table
+        kv_cache = page_table.kv_cache_at_layer[self.layer_idx]
+
+        # Write k/v to paged cache
+        # kv_cache shape: [max_num_pages, 2, page_size, num_kv_heads, head_dim]
+        k_3d = k.view(-1, self.num_kv_heads, self.head_dim)
+        v_3d = v.view(-1, self.num_kv_heads, self.head_dim)
+        pi = attn_metadata.kv_page_indices
+        po = attn_metadata.kv_page_offsets
+        kv_cache[pi, 0, po] = k_3d
+        kv_cache[pi, 1, po] = v_3d
+
+        # Attention against full paged cache
+        q_3d = q.view(-1, self.num_heads, self.head_dim)
+        output = attn_metadata.decode_wrapper.run(q_3d, kv_cache)
+        return output.reshape(*q.shape[:-1], self.num_heads * self.head_dim)
