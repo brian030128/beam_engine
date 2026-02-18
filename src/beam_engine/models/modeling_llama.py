@@ -65,7 +65,7 @@ class LlamaAttention(nn.Module):
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
-        attn_metadata: AttentionMetadata | None = None,
+        attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         qkv = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
@@ -91,7 +91,7 @@ class LlamaDecoderLayer(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         residual: torch.Tensor | None,
-        attn_metadata: AttentionMetadata | None = None,
+        attn_metadata: AttentionMetadata,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if residual is None:
             residual = hidden_states
@@ -120,7 +120,7 @@ class LlamaModel(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        attn_metadata: AttentionMetadata | None = None,
+        attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         hidden_states = self.embed_tokens(input_ids)
         residual = None
@@ -143,7 +143,7 @@ class LlamaForCausalLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        attn_metadata: AttentionMetadata | None = None,
+        attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         return self.model(input_ids, positions, attn_metadata)
 
