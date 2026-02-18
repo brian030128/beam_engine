@@ -7,6 +7,11 @@ Produces Chrome trace files for visual inspection in Perfetto UI
 Uses a single prompt (len=96) to keep trace files manageable.
 """
 
+import os
+
+# Must be set before importing vLLM so it picks up the profiler config.
+os.environ["VLLM_TORCH_PROFILER_DIR"] = "./vllm_profile"
+
 import numpy as np
 import torch
 from torch.profiler import ProfilerActivity, profile
@@ -89,19 +94,15 @@ def profile_vllm(prompt: list[int], output_len: int, beam_width: int):
     llm.beam_search([{"prompt_token_ids": prompt}], params)
     torch.cuda.synchronize()
 
-    # Profile
+    # Profile using vLLM's built-in torch profiler integration.
+    # Traces are written to VLLM_TORCH_PROFILER_DIR (set at top of file).
     print("[vllm] Profiling...")
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        record_shapes=True,
-        profile_memory=True,
-        with_stack=True,
-    ) as prof:
-        llm.beam_search([{"prompt_token_ids": prompt}], params)
-        torch.cuda.synchronize()
+    llm.start_profile()
+    llm.beam_search([{"prompt_token_ids": prompt}], params)
+    torch.cuda.synchronize()
+    llm.stop_profile()
 
-    prof.export_chrome_trace("vllm_beam_search.json")
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=30))
+    print(f"[vllm] Traces written to {os.environ['VLLM_TORCH_PROFILER_DIR']}/")
 
     del llm
     torch.cuda.empty_cache()
@@ -124,5 +125,5 @@ if __name__ == "__main__":
     profile_vllm(prompt, OUTPUT_LEN, BEAM_WIDTH)
 
     print("\nDone. Trace files written:")
-    print("  beam_engine_beam_search.json")
-    print("  vllm_beam_search.json")
+    print("  beam_engine: beam_engine_beam_search.json")
+    print("  vllm:        ./vllm_profile/")
