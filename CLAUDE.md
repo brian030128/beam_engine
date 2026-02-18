@@ -31,18 +31,30 @@ Development happens locally (Windows). Testing runs on a remote Linux GPU machin
 
 ### Remote test machine
 - Host: `brain_l@140.113.24.210`
-- Test command: `ssh brain_l@140.113.24.210 "bash -i ./test.sh"`
+- Test command: `ssh brain_l@140.113.24.210 "bash -i ./test.sh <test_file> <gpu_ids>"`
 - `test.sh` on the remote: activates conda env `flashtree`, cd's to `~/flashtree/base/beam_engine`, runs `git pull`, then `uv run python tests/test_vllm_model.py`
+- `test.sh` arguments:
+  - First arg: test file (e.g. `tests/test_vllm_model.py`)
+  - Second arg: comma-separated GPU IDs to use (e.g. `0,1` to use GPUs 0 and 1)
+  - Example: `ssh brain_l@140.113.24.210 "bash -i ./test.sh tests/test_vllm_model.py 0,1"`
 - Model: `meta-llama/Llama-3.1-8B` (needs HF access token on remote)
 - Python environment: conda `flashtree` + uv virtualenv at `.venv/`
 - To inspect the remote environment (e.g. check installed package versions or function signatures): `ssh brain_l@140.113.24.210 "bash -i -c 'conda activate flashtree && cd ~/flashtree/base/beam_engine && uv run python -c \"...\"'"`
+
+### GPU availability — check before running
+The remote machine is shared with other users. Before running any test, check which GPUs are free:
+```bash
+ssh brain_l@140.113.24.210 "bash -i -c nvidia-smi"
+```
+Pick GPUs with no active processes and pass them as the second argument to `test.sh`.
 
 ### Typical deploy + test cycle
 ```bash
 git add <files>
 git commit -m "message"
 git push
-ssh brain_l@140.113.24.210 "bash -i ./test.sh"
+ssh brain_l@140.113.24.210 "bash -i -c nvidia-smi"   # check free GPUs first
+ssh brain_l@140.113.24.210 "bash -i ./test.sh tests/test_vllm_model.py <free_gpu_ids>"
 ```
 
 ## Branch
