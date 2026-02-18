@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from flashinfer.norm import rmsnorm, fused_add_rmsnorm
 
 
 class RMSNorm(nn.Module):
@@ -8,14 +9,10 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.eps = eps
 
-    def _norm(self, x: torch.Tensor) -> torch.Tensor:
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-
     def forward(
         self, x: torch.Tensor, residual: torch.Tensor | None = None
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         if residual is not None:
-            x = x + residual
-            residual = x
-            return self._norm(x.float()).to(x.dtype) * self.weight, residual
-        return self._norm(x.float()).to(x.dtype) * self.weight
+            fused_add_rmsnorm(x, residual, self.weight, self.eps)
+            return x, residual
+        return rmsnorm(x, self.weight, self.eps)
