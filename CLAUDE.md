@@ -22,7 +22,7 @@ tests/
 
 - **Fused projections**: q/k/v → single `qkv_proj`, gate/up → single `gate_up_proj`
 - **Weight loading**: HF safetensors are remapped at load time (concat q+k+v, gate+up)
-- **Paged attention**: FlashInfer paged KV cache with prefill + decode wrappers. Naive `F.scaled_dot_product_attention` fallback when no `attn_metadata` is provided.
+- **Paged attention**: FlashInfer paged KV cache with prefill + decode wrappers (`attn_metadata` required)
 - **No quantization, torch.compile, or CUDA graphs** for now
 
 ## Development Workflow
