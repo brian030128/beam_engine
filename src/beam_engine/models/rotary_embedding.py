@@ -24,24 +24,30 @@ class RotaryEmbedding(nn.Module):
         self.rope_theta = rope_theta
         self.rope_scaling = rope_scaling
 
-        inv_freq = 1.0 / (
-            rope_theta
-            ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim)
-        )
+        # Compute inv_freq using plain Python math to avoid meta-tensor issues
+        inv_freq = [
+            1.0 / (rope_theta ** (i / head_dim))
+            for i in range(0, head_dim, 2)
+        ]
 
         if rope_scaling is not None:
             rope_type = rope_scaling.get("rope_type", rope_scaling.get("type", "default"))
             if rope_type == "llama3":
                 inv_freq = self._apply_llama3_scaling(inv_freq, rope_scaling)
 
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.register_buffer(
+            "inv_freq",
+            torch.tensor(inv_freq, dtype=torch.float32),
+            persistent=False,
+        )
         self._cos_cached = None
         self._sin_cached = None
         self._cached_seq_len = 0
 
+    @staticmethod
     def _apply_llama3_scaling(
-        self, inv_freq: torch.Tensor, rope_scaling: dict
-    ) -> torch.Tensor:
+        inv_freq: list[float], rope_scaling: dict
+    ) -> list[float]:
         factor = rope_scaling["factor"]
         low_freq_factor = rope_scaling.get("low_freq_factor", 1.0)
         high_freq_factor = rope_scaling.get("high_freq_factor", 4.0)
@@ -52,17 +58,14 @@ class RotaryEmbedding(nn.Module):
         low_freq_wavelen = old_context_len / low_freq_factor
         high_freq_wavelen = old_context_len / high_freq_factor
 
-        wavelens = 2 * math.pi / inv_freq
         new_inv_freq = []
-        for freq, wavelen in zip(inv_freq, wavelens):
+        for freq in inv_freq:
+            wavelen = 2 * math.pi / freq
             if wavelen < high_freq_wavelen:
-                # High frequency — no scaling
                 new_inv_freq.append(freq)
             elif wavelen > low_freq_wavelen:
-                # Low frequency — full scaling
                 new_inv_freq.append(freq / factor)
             else:
-                # Medium frequency — smooth interpolation
                 smooth = (old_context_len / wavelen - low_freq_factor) / (
                     high_freq_factor - low_freq_factor
                 )
@@ -70,7 +73,7 @@ class RotaryEmbedding(nn.Module):
                     (1 - smooth) * freq / factor + smooth * freq
                 )
 
-        return torch.tensor(new_inv_freq, dtype=inv_freq.dtype)
+        return new_inv_freq
 
     def _update_cos_sin_cache(self, max_seq_len: int, device: torch.device, dtype: torch.dtype):
         if max_seq_len <= self._cached_seq_len and self._cos_cached is not None:
