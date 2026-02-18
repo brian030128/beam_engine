@@ -141,7 +141,7 @@ def run_vllm_benchmark(
         attention_backend=AttentionBackendEnum.FLASHINFER,
         max_model_len=2048,
         gpu_memory_utilization=0.85,
-        enable_prefix_caching=False,
+        enable_prefix_caching=True,
     )
     print("vllm model loaded.\n")
 
