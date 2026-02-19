@@ -578,13 +578,58 @@ def main():
           f"{'PASS' if score_check else 'FAIL'}")
     print()
 
+    # --- Test 4: Batched multi-prompt vs individual ---
+    print("=" * 60)
+    print("Test 4: Batched multi-prompt beam search consistency")
+    print("=" * 60)
+
+    test_prompts = [
+        "The capital of France is",
+        "The meaning of life is",
+        "In the year 2025, artificial intelligence",
+    ]
+    test_prompt_ids = [tokenizer.encode(p) for p in test_prompts]
+    print(f"  Prompt lengths: {[len(p) for p in test_prompt_ids]}")
+
+    # Run each prompt individually (B=1)
+    individual_results: list[list[Beam]] = []
+    for i, pids in enumerate(test_prompt_ids):
+        result = beam_search(model, config, [pids], max_new_tokens, beam_width=4)[0]
+        individual_results.append(result)
+        text = tokenizer.decode(result[0].token_ids, skip_special_tokens=True)
+        print(f"  Individual prompt {i}: \"{test_prompts[i]}{text}\"")
+
+    # Run all prompts batched (B=3)
+    batched_results = beam_search(model, config, test_prompt_ids, max_new_tokens, beam_width=4)
+    for i in range(len(test_prompts)):
+        text = tokenizer.decode(batched_results[i][0].token_ids, skip_special_tokens=True)
+        print(f"  Batched   prompt {i}: \"{test_prompts[i]}{text}\"")
+
+    # Compare best beam token_ids for each prompt
+    batch_matches = []
+    for i in range(len(test_prompts)):
+        ind_tokens = individual_results[i][0].token_ids
+        bat_tokens = batched_results[i][0].token_ids
+        m = (ind_tokens == bat_tokens)
+        batch_matches.append(m)
+        status = "PASS" if m else "FAIL"
+        print(f"  Prompt {i} batch==individual: {status}")
+        if not m:
+            for j, (a, b) in enumerate(zip(ind_tokens, bat_tokens)):
+                if a != b:
+                    print(f"    First mismatch at position {j}: individual={a} batched={b}")
+                    break
+    batch_all_match = all(batch_matches)
+    print()
+
     # --- Summary ---
     print("=" * 60)
     print("SUMMARY")
     print("=" * 60)
-    all_pass = match and score_check
-    print(f"  beam_width=1 matches greedy: {'PASS' if match else 'FAIL'}")
-    print(f"  beam_width=4 best >= greedy: {'PASS' if score_check else 'FAIL'}")
+    all_pass = match and score_check and batch_all_match
+    print(f"  beam_width=1 matches greedy:   {'PASS' if match else 'FAIL'}")
+    print(f"  beam_width=4 best >= greedy:   {'PASS' if score_check else 'FAIL'}")
+    print(f"  batch==individual consistency: {'PASS' if batch_all_match else 'FAIL'}")
     print(f"  Overall: {'ALL PASS' if all_pass else 'SOME FAILED'}")
 
 
