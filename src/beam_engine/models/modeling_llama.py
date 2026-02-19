@@ -5,6 +5,7 @@ from __future__ import annotations
 import glob
 import os
 
+import flashinfer.activation
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,8 +26,7 @@ class LlamaMLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         gate_up = self.gate_up_proj(x)
-        gate, up = gate_up.chunk(2, dim=-1)
-        return self.down_proj(F.silu(gate) * up)
+        return self.down_proj(flashinfer.activation.silu_and_mul(gate_up))
 
 
 class LlamaAttention(nn.Module):
