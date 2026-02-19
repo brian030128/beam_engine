@@ -109,8 +109,8 @@ def run_beam_engine_benchmark(
     num_warmup: int,
     num_iters: int,
     tokenizer,
-) -> float:
-    """Load model, verify, warmup, benchmark. Returns avg total latency in ms."""
+) -> tuple[float, list[list[int]]]:
+    """Load model, verify, warmup, benchmark. Returns (avg_ms, best_beam_tokens)."""
     print("Loading beam_engine model...")
     model = LlamaForCausalLM.from_pretrained(MODEL_NAME, dtype=DTYPE, device=DEVICE)
     config = model.config
@@ -162,7 +162,7 @@ def run_beam_engine_benchmark(
     del model
     torch.cuda.empty_cache()
 
-    return np.mean(latencies) * 1e3  # ms
+    return np.mean(latencies) * 1e3, gen  # ms, best-beam tokens
 
 
 # ---------------------------------------------------------------------------
@@ -176,8 +176,8 @@ def run_vllm_benchmark(
     num_warmup: int,
     num_iters: int,
     tokenizer,
-) -> float:
-    """Load LLM, verify, warmup, benchmark. Returns avg total latency in ms."""
+) -> tuple[float, list[list[int]]]:
+    """Load LLM, verify, warmup, benchmark. Returns (avg_ms, best_beam_tokens)."""
     print("\nLoading vllm model (FlashInfer backend, eager mode)...")
     llm = LLM(
         model=MODEL_NAME,
@@ -207,9 +207,11 @@ def run_vllm_benchmark(
 
     print("[vllm] Verification pass (best beam, first 20 tokens per sequence):")
     _, outputs = run_once()
+    gen: list[list[int]] = []
     for i, out in enumerate(outputs):
         # output tokens include prompt; strip prompt to get generated tokens
         gen_tokens = out.sequences[0].tokens[len(prompts[i]):]
+        gen.append(gen_tokens)
         text = tokenizer.decode(gen_tokens[:20], skip_special_tokens=True)
         print(f"  seq[{i}] (prompt_len={len(prompts[i])}): {text!r}")
     print()
@@ -228,7 +230,7 @@ def run_vllm_benchmark(
     del llm
     torch.cuda.empty_cache()
 
-    return np.mean(latencies) * 1e3  # ms
+    return np.mean(latencies) * 1e3, gen  # ms, best-beam tokens
 
 
 # ---------------------------------------------------------------------------
@@ -255,13 +257,32 @@ if __name__ == "__main__":
     print(f"  Warmup:     {NUM_WARMUP}  |  Bench iters: {NUM_ITERS}")
     print("=" * 65)
 
-    be_total_ms = run_beam_engine_benchmark(
+    be_total_ms, be_tokens = run_beam_engine_benchmark(
         prompts, OUTPUT_LEN, BEAM_WIDTH, NUM_WARMUP, NUM_ITERS, tokenizer
     )
 
-    vllm_total_ms = run_vllm_benchmark(
+    vllm_total_ms, vllm_tokens = run_vllm_benchmark(
         prompts, OUTPUT_LEN, BEAM_WIDTH, NUM_WARMUP, NUM_ITERS, tokenizer
     )
+
+    # --- Output verification ---
+    print()
+    print("=" * 65)
+    print("  OUTPUT VERIFICATION (best beam tokens)")
+    print("=" * 65)
+    all_match = True
+    for i, (be_t, vl_t) in enumerate(zip(be_tokens, vllm_tokens)):
+        if be_t == vl_t:
+            print(f"  seq[{i}]: PASS ({len(be_t)} tokens match)")
+        else:
+            all_match = False
+            print(f"  seq[{i}]: FAIL")
+            print(f"    beam_engine: {be_t}")
+            print(f"    vllm:        {vl_t}")
+    if all_match:
+        print("  Overall: PASS")
+    else:
+        print("  Overall: FAIL")
 
     print()
     print("=" * 65)
