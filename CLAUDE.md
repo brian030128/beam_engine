@@ -57,6 +57,40 @@ ssh brain_l@140.113.24.210 "bash -i -c nvidia-smi"   # check free GPUs first
 ssh brain_l@140.113.24.210 "bash -i ./test.sh tests/test_vllm_model.py <free_gpu_ids>"
 ```
 
+## Beam Search
+
+### Algorithm
+
+1. **Prefill** (1 forward, batch size 1): Run the full prompt. Take logits at the last position, compute log-softmax, pick top-K tokens. Each becomes a beam with `cum_log_prob = log_prob(token)`.
+
+2. **Decode loop** (`max_new_tokens - 1` forwards, batch size K): Each step:
+   - Feed the last token of each beam through the model as a batch of K ([K, 1] input).
+   - Compute scores: `cum_log_prob[beam] + log_prob[beam][token]` → shape [K, vocab].
+   - Flatten to [K × vocab], pick top-K `(parent_beam_id, new_token)` pairs.
+   - Beams can fork (multiple children from same parent) or be eliminated (usage=0).
+
+3. **Return**: K beams sorted best-first by `cum_log_prob`.
+
+**Total forwards with OUTPUT_LEN=10**: 1 prefill + 9 decode = 10 (all K beams batched per forward).
+
+### Our Implementation (`tests/test_beam_search.py`)
+
+**Data structure**: `Beam(token_ids, cum_log_prob, pages)` — `token_ids` holds generated tokens only (excludes prompt), `pages` is the ordered list of physical KV-cache page indices for this beam.
+
+**Paged KV cache with reference counting + copy-on-write (COW)**:
+- All K beams start sharing the same `prompt_pages` (each page gets ref_count = K).
+- Before each decode write, COW is enforced:
+  - At a page boundary (`offset == 0`): allocate a fresh page per beam (no sharing).
+  - Mid-page (`offset > 0`): if `page_ref_counts[write_page] > 1`, copy the page up to `offset`, decrement ref on the old page, point the beam to the new page.
+- When beams are eliminated (usage=0 after selection), all their page refs are decremented; pages with ref_count=0 are freed.
+- When a beam is forked (usage>1), add `usage-1` extra refs to each of its pages.
+
+**Batched decode forward**: All K beams run in one `model.forward()` call with input shape `[K, 1]`. The `decode_wrapper` describes K independent KV sequences via `indptr` / `indices` / `last_page_len`.
+
+**Position tracking**: After prefill the KV cache holds positions `[0, prompt_len)`. The first generated token has NOT had its KV written yet. The decode loop starts at `current_pos = prompt_len`, writes KV for the fed token, produces logits for the next position, then increments `current_pos`.
+
+**Reuse across calls**: `page_table`, `workspace_buffer`, `prefill_wrapper`, and `decode_wrapper` can be passed in and reused. `page_table.reset()` recycles bookkeeping without reallocating the ~4 GiB GPU tensor.
+
 ## Branch
 
 - `mini-vllm` — main development branch
