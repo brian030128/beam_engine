@@ -4,7 +4,7 @@ Torch profiler for beam_engine vs vLLM beam search.
 Produces Chrome trace files for visual inspection in Perfetto UI
 (chrome://tracing or https://ui.perfetto.dev/).
 
-Uses a single prompt (len=96) to keep trace files manageable.
+Uses a single prompt to keep trace files manageable.
 """
 
 import os
@@ -28,8 +28,8 @@ DEVICE = "cuda"
 DTYPE = torch.float16
 PAGE_SIZE = 16
 BEAM_WIDTH = 4
-OUTPUT_LEN = 128
-PROMPT_LENS = [96, 112, 128, 144]
+OUTPUT_LEN = 10
+PROMPT_LENS = [512, 640, 768, 896]
 
 
 def _make_prompts(rng: np.random.Generator) -> list[list[int]]:
@@ -111,7 +111,7 @@ def profile_vllm(prompt: list[int], output_len: int, beam_width: int):
 if __name__ == "__main__":
     rng = np.random.default_rng(42)
     prompts = _make_prompts(rng)
-    prompt = prompts[0]  # single prompt, len=96
+    prompt = prompts[0]  # single prompt, len=512
 
     print("=" * 65)
     print(f"  Profiling: beam_engine vs vLLM  (beam search, width={BEAM_WIDTH})")

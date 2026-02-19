@@ -36,12 +36,12 @@ DTYPE = torch.float16
 PAGE_SIZE = 16
 
 BATCH_SIZE = 4
-OUTPUT_LEN = 128
+OUTPUT_LEN = 10
 NUM_WARMUP = 3
 NUM_ITERS = 10
 
 # Distinct prompt lengths (tokens) — one per batch slot.
-PROMPT_LENS = [96, 112, 128, 144]
+PROMPT_LENS = [512, 640, 768, 896]
 assert len(PROMPT_LENS) == BATCH_SIZE
 
 BEAM_WIDTH = 4
