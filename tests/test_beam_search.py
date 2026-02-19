@@ -215,7 +215,7 @@ def greedy_decode(
 def beam_search(
     model,
     config,
-    prompt_ids: list[int],
+    prompt_ids: list[list[int]],
     max_new_tokens: int,
     beam_width: int,
     *,
@@ -223,24 +223,27 @@ def beam_search(
     workspace_buffer=None,
     prefill_wrapper=None,
     decode_wrapper=None,
-) -> list[Beam]:
+) -> list[list[Beam]]:
     """
-    Beam search with copy-on-write paged KV cache.
+    Batched beam search with copy-on-write paged KV cache.
+
+    Accepts B prompts and runs all B×K beams in a single batched forward pass.
 
     Position tracking follows the greedy decode pattern exactly:
-      - After prefill, current_pos = prompt_len (position of first generated token)
+      - After prefill, current_pos[b] = prompt_lens[b]
       - Each decode step feeds the last generated token, writes its KV at current_pos,
         then produces logits for the next token at current_pos + 1
       - current_pos increments by 1 each step
 
-    Returns list of Beam sorted by cum_log_prob (best first).
+    Returns list[list[Beam]] — outer list per prompt, inner sorted by cum_log_prob (best first).
     """
     num_qo_heads = config.num_attention_heads
     num_kv_heads = config.num_key_value_heads
     head_dim = config.head_dim
     num_layers = config.num_hidden_layers
-    prompt_len = len(prompt_ids)
+    B = len(prompt_ids)
     K = beam_width
+    prompt_lens = [len(p) for p in prompt_ids]
 
     if page_table is not None:
         page_table.reset()
@@ -263,28 +266,49 @@ def beam_search(
             workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
         )
 
-    page_ref_counts: dict[int, int] = {}
-
     # -----------------------------------------------------------------------
-    # Prefill
+    # Prefill (batched — all B prompts in one ragged forward pass)
     # -----------------------------------------------------------------------
-    num_prompt_pages = (prompt_len + PAGE_SIZE - 1) // PAGE_SIZE
-    prompt_pages = [page_table.allocate_block() for _ in range(num_prompt_pages)]
 
-    kv_page_indices = torch.tensor(
-        [prompt_pages[i // PAGE_SIZE] for i in range(prompt_len)],
-        dtype=torch.int32, device=DEVICE,
-    )
-    kv_page_offsets = torch.tensor(
-        [i % PAGE_SIZE for i in range(prompt_len)],
-        dtype=torch.int32, device=DEVICE,
-    )
+    # Allocate pages per prompt
+    prompt_pages_list: list[list[int]] = []
+    for plen in prompt_lens:
+        num_pages = (plen + PAGE_SIZE - 1) // PAGE_SIZE
+        pages = [page_table.allocate_block() for _ in range(num_pages)]
+        prompt_pages_list.append(pages)
 
-    qo_indptr = torch.tensor([0, prompt_len], dtype=torch.int32, device=DEVICE)
-    paged_kv_indptr = torch.tensor([0, len(prompt_pages)], dtype=torch.int32, device=DEVICE)
-    paged_kv_indices = torch.tensor(prompt_pages, dtype=torch.int32, device=DEVICE)
-    last_page_len = prompt_len - (num_prompt_pages - 1) * PAGE_SIZE
-    paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=DEVICE)
+    # KV write indices (concatenated across all prompts)
+    all_kv_pi: list[int] = []
+    all_kv_po: list[int] = []
+    for b in range(B):
+        pages = prompt_pages_list[b]
+        plen = prompt_lens[b]
+        for i in range(plen):
+            all_kv_pi.append(pages[i // PAGE_SIZE])
+            all_kv_po.append(i % PAGE_SIZE)
+
+    kv_page_indices = torch.tensor(all_kv_pi, dtype=torch.int32, device=DEVICE)
+    kv_page_offsets = torch.tensor(all_kv_po, dtype=torch.int32, device=DEVICE)
+
+    # Ragged batch metadata for FlashInfer prefill
+    qo_indptr_list = [0]
+    for plen in prompt_lens:
+        qo_indptr_list.append(qo_indptr_list[-1] + plen)
+    qo_indptr = torch.tensor(qo_indptr_list, dtype=torch.int32, device=DEVICE)
+
+    paged_kv_indptr_list = [0]
+    all_paged_kv_indices: list[int] = []
+    paged_kv_lpl_list: list[int] = []
+    for b in range(B):
+        pages = prompt_pages_list[b]
+        all_paged_kv_indices.extend(pages)
+        paged_kv_indptr_list.append(paged_kv_indptr_list[-1] + len(pages))
+        last_page_len = prompt_lens[b] - (len(pages) - 1) * PAGE_SIZE
+        paged_kv_lpl_list.append(last_page_len)
+
+    paged_kv_indptr = torch.tensor(paged_kv_indptr_list, dtype=torch.int32, device=DEVICE)
+    paged_kv_indices = torch.tensor(all_paged_kv_indices, dtype=torch.int32, device=DEVICE)
+    paged_kv_last_page_len = torch.tensor(paged_kv_lpl_list, dtype=torch.int32, device=DEVICE)
 
     prefill_wrapper.plan(
         qo_indptr=qo_indptr,
@@ -298,8 +322,15 @@ def beam_search(
         causal=True,
     )
 
-    input_ids = torch.tensor(prompt_ids, dtype=torch.long, device=DEVICE).unsqueeze(0)
-    positions = torch.arange(prompt_len, device=DEVICE).unsqueeze(0)
+    # Concatenate all prompt tokens and positions (ragged)
+    all_token_ids: list[int] = []
+    all_positions: list[int] = []
+    for b in range(B):
+        all_token_ids.extend(prompt_ids[b])
+        all_positions.extend(range(prompt_lens[b]))
+
+    input_ids = torch.tensor(all_token_ids, dtype=torch.long, device=DEVICE).unsqueeze(0)
+    positions = torch.tensor(all_positions, device=DEVICE).unsqueeze(0)
 
     attn_metadata = AttentionMetadata(
         is_prefill=True,
@@ -311,62 +342,87 @@ def beam_search(
 
     with torch.no_grad():
         hidden_states = model.forward(input_ids=input_ids, positions=positions, attn_metadata=attn_metadata)
-        logits = model.compute_logits(hidden_states[:, -1, :])   # [1, vocab]
-        log_probs = F.log_softmax(logits, dim=-1)                # [1, vocab]
-        topk_log_probs, topk_ids = log_probs[0].topk(K)         # [K], [K]
+        # Extract last token of each prompt from concatenated sequence
+        last_indices = [qo_indptr_list[b + 1] - 1 for b in range(B)]
+        last_hidden = hidden_states[0, last_indices, :]          # [B, hidden_dim]
+        logits = model.compute_logits(last_hidden)               # [B, vocab]
+        log_probs = F.log_softmax(logits, dim=-1)                # [B, vocab]
+        topk_log_probs, topk_ids = log_probs.topk(K, dim=-1)    # [B, K], [B, K]
 
-    # Initialize beams — all share the same prompt pages
-    beams: list[Beam] = []
-    for i in range(K):
-        beams.append(Beam(
-            token_ids=[topk_ids[i].item()],
-            cum_log_prob=topk_log_probs[i].item(),
-            pages=list(prompt_pages),
-        ))
-    for p in prompt_pages:
-        add_ref(page_ref_counts, p, K)
+    # Initialize beams per prompt — all K beams share prompt pages
+    beams_per_prompt: list[list[Beam]] = []
+    page_ref_counts_list: list[dict[int, int]] = []
+    for b in range(B):
+        beams: list[Beam] = []
+        page_ref_counts: dict[int, int] = {}
+        for i in range(K):
+            beams.append(Beam(
+                token_ids=[topk_ids[b, i].item()],
+                cum_log_prob=topk_log_probs[b, i].item(),
+                pages=list(prompt_pages_list[b]),
+            ))
+        for p in prompt_pages_list[b]:
+            add_ref(page_ref_counts, p, K)
+        beams_per_prompt.append(beams)
+        page_ref_counts_list.append(page_ref_counts)
 
     # -----------------------------------------------------------------------
-    # Decode loop
+    # Decode loop (batched — all B×K beams in one forward pass)
     #
-    # After prefill, the KV cache holds entries for positions [0, prompt_len).
+    # After prefill, the KV cache holds entries for positions [0, prompt_len_b).
     # The first generated token (from prefill logits) has NOT had its KV written.
     # In the decode loop, we feed that token, write its KV at current_pos,
     # and get logits for the next position.
     # -----------------------------------------------------------------------
-    current_pos = prompt_len
+    current_positions = list(prompt_lens)
 
     with torch.no_grad():
         for step in range(max_new_tokens - 1):
-            page_list_idx = current_pos // PAGE_SIZE
-            offset = current_pos % PAGE_SIZE
 
-            # Step 1 — Ensure unique write pages (COW)
-            for b in beams:
-                if offset == 0:
-                    # New page boundary: allocate fresh page
-                    new_page = page_table.allocate_block()
-                    b.pages.append(new_page)
-                    add_ref(page_ref_counts, new_page, 1)
-                else:
-                    write_page = b.pages[page_list_idx]
-                    if page_ref_counts[write_page] > 1:
-                        new_page = page_table.copy_block(write_page, offset)
-                        remove_ref(page_ref_counts, write_page, page_table)
-                        b.pages[page_list_idx] = new_page
-                        add_ref(page_ref_counts, new_page, 1)
+            # Step 1 — Ensure unique write pages (COW), per prompt
+            for b in range(B):
+                pos = current_positions[b]
+                pli = pos // PAGE_SIZE
+                off = pos % PAGE_SIZE
+                for beam in beams_per_prompt[b]:
+                    if off == 0:
+                        new_page = page_table.allocate_block()
+                        beam.pages.append(new_page)
+                        add_ref(page_ref_counts_list[b], new_page, 1)
+                    else:
+                        write_page = beam.pages[pli]
+                        if page_ref_counts_list[b][write_page] > 1:
+                            new_page = page_table.copy_block(write_page, off)
+                            remove_ref(page_ref_counts_list[b], write_page, page_table)
+                            beam.pages[pli] = new_page
+                            add_ref(page_ref_counts_list[b], new_page, 1)
 
-            # Step 2 — Build decode wrapper metadata
+            # Step 2 — Build decode wrapper metadata (all B×K beams)
             all_page_indices: list[int] = []
             indptr = [0]
-            for b in beams:
-                all_page_indices.extend(b.pages)
-                indptr.append(len(all_page_indices))
+            all_last_page_len: list[int] = []
+            all_write_pi: list[int] = []
+            all_write_po: list[int] = []
+            all_input: list[list[int]] = []
+            all_pos: list[list[int]] = []
+
+            for b in range(B):
+                pos = current_positions[b]
+                pli = pos // PAGE_SIZE
+                off = pos % PAGE_SIZE
+                for beam in beams_per_prompt[b]:
+                    all_page_indices.extend(beam.pages)
+                    indptr.append(len(all_page_indices))
+                    all_last_page_len.append(off + 1)
+                    all_write_pi.append(beam.pages[pli])
+                    all_write_po.append(off)
+                    all_input.append([beam.token_ids[-1]])
+                    all_pos.append([pos])
 
             decode_indptr = torch.tensor(indptr, dtype=torch.int32, device=DEVICE)
             decode_indices = torch.tensor(all_page_indices, dtype=torch.int32, device=DEVICE)
             decode_last_page_len = torch.tensor(
-                [offset + 1] * K, dtype=torch.int32, device=DEVICE
+                all_last_page_len, dtype=torch.int32, device=DEVICE
             )
 
             decode_wrapper.plan(
@@ -379,13 +435,8 @@ def beam_search(
                 page_size=PAGE_SIZE,
             )
 
-            # Per-beam write positions
-            write_page_indices = torch.tensor(
-                [b.pages[page_list_idx] for b in beams], dtype=torch.int32, device=DEVICE
-            )
-            write_page_offsets = torch.tensor(
-                [offset] * K, dtype=torch.int32, device=DEVICE
-            )
+            write_page_indices = torch.tensor(all_write_pi, dtype=torch.int32, device=DEVICE)
+            write_page_offsets = torch.tensor(all_write_po, dtype=torch.int32, device=DEVICE)
 
             attn_metadata = AttentionMetadata(
                 is_prefill=False,
@@ -395,66 +446,70 @@ def beam_search(
                 kv_page_offsets=write_page_offsets,
             )
 
-            # Step 3 — Forward pass
+            # Step 3 — Forward pass (B*K sequences)
             beam_input_ids = torch.tensor(
-                [[b.token_ids[-1]] for b in beams], dtype=torch.long, device=DEVICE
-            )  # [K, 1]
+                all_input, dtype=torch.long, device=DEVICE
+            )  # [B*K, 1]
             beam_positions = torch.tensor(
-                [[current_pos]] * K, device=DEVICE
-            )  # [K, 1]
+                all_pos, device=DEVICE
+            )  # [B*K, 1]
 
             hidden_states = model.forward(
                 input_ids=beam_input_ids,
                 positions=beam_positions,
                 attn_metadata=attn_metadata,
             )
-            logits = model.compute_logits(hidden_states[:, -1, :])  # [K, vocab]
-            log_probs = F.log_softmax(logits, dim=-1)               # [K, vocab]
+            logits = model.compute_logits(hidden_states[:, -1, :])  # [B*K, vocab]
+            log_probs = F.log_softmax(logits, dim=-1)               # [B*K, vocab]
 
-            # Step 4 — Score and select top-K
-            cum_probs = torch.tensor(
-                [b.cum_log_prob for b in beams], device=DEVICE, dtype=torch.float32
-            )  # [K]
-            scores = cum_probs[:, None] + log_probs.float()  # [K, vocab]
-            flat_scores = scores.reshape(-1)                  # [K * vocab]
-            topk_scores, topk_flat_ids = flat_scores.topk(K)  # [K], [K]
-
+            # Step 4 — Score and select top-K independently per prompt
             vocab_size = logits.shape[-1]
-            parent_beam_ids = topk_flat_ids // vocab_size      # [K]
-            new_token_ids = topk_flat_ids % vocab_size         # [K]
+            log_probs_bkv = log_probs.view(B, K, vocab_size)       # [B, K, vocab]
 
-            # Step 5 — Rearrange beams based on parent selection
-            parent_usage = [0] * K
-            for pid in parent_beam_ids.tolist():
-                parent_usage[pid] += 1
+            cum_probs = torch.tensor(
+                [[beam.cum_log_prob for beam in beams_per_prompt[b]] for b in range(B)],
+                device=DEVICE, dtype=torch.float32,
+            )  # [B, K]
+            scores = cum_probs[:, :, None] + log_probs_bkv.float()  # [B, K, vocab]
+            flat_scores = scores.reshape(B, -1)                      # [B, K*vocab]
+            topk_scores, topk_flat_ids = flat_scores.topk(K, dim=-1) # [B, K]
 
-            # Update ref counts based on parent usage
-            for old_idx, usage in enumerate(parent_usage):
-                if usage == 0:
-                    # Eliminated: decrement refs on all its pages, free at 0
-                    for p in beams[old_idx].pages:
-                        remove_ref(page_ref_counts, p, page_table)
-                elif usage > 1:
-                    # Forked: add (usage-1) refs per page
-                    for p in beams[old_idx].pages:
-                        add_ref(page_ref_counts, p, usage - 1)
-                # usage == 1: no ref change
+            parent_beam_ids = topk_flat_ids // vocab_size   # [B, K]
+            new_token_ids = topk_flat_ids % vocab_size      # [B, K]
 
-            # Build new beams
-            new_beams: list[Beam] = []
-            for i in range(K):
-                pid = parent_beam_ids[i].item()
-                new_beams.append(Beam(
-                    token_ids=beams[pid].token_ids + [new_token_ids[i].item()],
-                    cum_log_prob=topk_scores[i].item(),
-                    pages=list(beams[pid].pages),
-                ))
+            # Step 5 — Rearrange beams per prompt
+            new_beams_per_prompt: list[list[Beam]] = []
+            for b in range(B):
+                parent_usage = [0] * K
+                for pid in parent_beam_ids[b].tolist():
+                    parent_usage[pid] += 1
 
-            beams = new_beams
-            current_pos += 1
+                for old_idx, usage in enumerate(parent_usage):
+                    if usage == 0:
+                        for p in beams_per_prompt[b][old_idx].pages:
+                            remove_ref(page_ref_counts_list[b], p, page_table)
+                    elif usage > 1:
+                        for p in beams_per_prompt[b][old_idx].pages:
+                            add_ref(page_ref_counts_list[b], p, usage - 1)
 
-    beams.sort(key=lambda b: b.cum_log_prob, reverse=True)
-    return beams
+                new_beams: list[Beam] = []
+                for i in range(K):
+                    pid = parent_beam_ids[b, i].item()
+                    new_beams.append(Beam(
+                        token_ids=beams_per_prompt[b][pid].token_ids + [new_token_ids[b, i].item()],
+                        cum_log_prob=topk_scores[b, i].item(),
+                        pages=list(beams_per_prompt[b][pid].pages),
+                    ))
+                new_beams_per_prompt.append(new_beams)
+
+            beams_per_prompt = new_beams_per_prompt
+            for b in range(B):
+                current_positions[b] += 1
+
+    # Sort per prompt and return
+    for b in range(B):
+        beams_per_prompt[b].sort(key=lambda beam: beam.cum_log_prob, reverse=True)
+    return beams_per_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +546,7 @@ def main():
     print("=" * 60)
     print("Test 2: Beam search (width=1) — must match greedy")
     print("=" * 60)
-    beams_w1 = beam_search(model, config, prompt_ids, max_new_tokens, beam_width=1)
+    beams_w1 = beam_search(model, config, [prompt_ids], max_new_tokens, beam_width=1)[0]
     b1 = beams_w1[0]
     b1_text = tokenizer.decode(b1.token_ids, skip_special_tokens=True)
     print(f"  Tokens: {b1.token_ids}")
@@ -511,7 +566,7 @@ def main():
     print("=" * 60)
     print("Test 3: Beam search (width=4)")
     print("=" * 60)
-    beams_w4 = beam_search(model, config, prompt_ids, max_new_tokens, beam_width=4)
+    beams_w4 = beam_search(model, config, [prompt_ids], max_new_tokens, beam_width=4)[0]
 
     for i, b in enumerate(beams_w4):
         text = tokenizer.decode(b.token_ids, skip_special_tokens=True)

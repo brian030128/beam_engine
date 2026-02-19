@@ -8,7 +8,7 @@ vllm is configured with:
 Each sequence uses a distinct prompt (different content and different length) to
 prevent vLLM prefix-caching from giving it an unfair advantage.
 
-beam_engine runs beam search per-prompt sequentially (no cross-prompt batching).
+beam_engine runs beam search with cross-prompt batching (all prompts in one call).
 vllm uses its built-in llm.beam_search() method.
 """
 
@@ -56,7 +56,7 @@ def _make_prompts(rng: np.random.Generator) -> list[list[int]]:
 
 
 # ---------------------------------------------------------------------------
-# beam_engine — sequential per-prompt beam search
+# beam_engine — batched beam search (all prompts in one call)
 # ---------------------------------------------------------------------------
 
 def _be_run_once(
@@ -72,13 +72,10 @@ def _be_run_once(
     prefill_wrapper=None,
     decode_wrapper=None,
 ) -> tuple[float, list[list[int]] | None]:
-    """Run beam search on each prompt sequentially.
+    """Run beam search on all prompts in a single batched call.
 
     Returns (total_time_s, list[best_beam_tokens] | None).
     """
-    total_time = 0.0
-    best_tokens: list[list[int]] | None = [] if collect_tokens else None
-
     reuse_kwargs = {}
     if page_table is not None:
         reuse_kwargs["page_table"] = page_table
@@ -89,15 +86,15 @@ def _be_run_once(
     if decode_wrapper is not None:
         reuse_kwargs["decode_wrapper"] = decode_wrapper
 
-    for prompt in prompts:
-        torch.cuda.synchronize()
-        t0 = time.perf_counter()
-        beams = beam_search(model, config, prompt, output_len, beam_width, **reuse_kwargs)
-        torch.cuda.synchronize()
-        total_time += time.perf_counter() - t0
+    torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    all_beams = beam_search(model, config, prompts, output_len, beam_width, **reuse_kwargs)
+    torch.cuda.synchronize()
+    total_time = time.perf_counter() - t0
 
-        if collect_tokens:
-            best_tokens.append(beams[0].token_ids)
+    best_tokens: list[list[int]] | None = None
+    if collect_tokens:
+        best_tokens = [all_beams[i][0].token_ids for i in range(len(prompts))]
 
     return total_time, best_tokens
 
@@ -288,7 +285,7 @@ if __name__ == "__main__":
     print("=" * 65)
     print("  RESULTS")
     print("=" * 65)
-    print(f"  beam_engine  (beam_width={BEAM_WIDTH}, batch={BATCH_SIZE}, sequential)")
+    print(f"  beam_engine  (beam_width={BEAM_WIDTH}, batch={BATCH_SIZE}, batched)")
     print(f"    Total latency:          {be_total_ms:8.2f} ms")
     print(f"  vllm  (FlashInfer, eager, beam_width={BEAM_WIDTH}, batch={BATCH_SIZE})")
     print(f"    Total latency:          {vllm_total_ms:8.2f} ms")
