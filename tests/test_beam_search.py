@@ -94,7 +94,9 @@ def greedy_decode(
     )
     workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=DEVICE)
     prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
-    decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
+    decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
+        workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
+    )
 
     # Allocate prompt pages
     num_prompt_pages = (prompt_len + PAGE_SIZE - 1) // PAGE_SIZE
@@ -246,7 +248,9 @@ def beam_search(
     )
     workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=DEVICE)
     prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
-    decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
+    decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
+        workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
+    )
 
     page_ref_counts: dict[int, int] = {}
 

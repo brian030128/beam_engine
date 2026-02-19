@@ -90,5 +90,11 @@ class FlashInferAttention(nn.Module):
 
         # Attention against full paged cache
         q_3d = q.view(-1, self.num_heads, self.head_dim)
-        output = attn_metadata.decode_wrapper.run(q_3d, kv_cache)
-        return output.reshape(*q.shape[:-1], self.num_heads * self.head_dim)
+        # Reuse a pre-allocated output buffer to avoid per-call allocation
+        buf = getattr(self, "_decode_output_buf", None)
+        if buf is None or buf.shape[0] < q_3d.shape[0]:
+            buf = torch.empty_like(q_3d)
+            self._decode_output_buf = buf
+        out = buf[:q_3d.shape[0]]
+        attn_metadata.decode_wrapper.run(q_3d, kv_cache, out=out)
+        return out.reshape(*q.shape[:-1], self.num_heads * self.head_dim)
