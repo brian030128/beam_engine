@@ -16,11 +16,16 @@ import time
 
 import numpy as np
 import torch
+from flashinfer import (
+    BatchDecodeWithPagedKVCacheWrapper,
+    BatchPrefillWithPagedKVCacheWrapper,
+)
 from transformers import AutoTokenizer
 
 from test_beam_search import beam_search
 
 from beam_engine.models.modeling_llama import LlamaForCausalLM
+from beam_engine.page_table import PageTable
 from vllm import LLM
 from vllm.attention.backends.registry import AttentionBackendEnum
 from vllm.sampling_params import BeamSearchParams
@@ -61,6 +66,11 @@ def _be_run_once(
     output_len: int,
     beam_width: int,
     collect_tokens: bool = False,
+    *,
+    page_table=None,
+    workspace_buffer=None,
+    prefill_wrapper=None,
+    decode_wrapper=None,
 ) -> tuple[float, list[list[int]] | None]:
     """Run beam search on each prompt sequentially.
 
@@ -69,10 +79,20 @@ def _be_run_once(
     total_time = 0.0
     best_tokens: list[list[int]] | None = [] if collect_tokens else None
 
+    reuse_kwargs = {}
+    if page_table is not None:
+        reuse_kwargs["page_table"] = page_table
+    if workspace_buffer is not None:
+        reuse_kwargs["workspace_buffer"] = workspace_buffer
+    if prefill_wrapper is not None:
+        reuse_kwargs["prefill_wrapper"] = prefill_wrapper
+    if decode_wrapper is not None:
+        reuse_kwargs["decode_wrapper"] = decode_wrapper
+
     for prompt in prompts:
         torch.cuda.synchronize()
         t0 = time.perf_counter()
-        beams = beam_search(model, config, prompt, output_len, beam_width)
+        beams = beam_search(model, config, prompt, output_len, beam_width, **reuse_kwargs)
         torch.cuda.synchronize()
         total_time += time.perf_counter() - t0
 
@@ -96,8 +116,33 @@ def run_beam_engine_benchmark(
     config = model.config
     print("beam_engine model loaded.\n")
 
+    # Create reusable resources once — avoids 56× PageTable allocation churn
+    num_kv_heads = config.num_key_value_heads
+    head_dim = config.head_dim
+    num_layers = config.num_hidden_layers
+    page_table = PageTable(
+        layer_num=num_layers,
+        page_size=PAGE_SIZE,
+        max_num_pages=2048,
+        head_num=num_kv_heads,
+        head_dim=head_dim,
+        device=torch.device(DEVICE),
+        store_dtype=DTYPE,
+    )
+    workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=DEVICE)
+    prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
+    decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
+        workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
+    )
+    reuse_kwargs = dict(
+        page_table=page_table,
+        workspace_buffer=workspace_buffer,
+        prefill_wrapper=prefill_wrapper,
+        decode_wrapper=decode_wrapper,
+    )
+
     print("[beam_engine] Verification pass (best beam, first 20 tokens per sequence):")
-    _, gen = _be_run_once(model, config, prompts, output_len, beam_width, collect_tokens=True)
+    _, gen = _be_run_once(model, config, prompts, output_len, beam_width, collect_tokens=True, **reuse_kwargs)
     for i, tokens in enumerate(gen):
         text = tokenizer.decode(tokens[:20], skip_special_tokens=True)
         print(f"  seq[{i}] (prompt_len={len(prompts[i])}): {text!r}")
@@ -105,12 +150,12 @@ def run_beam_engine_benchmark(
 
     print(f"[beam_engine] Warming up ({num_warmup} iters)...")
     for _ in range(num_warmup):
-        _be_run_once(model, config, prompts, output_len, beam_width)
+        _be_run_once(model, config, prompts, output_len, beam_width, **reuse_kwargs)
 
     print(f"[beam_engine] Benchmarking ({num_iters} iters)...")
     latencies: list[float] = []
     for i in range(num_iters):
-        t, _ = _be_run_once(model, config, prompts, output_len, beam_width)
+        t, _ = _be_run_once(model, config, prompts, output_len, beam_width, **reuse_kwargs)
         latencies.append(t)
         print(f"  iter {i + 1:2d}/{num_iters}: total={t * 1e3:.1f} ms")
 

@@ -218,6 +218,11 @@ def beam_search(
     prompt_ids: list[int],
     max_new_tokens: int,
     beam_width: int,
+    *,
+    page_table=None,
+    workspace_buffer=None,
+    prefill_wrapper=None,
+    decode_wrapper=None,
 ) -> list[Beam]:
     """
     Beam search with copy-on-write paged KV cache.
@@ -237,20 +242,26 @@ def beam_search(
     prompt_len = len(prompt_ids)
     K = beam_width
 
-    page_table = PageTable(
-        layer_num=num_layers,
-        page_size=PAGE_SIZE,
-        max_num_pages=2048,
-        head_num=num_kv_heads,
-        head_dim=head_dim,
-        device=torch.device(DEVICE),
-        store_dtype=DTYPE,
-    )
-    workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=DEVICE)
-    prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
-    decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
-        workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
-    )
+    if page_table is not None:
+        page_table.reset()
+    else:
+        page_table = PageTable(
+            layer_num=num_layers,
+            page_size=PAGE_SIZE,
+            max_num_pages=2048,
+            head_num=num_kv_heads,
+            head_dim=head_dim,
+            device=torch.device(DEVICE),
+            store_dtype=DTYPE,
+        )
+    if workspace_buffer is None:
+        workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=DEVICE)
+    if prefill_wrapper is None:
+        prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
+    if decode_wrapper is None:
+        decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
+            workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
+        )
 
     page_ref_counts: dict[int, int] = {}
 

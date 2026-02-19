@@ -73,6 +73,10 @@ class PageTable:
 
         logger.info(f"Initialized PageTable: {layer_num} layers, {max_num_pages} pages of size {page_size}")
 
+    def reset(self):
+        """Reset page bookkeeping without reallocating KV cache tensors."""
+        self.free_pages = list(range(self.max_num_pages))
+        self.allocated_pages = set()
 
     def allocate_block(self) -> int:
         """
