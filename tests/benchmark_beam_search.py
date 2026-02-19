@@ -179,7 +179,7 @@ def run_vllm_benchmark(
     llm = LLM(
         model=MODEL_NAME,
         dtype="float16",
-        enforce_eager=True,
+        enforce_eager=False,
         attention_backend=AttentionBackendEnum.FLASHINFER,
         max_model_len=2048,
         gpu_memory_utilization=0.85,
