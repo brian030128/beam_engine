@@ -17,8 +17,8 @@ import time
 import numpy as np
 import torch
 from flashinfer import (
-    BatchDecodeWithPagedKVCacheWrapper,
     BatchPrefillWithPagedKVCacheWrapper,
+    MultiLevelCascadeAttentionWrapper,
 )
 from transformers import AutoTokenizer
 
@@ -128,8 +128,8 @@ def run_beam_engine_benchmark(
     )
     workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=DEVICE)
     prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
-    decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
-        workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
+    decode_wrapper = MultiLevelCascadeAttentionWrapper(
+        num_levels=2, float_workspace_buffer=workspace_buffer, kv_layout="NHD",
     )
     reuse_kwargs = dict(
         page_table=page_table,
