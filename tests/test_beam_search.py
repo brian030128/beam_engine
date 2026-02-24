@@ -21,6 +21,7 @@ import torch.nn.functional as F
 from flashinfer import (
     BatchDecodeWithPagedKVCacheWrapper,
     BatchPrefillWithPagedKVCacheWrapper,
+    MultiLevelCascadeAttentionWrapper,
 )
 from transformers import AutoTokenizer
 
@@ -262,8 +263,8 @@ def beam_search(
     if prefill_wrapper is None:
         prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
     if decode_wrapper is None:
-        decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
-            workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
+        decode_wrapper = MultiLevelCascadeAttentionWrapper(
+            num_levels=2, float_workspace_buffer=workspace_buffer, kv_layout="NHD",
         )
 
     # -----------------------------------------------------------------------
@@ -397,38 +398,53 @@ def beam_search(
                             beam.pages[pli] = new_page
                             add_ref(page_ref_counts_list[b], new_page, 1)
 
-            # Step 2 — Build decode wrapper metadata (all B×K beams)
-            all_page_indices: list[int] = []
-            indptr = [0]
-            all_last_page_len: list[int] = []
+            # Step 2 — Build cascade decode metadata (all B×K beams)
+            #   Level 0 (shared): B groups, each group = K beams sharing prompt's full pages
+            #   Level 1 (unique): B*K individual sequences, each beam's suffix pages
             all_write_pi: list[int] = []
             all_write_po: list[int] = []
             all_input: list[list[int]] = []
             all_pos: list[list[int]] = []
 
+            full_prompt_pages = [prompt_lens[b] // PAGE_SIZE for b in range(B)]
+
+            # Level 0 (shared prefix)
+            l0_qo_indptr = [b * K for b in range(B + 1)]
+            l0_kv_indptr = [0]
+            l0_kv_indices: list[int] = []
+            l0_kv_lpl: list[int] = []
+            for b in range(B):
+                shared_pages = prompt_pages_list[b][:full_prompt_pages[b]]
+                l0_kv_indices.extend(shared_pages)
+                l0_kv_indptr.append(len(l0_kv_indices))
+                l0_kv_lpl.append(PAGE_SIZE if full_prompt_pages[b] > 0 else 0)
+
+            # Level 1 (unique suffix per beam)
+            l1_qo_indptr = list(range(B * K + 1))
+            l1_kv_indptr = [0]
+            l1_kv_indices: list[int] = []
+            l1_kv_lpl: list[int] = []
             for b in range(B):
                 pos = current_positions[b]
-                pli = pos // PAGE_SIZE
                 off = pos % PAGE_SIZE
+                pli = pos // PAGE_SIZE
+                n_shared = full_prompt_pages[b]
                 for beam in beams_per_prompt[b]:
-                    all_page_indices.extend(beam.pages)
-                    indptr.append(len(all_page_indices))
-                    all_last_page_len.append(off + 1)
+                    suffix_pages = beam.pages[n_shared:]
+                    l1_kv_indices.extend(suffix_pages)
+                    l1_kv_indptr.append(len(l1_kv_indices))
+                    l1_kv_lpl.append(off + 1)
                     all_write_pi.append(beam.pages[pli])
                     all_write_po.append(off)
                     all_input.append([beam.token_ids[-1]])
                     all_pos.append([pos])
 
-            decode_indptr = torch.tensor(indptr, dtype=torch.int32, device=DEVICE)
-            decode_indices = torch.tensor(all_page_indices, dtype=torch.int32, device=DEVICE)
-            decode_last_page_len = torch.tensor(
-                all_last_page_len, dtype=torch.int32, device=DEVICE
-            )
-
+            tensor = lambda xs: torch.tensor(xs, dtype=torch.int32, device=DEVICE)
             decode_wrapper.plan(
-                indptr=decode_indptr,
-                indices=decode_indices,
-                last_page_len=decode_last_page_len,
+                qo_indptr_arr=[tensor(l0_qo_indptr), tensor(l1_qo_indptr)],
+                paged_kv_indptr_arr=[tensor(l0_kv_indptr), tensor(l1_kv_indptr)],
+                paged_kv_indices_arr=[tensor(l0_kv_indices), tensor(l1_kv_indices)],
+                paged_kv_last_page_len_arr=[tensor(l0_kv_lpl), tensor(l1_kv_lpl)],
                 num_qo_heads=num_qo_heads,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
