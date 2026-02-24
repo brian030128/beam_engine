@@ -444,7 +444,7 @@ def beam_search(
                 qo_indptr_arr=[tensor(l0_qo_indptr), tensor(l1_qo_indptr)],
                 paged_kv_indptr_arr=[tensor(l0_kv_indptr), tensor(l1_kv_indptr)],
                 paged_kv_indices_arr=[tensor(l0_kv_indices), tensor(l1_kv_indices)],
-                paged_kv_last_page_len_arr=[tensor(l0_kv_lpl), tensor(l1_kv_lpl)],
+                paged_kv_last_page_len=[tensor(l0_kv_lpl), tensor(l1_kv_lpl)],
                 num_qo_heads=num_qo_heads,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
