@@ -156,7 +156,7 @@ def run_beam_engine_benchmark(
         latencies.append(t)
         print(f"  iter {i + 1:2d}/{num_iters}: total={t * 1e3:.1f} ms")
 
-    del model
+    del model, page_table, workspace_buffer, prefill_wrapper, decode_wrapper
     torch.cuda.empty_cache()
 
     return np.mean(latencies) * 1e3, gen  # ms, best-beam tokens
