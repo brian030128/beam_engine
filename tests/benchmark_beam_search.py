@@ -44,7 +44,7 @@ NUM_ITERS = 10
 PROMPT_LENS = [512, 640, 768, 896]
 assert len(PROMPT_LENS) == BATCH_SIZE
 
-BEAM_WIDTH = 4
+BEAM_WIDTH = 16
 
 
 def _make_prompts(rng: np.random.Generator) -> list[list[int]]:
@@ -184,6 +184,7 @@ def run_vllm_benchmark(
         max_model_len=2048,
         gpu_memory_utilization=0.85,
         enable_prefix_caching=True,
+        max_logprobs=96
     )
     print("vllm model loaded.\n")
 
