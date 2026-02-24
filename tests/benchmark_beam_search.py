@@ -44,7 +44,7 @@ NUM_ITERS = 10
 PROMPT_LENS = [512, 640, 768, 896]
 assert len(PROMPT_LENS) == BATCH_SIZE
 
-BEAM_WIDTH = 4
+BEAM_WIDTH = 10
 
 
 def _make_prompts(rng: np.random.Generator) -> list[list[int]]:
@@ -120,7 +120,7 @@ def run_beam_engine_benchmark(
     page_table = PageTable(
         layer_num=num_layers,
         page_size=PAGE_SIZE,
-        max_num_pages=2048,
+        max_num_pages=4096,
         head_num=num_kv_heads,
         head_dim=head_dim,
         device=torch.device(DEVICE),
