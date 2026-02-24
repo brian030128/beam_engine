@@ -156,7 +156,7 @@ def run_beam_engine_benchmark(
         latencies.append(t)
         print(f"  iter {i + 1:2d}/{num_iters}: total={t * 1e3:.1f} ms")
 
-    del model, page_table, workspace_buffer, prefill_wrapper, decode_wrapper
+    del model, reuse_kwargs, page_table, workspace_buffer, prefill_wrapper, decode_wrapper
     torch.cuda.empty_cache()
 
     return np.mean(latencies) * 1e3, gen  # ms, best-beam tokens
@@ -184,6 +184,7 @@ def run_vllm_benchmark(
         max_model_len=2048,
         gpu_memory_utilization=0.85,
         enable_prefix_caching=True,
+        max_logprobs=96
     )
     print("vllm model loaded.\n")
 
