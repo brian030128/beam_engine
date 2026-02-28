@@ -3,7 +3,7 @@ Benchmark decode attention: paged vs non-paged.
 
 Measures kernel-level decode attention latency (1 query token vs seq_len KV):
 1. Flash attention (torch SDPA) — baseline
-2. FlashInfer single_decode_with_kv_cache (non-paged)
+2. FlashInfer single_decode_with_kv_cache (non-paged, batch=1 only)
 3. FlashInfer BatchDecodeWithPagedKVCacheWrapper at various page sizes
 
 Uses Llama-3.1-8B attention config: 32 QO heads, 8 KV heads, head_dim=128.
@@ -25,6 +25,7 @@ NUM_QO_HEADS = 32
 NUM_KV_HEADS = 8
 HEAD_DIM = 128
 
+BATCH_SIZES = [1, 2, 4, 8, 16]
 SEQ_LENS = [128, 256, 512, 1024, 2048, 4096]
 PAGE_SIZES = [1, 4, 8, 16, 32, 64, 128]
 
@@ -51,11 +52,11 @@ def benchmark_fn(fn, warmup=WARMUP, iters=ITERS):
     return t.mean().item(), t.std().item()
 
 
-def bench_flash_decode(seq_len):
-    """Benchmark torch SDPA flash backend for decode. q:[1,32,1,128], k/v:[1,8,seq_len,128]."""
-    q = torch.randn(1, NUM_QO_HEADS, 1, HEAD_DIM, dtype=DTYPE, device=DEVICE)
-    k = torch.randn(1, NUM_KV_HEADS, seq_len, HEAD_DIM, dtype=DTYPE, device=DEVICE)
-    v = torch.randn(1, NUM_KV_HEADS, seq_len, HEAD_DIM, dtype=DTYPE, device=DEVICE)
+def bench_flash_decode(batch_size, seq_len):
+    """Benchmark torch SDPA flash backend for decode."""
+    q = torch.randn(batch_size, NUM_QO_HEADS, 1, HEAD_DIM, dtype=DTYPE, device=DEVICE)
+    k = torch.randn(batch_size, NUM_KV_HEADS, seq_len, HEAD_DIM, dtype=DTYPE, device=DEVICE)
+    v = torch.randn(batch_size, NUM_KV_HEADS, seq_len, HEAD_DIM, dtype=DTYPE, device=DEVICE)
 
     def fn():
         F.scaled_dot_product_attention(q, k, v, enable_gqa=True)
@@ -64,7 +65,7 @@ def bench_flash_decode(seq_len):
 
 
 def bench_flashinfer_decode(seq_len):
-    """Benchmark FlashInfer single_decode_with_kv_cache. q:[NUM_QO_HEADS, HEAD_DIM], k/v:[seq_len, NUM_KV_HEADS, HEAD_DIM]."""
+    """Benchmark FlashInfer single_decode_with_kv_cache (batch=1 only)."""
     q = torch.randn(NUM_QO_HEADS, HEAD_DIM, dtype=DTYPE, device=DEVICE)
     k = torch.randn(seq_len, NUM_KV_HEADS, HEAD_DIM, dtype=DTYPE, device=DEVICE)
     v = torch.randn(seq_len, NUM_KV_HEADS, HEAD_DIM, dtype=DTYPE, device=DEVICE)
@@ -75,25 +76,27 @@ def bench_flashinfer_decode(seq_len):
     return benchmark_fn(fn)
 
 
-def bench_paged_decode(seq_len, page_size):
-    """Benchmark FlashInfer paged decode. q:[1, NUM_QO_HEADS, HEAD_DIM], KV in paged cache."""
-    num_pages = (seq_len + page_size - 1) // page_size
-    last_page_len = seq_len - (num_pages - 1) * page_size
+def bench_paged_decode(batch_size, seq_len, page_size):
+    """Benchmark FlashInfer paged decode with batch_size sequences."""
+    num_pages_per_seq = (seq_len + page_size - 1) // page_size
+    last_page_len = seq_len - (num_pages_per_seq - 1) * page_size
+    total_pages = num_pages_per_seq * batch_size
 
     # Allocate a larger pool and scatter pages to simulate realistic non-contiguous access
-    pool_size = 2 * num_pages
+    pool_size = 2 * total_pages
     kv_cache = torch.randn(
         pool_size, 2, page_size, NUM_KV_HEADS, HEAD_DIM,
         dtype=DTYPE, device=DEVICE,
     )
-    q = torch.randn(1, NUM_QO_HEADS, HEAD_DIM, dtype=DTYPE, device=DEVICE)
+    q = torch.randn(batch_size, NUM_QO_HEADS, HEAD_DIM, dtype=DTYPE, device=DEVICE)
 
     workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=DEVICE)
     wrapper = BatchDecodeWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
 
-    indptr = torch.tensor([0, num_pages], dtype=torch.int32, device=DEVICE)
-    indices = torch.randperm(pool_size, dtype=torch.int32, device=DEVICE)[:num_pages]
-    last_page_len_t = torch.tensor([last_page_len], dtype=torch.int32, device=DEVICE)
+    # indptr: [0, num_pages_per_seq, 2*num_pages_per_seq, ...]
+    indptr = torch.arange(batch_size + 1, dtype=torch.int32, device=DEVICE) * num_pages_per_seq
+    indices = torch.randperm(pool_size, dtype=torch.int32, device=DEVICE)[:total_pages]
+    last_page_len_t = torch.full((batch_size,), last_page_len, dtype=torch.int32, device=DEVICE)
 
     wrapper.plan(
         indptr=indptr,
@@ -117,33 +120,38 @@ def main():
           f"head_dim={HEAD_DIM}, dtype={DTYPE}")
     print(f"Timing: {WARMUP} warmup + {ITERS} iterations\n")
 
-    header = f"{'seq_len':>8} | {'method':<30} | {'mean_ms':>10} | {'std_ms':>10} | {'vs_flash':>10}"
-    sep = f"{'-'*8}-+-{'-'*30}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}"
+    for batch_size in BATCH_SIZES:
+        print(f"=== batch_size={batch_size} ===")
+        header = f"{'seq_len':>8} | {'method':<30} | {'mean_ms':>10} | {'std_ms':>10} | {'vs_flash':>10}"
+        sep = f"{'-'*8}-+-{'-'*30}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}"
 
-    print(header)
-    print(sep)
-
-    for seq_len in SEQ_LENS:
-        # 1. Flash attention decode baseline
-        flash_mean, flash_std = bench_flash_decode(seq_len)
-        print(f"{seq_len:>8} | {'flash_decode':<30} | {flash_mean:>10.4f} | {flash_std:>10.4f} | {'1.00x':>10}")
-
-        # 2. FlashInfer single_decode (non-paged)
-        mean, std = bench_flashinfer_decode(seq_len)
-        ratio = mean / flash_mean
-        print(f"{seq_len:>8} | {'flashinfer_decode':<30} | {mean:>10.4f} | {std:>10.4f} | {ratio:>9.2f}x")
-
-        # 3. Paged decode at various page sizes
-        for ps in PAGE_SIZES:
-            if ps > seq_len:
-                continue
-            mean, std = bench_paged_decode(seq_len, ps)
-            ratio = mean / flash_mean
-            print(f"{seq_len:>8} | {f'paged_decode(ps={ps})':<30} | {mean:>10.4f} | {std:>10.4f} | {ratio:>9.2f}x")
-
+        print(header)
         print(sep)
 
-    print("\nDone.")
+        for seq_len in SEQ_LENS:
+            # 1. Flash attention decode baseline
+            flash_mean, flash_std = bench_flash_decode(batch_size, seq_len)
+            print(f"{seq_len:>8} | {'flash_decode':<30} | {flash_mean:>10.4f} | {flash_std:>10.4f} | {'1.00x':>10}")
+
+            # 2. FlashInfer single_decode (non-paged, batch=1 only)
+            if batch_size == 1:
+                mean, std = bench_flashinfer_decode(seq_len)
+                ratio = mean / flash_mean
+                print(f"{seq_len:>8} | {'flashinfer_decode':<30} | {mean:>10.4f} | {std:>10.4f} | {ratio:>9.2f}x")
+
+            # 3. Paged decode at various page sizes
+            for ps in PAGE_SIZES:
+                if ps > seq_len:
+                    continue
+                mean, std = bench_paged_decode(batch_size, seq_len, ps)
+                ratio = mean / flash_mean
+                print(f"{seq_len:>8} | {f'paged_decode(ps={ps})':<30} | {mean:>10.4f} | {std:>10.4f} | {ratio:>9.2f}x")
+
+            print(sep)
+
+        print()
+
+    print("Done.")
 
 
 if __name__ == "__main__":
