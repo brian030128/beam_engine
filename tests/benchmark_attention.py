@@ -15,6 +15,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from flashinfer import BatchPrefillWithPagedKVCacheWrapper
+from flashinfer.decode import single_decode_with_kv_cache
 import flashinfer.page
 
 DEVICE = "cuda"
@@ -129,6 +130,31 @@ def bench_paged_attention(seq_len, page_size):
     return benchmark_fn(fn)
 
 
+def bench_flashinfer_decode(seq_len):
+    """Benchmark FlashInfer single_decode_with_kv_cache. q:[NUM_QO_HEADS, HEAD_DIM], k/v:[seq_len, NUM_KV_HEADS, HEAD_DIM]."""
+    q = torch.randn(NUM_QO_HEADS, HEAD_DIM, dtype=DTYPE, device=DEVICE)
+    k = torch.randn(seq_len, NUM_KV_HEADS, HEAD_DIM, dtype=DTYPE, device=DEVICE)
+    v = torch.randn(seq_len, NUM_KV_HEADS, HEAD_DIM, dtype=DTYPE, device=DEVICE)
+
+    def fn():
+        single_decode_with_kv_cache(q, k, v, kv_layout="NHD")
+
+    return benchmark_fn(fn)
+
+
+def bench_flash_decode(seq_len):
+    """Benchmark torch SDPA flash backend for decode. q:[1,32,1,128], k/v:[1,8,seq_len,128]."""
+    q = torch.randn(1, NUM_QO_HEADS, 1, HEAD_DIM, dtype=DTYPE, device=DEVICE)
+    k = torch.randn(1, NUM_KV_HEADS, seq_len, HEAD_DIM, dtype=DTYPE, device=DEVICE)
+    v = torch.randn(1, NUM_KV_HEADS, seq_len, HEAD_DIM, dtype=DTYPE, device=DEVICE)
+
+    def fn():
+        with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+            F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True)
+
+    return benchmark_fn(fn)
+
+
 def next_power_of_2(n):
     return 1 << (n - 1).bit_length()
 
@@ -140,6 +166,9 @@ def main():
 
     header = f"{'seq_len':>8} | {'method':<30} | {'mean_ms':>10} | {'std_ms':>10} | {'vs_flash':>10}"
     sep = f"{'-'*8}-+-{'-'*30}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}"
+
+    # === Prefill ===
+    print("=== Prefill (full sequence Q vs full sequence KV) ===\n")
     print(header)
     print(sep)
 
@@ -161,6 +190,23 @@ def main():
             mean, std = bench_paged_attention(seq_len, ps)
             ratio = mean / flash_mean
             print(f"{seq_len:>8} | {f'paged_ps={ps}':<30} | {mean:>10.4f} | {std:>10.4f} | {ratio:>9.2f}x")
+
+        print(sep)
+
+    # === Decode ===
+    print("\n=== Decode (single token Q vs full sequence KV) ===\n")
+    print(header)
+    print(sep)
+
+    for seq_len in SEQ_LENS:
+        # 1. Flash attention decode baseline
+        flash_mean, flash_std = bench_flash_decode(seq_len)
+        print(f"{seq_len:>8} | {'flash_decode':<30} | {flash_mean:>10.4f} | {flash_std:>10.4f} | {'1.00x':>10}")
+
+        # 2. FlashInfer single_decode_with_kv_cache
+        mean, std = bench_flashinfer_decode(seq_len)
+        ratio = mean / flash_mean
+        print(f"{seq_len:>8} | {'flashinfer_decode':<30} | {mean:>10.4f} | {std:>10.4f} | {ratio:>9.2f}x")
 
         print(sep)
 
