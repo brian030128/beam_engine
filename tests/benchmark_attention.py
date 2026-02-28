@@ -95,17 +95,18 @@ def bench_paged_decode(seq_len, page_size):
     indices = torch.randperm(pool_size, dtype=torch.int32, device=DEVICE)[:num_pages]
     last_page_len_t = torch.tensor([last_page_len], dtype=torch.int32, device=DEVICE)
 
+    wrapper.plan(
+        indptr=indptr,
+        indices=indices,
+        last_page_len=last_page_len_t,
+        num_qo_heads=NUM_QO_HEADS,
+        num_kv_heads=NUM_KV_HEADS,
+        head_dim=HEAD_DIM,
+        page_size=page_size,
+        q_data_type=DTYPE,
+    )
+
     def fn():
-        wrapper.plan(
-            indptr=indptr,
-            indices=indices,
-            last_page_len=last_page_len_t,
-            num_qo_heads=NUM_QO_HEADS,
-            num_kv_heads=NUM_KV_HEADS,
-            head_dim=HEAD_DIM,
-            page_size=page_size,
-            q_data_type=DTYPE,
-        )
         wrapper.run(q, kv_cache)
 
     return benchmark_fn(fn)
