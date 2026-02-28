@@ -80,8 +80,10 @@ def bench_paged_decode(seq_len, page_size):
     num_pages = (seq_len + page_size - 1) // page_size
     last_page_len = seq_len - (num_pages - 1) * page_size
 
+    # Allocate a larger pool and scatter pages to simulate realistic non-contiguous access
+    pool_size = 2 * num_pages
     kv_cache = torch.randn(
-        num_pages, 2, page_size, NUM_KV_HEADS, HEAD_DIM,
+        pool_size, 2, page_size, NUM_KV_HEADS, HEAD_DIM,
         dtype=DTYPE, device=DEVICE,
     )
     q = torch.randn(1, NUM_QO_HEADS, HEAD_DIM, dtype=DTYPE, device=DEVICE)
@@ -90,7 +92,7 @@ def bench_paged_decode(seq_len, page_size):
     wrapper = BatchDecodeWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
 
     indptr = torch.tensor([0, num_pages], dtype=torch.int32, device=DEVICE)
-    indices = torch.arange(num_pages, dtype=torch.int32, device=DEVICE)
+    indices = torch.randperm(pool_size, dtype=torch.int32, device=DEVICE)[:num_pages]
     last_page_len_t = torch.tensor([last_page_len], dtype=torch.int32, device=DEVICE)
 
     def fn():
