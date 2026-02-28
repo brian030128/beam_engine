@@ -122,6 +122,7 @@ def bench_paged_attention(seq_len, page_size):
             head_dim_qk=HEAD_DIM,
             page_size=page_size,
             causal=True,
+            q_data_type=DTYPE,
         )
         wrapper.run(q, kv_cache)
 
