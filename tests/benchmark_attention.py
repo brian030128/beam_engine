@@ -149,8 +149,7 @@ def bench_flash_decode(seq_len):
     v = torch.randn(1, NUM_KV_HEADS, seq_len, HEAD_DIM, dtype=DTYPE, device=DEVICE)
 
     def fn():
-        with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-            F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True)
+        F.scaled_dot_product_attention(q, k, v, enable_gqa=True)
 
     return benchmark_fn(fn)
 
