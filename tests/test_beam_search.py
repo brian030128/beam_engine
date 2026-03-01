@@ -219,6 +219,7 @@ def beam_search(
     max_new_tokens: int,
     beam_width: int,
     *,
+    page_size: int = 16,
     page_table=None,
     workspace_buffer=None,
     prefill_wrapper=None,
@@ -250,7 +251,7 @@ def beam_search(
     else:
         page_table = PageTable(
             layer_num=num_layers,
-            page_size=PAGE_SIZE,
+            page_size=page_size,
             max_num_pages=2048,
             head_num=num_kv_heads,
             head_dim=head_dim,
@@ -273,7 +274,7 @@ def beam_search(
     # Allocate pages per prompt
     prompt_pages_list: list[list[int]] = []
     for plen in prompt_lens:
-        num_pages = (plen + PAGE_SIZE - 1) // PAGE_SIZE
+        num_pages = (plen + page_size - 1) // page_size
         pages = [page_table.allocate_block() for _ in range(num_pages)]
         prompt_pages_list.append(pages)
 
@@ -284,8 +285,8 @@ def beam_search(
         pages = prompt_pages_list[b]
         plen = prompt_lens[b]
         for i in range(plen):
-            all_kv_pi.append(pages[i // PAGE_SIZE])
-            all_kv_po.append(i % PAGE_SIZE)
+            all_kv_pi.append(pages[i // page_size])
+            all_kv_po.append(i % page_size)
 
     kv_page_indices = torch.tensor(all_kv_pi, dtype=torch.int32, device=DEVICE)
     kv_page_offsets = torch.tensor(all_kv_po, dtype=torch.int32, device=DEVICE)
@@ -303,7 +304,7 @@ def beam_search(
         pages = prompt_pages_list[b]
         all_paged_kv_indices.extend(pages)
         paged_kv_indptr_list.append(paged_kv_indptr_list[-1] + len(pages))
-        last_page_len = prompt_lens[b] - (len(pages) - 1) * PAGE_SIZE
+        last_page_len = prompt_lens[b] - (len(pages) - 1) * page_size
         paged_kv_lpl_list.append(last_page_len)
 
     paged_kv_indptr = torch.tensor(paged_kv_indptr_list, dtype=torch.int32, device=DEVICE)
@@ -318,7 +319,7 @@ def beam_search(
         num_qo_heads=num_qo_heads,
         num_kv_heads=num_kv_heads,
         head_dim_qk=head_dim,
-        page_size=PAGE_SIZE,
+        page_size=page_size,
         causal=True,
     )
 
@@ -382,8 +383,8 @@ def beam_search(
             # Step 1 — Ensure unique write pages (COW), per prompt
             for b in range(B):
                 pos = current_positions[b]
-                pli = pos // PAGE_SIZE
-                off = pos % PAGE_SIZE
+                pli = pos // page_size
+                off = pos % page_size
                 for beam in beams_per_prompt[b]:
                     if off == 0:
                         new_page = page_table.allocate_block()
@@ -408,8 +409,8 @@ def beam_search(
 
             for b in range(B):
                 pos = current_positions[b]
-                pli = pos // PAGE_SIZE
-                off = pos % PAGE_SIZE
+                pli = pos // page_size
+                off = pos % page_size
                 for beam in beams_per_prompt[b]:
                     all_page_indices.extend(beam.pages)
                     indptr.append(len(all_page_indices))
@@ -432,7 +433,7 @@ def beam_search(
                 num_qo_heads=num_qo_heads,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
-                page_size=PAGE_SIZE,
+                page_size=page_size,
             )
 
             write_page_indices = torch.tensor(all_write_pi, dtype=torch.int32, device=DEVICE)
