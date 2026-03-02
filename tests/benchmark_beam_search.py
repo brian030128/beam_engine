@@ -13,6 +13,7 @@ vllm uses its built-in llm.beam_search() method.
 """
 
 import time
+import urllib.request
 
 import numpy as np
 import torch
@@ -47,12 +48,36 @@ assert len(PROMPT_LENS) == BATCH_SIZE
 BEAM_WIDTH = 16
 
 
-def _make_prompts(rng: np.random.Generator) -> list[list[int]]:
-    """Generate BATCH_SIZE prompts with distinct lengths and random content."""
-    return [
-        rng.integers(1000, 30000, size=length).tolist()
-        for length in PROMPT_LENS
-    ]
+def _make_prompts(tokenizer) -> list[list[int]]:
+    """Fetch a public-domain text and tokenize it into prompts of required lengths."""
+    url = "https://www.gutenberg.org/cache/epub/1342/pg1342.txt"
+    print(f"Downloading {url} ...")
+    with urllib.request.urlopen(url) as resp:
+        raw = resp.read().decode("utf-8")
+
+    # Strip Gutenberg header/footer
+    start = raw.find("*** START OF")
+    if start != -1:
+        start = raw.index("\n", start) + 1
+    else:
+        start = 0
+    end = raw.find("*** END OF")
+    if end == -1:
+        end = len(raw)
+    text = raw[start:end]
+
+    token_ids = tokenizer.encode(text, add_special_tokens=False)
+    total_needed = sum(PROMPT_LENS)
+    assert len(token_ids) >= total_needed, (
+        f"Not enough tokens from Gutenberg text: got {len(token_ids)}, need {total_needed}"
+    )
+
+    prompts: list[list[int]] = []
+    offset = 0
+    for length in PROMPT_LENS:
+        prompts.append(token_ids[offset : offset + length])
+        offset += length
+    return prompts
 
 
 # ---------------------------------------------------------------------------
@@ -236,11 +261,9 @@ def run_vllm_benchmark(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    rng = np.random.default_rng(42)
-    prompts = _make_prompts(rng)
-
     print("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    prompts = _make_prompts(tokenizer)
 
     input_lens_str = ", ".join(str(len(p)) for p in prompts)
     total_input = sum(len(p) for p in prompts)
