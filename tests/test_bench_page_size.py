@@ -9,7 +9,7 @@ import torch
 from transformers import AutoTokenizer
 
 from beam_engine.models.modeling_llama import LlamaForCausalLM
-from tests.test_beam_search import beam_search
+from test_beam_search import beam_search
 
 MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
 DEVICE = "cuda"
