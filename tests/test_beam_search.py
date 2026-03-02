@@ -29,6 +29,7 @@ from beam_engine.models.modeling_llama import LlamaForCausalLM
 from beam_engine.page_table import PageTable
 
 MODEL_NAME = "meta-llama/Llama-3.1-8B"
+MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
 DEVICE = "cuda"
 DTYPE = torch.float16
 PAGE_SIZE = 16
