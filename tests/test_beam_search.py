@@ -76,6 +76,7 @@ def greedy_decode(
     config,
     prompt_ids: list[int],
     max_new_tokens: int,
+    page_size: int = PAGE_SIZE,
 ) -> tuple[list[int], float]:
     """Greedy decode with cumulative log-prob tracking. Returns (tokens, cum_log_prob)."""
     num_qo_heads = config.num_attention_heads
@@ -86,7 +87,7 @@ def greedy_decode(
 
     page_table = PageTable(
         layer_num=num_layers,
-        page_size=PAGE_SIZE,
+        page_size=page_size,
         max_num_pages=1024,
         head_num=num_kv_heads,
         head_dim=head_dim,
@@ -100,22 +101,22 @@ def greedy_decode(
     )
 
     # Allocate prompt pages
-    num_prompt_pages = (prompt_len + PAGE_SIZE - 1) // PAGE_SIZE
+    num_prompt_pages = (prompt_len + page_size - 1) // page_size
     pages = [page_table.allocate_block() for _ in range(num_prompt_pages)]
 
     # Per-token KV write positions
     kv_page_indices = torch.tensor(
-        [pages[i // PAGE_SIZE] for i in range(prompt_len)], dtype=torch.int32, device=DEVICE
+        [pages[i // page_size] for i in range(prompt_len)], dtype=torch.int32, device=DEVICE
     )
     kv_page_offsets = torch.tensor(
-        [i % PAGE_SIZE for i in range(prompt_len)], dtype=torch.int32, device=DEVICE
+        [i % page_size for i in range(prompt_len)], dtype=torch.int32, device=DEVICE
     )
 
     # Plan prefill
     qo_indptr = torch.tensor([0, prompt_len], dtype=torch.int32, device=DEVICE)
     paged_kv_indptr = torch.tensor([0, len(pages)], dtype=torch.int32, device=DEVICE)
     paged_kv_indices = torch.tensor(pages, dtype=torch.int32, device=DEVICE)
-    last_page_len = prompt_len - (num_prompt_pages - 1) * PAGE_SIZE
+    last_page_len = prompt_len - (num_prompt_pages - 1) * page_size
     paged_kv_last_page_len = torch.tensor([last_page_len], dtype=torch.int32, device=DEVICE)
 
     prefill_wrapper.plan(
@@ -126,7 +127,7 @@ def greedy_decode(
         num_qo_heads=num_qo_heads,
         num_kv_heads=num_kv_heads,
         head_dim_qk=head_dim,
-        page_size=PAGE_SIZE,
+        page_size=page_size,
         causal=True,
     )
 
@@ -158,11 +159,11 @@ def greedy_decode(
 
         # Decode loop
         for _ in range(max_new_tokens - 1):
-            if current_pos % PAGE_SIZE == 0:
+            if current_pos % page_size == 0:
                 pages.append(page_table.allocate_block())
 
-            write_page_idx = pages[current_pos // PAGE_SIZE]
-            write_page_offset = current_pos % PAGE_SIZE
+            write_page_idx = pages[current_pos // page_size]
+            write_page_offset = current_pos % page_size
 
             decode_indptr = torch.tensor([0, len(pages)], dtype=torch.int32, device=DEVICE)
             decode_indices = torch.tensor(pages, dtype=torch.int32, device=DEVICE)
@@ -177,7 +178,7 @@ def greedy_decode(
                 num_qo_heads=num_qo_heads,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
-                page_size=PAGE_SIZE,
+                page_size=page_size,
             )
 
             kv_pi = torch.tensor([write_page_idx], dtype=torch.int32, device=DEVICE)
@@ -220,6 +221,7 @@ def beam_search(
     max_new_tokens: int,
     beam_width: int,
     *,
+    page_size: int = PAGE_SIZE,
     page_table=None,
     workspace_buffer=None,
     prefill_wrapper=None,
@@ -251,7 +253,7 @@ def beam_search(
     else:
         page_table = PageTable(
             layer_num=num_layers,
-            page_size=PAGE_SIZE,
+            page_size=page_size,
             max_num_pages=2048,
             head_num=num_kv_heads,
             head_dim=head_dim,
@@ -274,7 +276,7 @@ def beam_search(
     # Allocate pages per prompt
     prompt_pages_list: list[list[int]] = []
     for plen in prompt_lens:
-        num_pages = (plen + PAGE_SIZE - 1) // PAGE_SIZE
+        num_pages = (plen + page_size - 1) // page_size
         pages = [page_table.allocate_block() for _ in range(num_pages)]
         prompt_pages_list.append(pages)
 
@@ -285,8 +287,8 @@ def beam_search(
         pages = prompt_pages_list[b]
         plen = prompt_lens[b]
         for i in range(plen):
-            all_kv_pi.append(pages[i // PAGE_SIZE])
-            all_kv_po.append(i % PAGE_SIZE)
+            all_kv_pi.append(pages[i // page_size])
+            all_kv_po.append(i % page_size)
 
     kv_page_indices = torch.tensor(all_kv_pi, dtype=torch.int32, device=DEVICE)
     kv_page_offsets = torch.tensor(all_kv_po, dtype=torch.int32, device=DEVICE)
@@ -304,7 +306,7 @@ def beam_search(
         pages = prompt_pages_list[b]
         all_paged_kv_indices.extend(pages)
         paged_kv_indptr_list.append(paged_kv_indptr_list[-1] + len(pages))
-        last_page_len = prompt_lens[b] - (len(pages) - 1) * PAGE_SIZE
+        last_page_len = prompt_lens[b] - (len(pages) - 1) * page_size
         paged_kv_lpl_list.append(last_page_len)
 
     paged_kv_indptr = torch.tensor(paged_kv_indptr_list, dtype=torch.int32, device=DEVICE)
@@ -319,7 +321,7 @@ def beam_search(
         num_qo_heads=num_qo_heads,
         num_kv_heads=num_kv_heads,
         head_dim_qk=head_dim,
-        page_size=PAGE_SIZE,
+        page_size=page_size,
         causal=True,
     )
 
@@ -383,8 +385,8 @@ def beam_search(
             # Step 1 — Ensure unique write pages (COW), per prompt
             for b in range(B):
                 pos = current_positions[b]
-                pli = pos // PAGE_SIZE
-                off = pos % PAGE_SIZE
+                pli = pos // page_size
+                off = pos % page_size
                 for beam in beams_per_prompt[b]:
                     if off == 0:
                         new_page = page_table.allocate_block()
@@ -409,8 +411,8 @@ def beam_search(
 
             for b in range(B):
                 pos = current_positions[b]
-                pli = pos // PAGE_SIZE
-                off = pos % PAGE_SIZE
+                pli = pos // page_size
+                off = pos % page_size
                 for beam in beams_per_prompt[b]:
                     all_page_indices.extend(beam.pages)
                     indptr.append(len(all_page_indices))
@@ -433,7 +435,7 @@ def beam_search(
                 num_qo_heads=num_qo_heads,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
-                page_size=PAGE_SIZE,
+                page_size=page_size,
             )
 
             write_page_indices = torch.tensor(all_write_pi, dtype=torch.int32, device=DEVICE)
