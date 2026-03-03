@@ -249,6 +249,13 @@ def _remap_state_dict(
         fused = torch.cat([parts["gate_proj"], parts["up_proj"]], dim=0)
         remapped[f"model.layers.{layer_idx}.mlp.gate_up_proj.{suffix}"] = fused
 
+    # Tied embeddings: checkpoint omits lm_head.weight when tie_word_embeddings=True
+    if getattr(config, "tie_word_embeddings", False):
+        embed_key = "model.embed_tokens.weight"
+        head_key = "lm_head.weight"
+        if embed_key in remapped and head_key not in remapped:
+            remapped[head_key] = remapped[embed_key]
+
     return remapped
 
 
