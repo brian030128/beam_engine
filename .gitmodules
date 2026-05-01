@@ -1,0 +1,4 @@
+[submodule "3rdparty/flashinfer"]
+	path = 3rdparty/flashinfer
+	url = git@github.com:brian030128/flashinfer.git
+	branch = beam_engine

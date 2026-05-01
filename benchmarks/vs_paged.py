@@ -28,7 +28,7 @@ Per CLAUDE.md: pick a fully idle GPU and pin via CUDA_VISIBLE_DEVICES.
 
 Usage:
     nvidia-smi
-    PYTHONPATH=3rdparty:$PYTHONPATH CUDA_VISIBLE_DEVICES=<id> \\
+    PYTHONPATH=3rdparty/flashinfer:$PYTHONPATH CUDA_VISIBLE_DEVICES=<id> \\
         uv run python benchmarks/vs_paged.py
 """
 
