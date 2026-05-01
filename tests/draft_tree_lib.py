@@ -668,6 +668,35 @@ def benchmark_fused_config(
         else None
     )
 
+    # Path B: fall back to MultiLevelCascadeAttentionWrapper for workloads
+    # where the fused single-kernel architecture has structural overhead.
+    # nsys/ncu profiling on Multi-Level Max Sharing W=16 D=24 traced the
+    # 1.42x F/R to FusedBatchPrefillMultiLevelKernel running 30-70%
+    # slower than equivalent per-level BatchPrefillWithPagedKVCacheKernel
+    # launches (1244 µs vs 859 µs total). The fused template's per-CTA
+    # level dispatch (level_id_per_cta lookup + FusedCascadeParamsArray
+    # indirection) dominates when the workload is large enough that
+    # launch-overhead amortization no longer pays for the kernel-internal
+    # cost. Below the threshold (small workloads, ≤ ~5M Q×K_max),
+    # single-launch fused still wins via launch-amortization (F/R 0.5-
+    # 0.9x for Min Sharing W ≤ 8). Above, per-level unfused launches win.
+    FALLBACK_TOTAL_THRESHOLD = 5_000_000
+    max_kv_len_overall = max(
+        (int(kv_len_arr[lvl].max().item()) if kv_len_arr[lvl].numel() > 0 else 0)
+        for lvl in range(num_levels)
+    )
+    workload_score = meta["total_q"] * max_kv_len_overall
+    fallback_to_unfused = (
+        has_long_kv_level
+        and (has_underutil_large or small_r_count >= MERGE_POOLS_SMALL_R_COUNT)
+        and workload_score >= FALLBACK_TOTAL_THRESHOLD
+    )
+    if fallback_to_unfused:
+        return benchmark_one_config(
+            meta, q, kv_data, num_qo_heads, num_kv_heads,
+            head_dim, page_size, dtype, warmup, repeat, rounds,
+        )
+
     wrapper = FusedMultiLevelCascadeAttentionWrapper(
         num_levels=num_levels,
         kv_layout="NHD",
