@@ -2,3 +2,7 @@
 	path = 3rdparty/flashinfer
 	url = git@github.com:brian030128/flashinfer.git
 	branch = beam_engine
+[submodule "3rdparty/FastTree-Artifact"]
+	path = 3rdparty/FastTree-Artifact
+	url = git@github.com:brian030128/FastTree-Artifact.git
+	branch = main
