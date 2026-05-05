@@ -66,6 +66,32 @@ class Coefficients:
     # path which doesn't tile.
     per_beam_us_per_kv_token: float = 0.0008
 
+    # ------------------------------------------------------------------
+    # SM count for wave-occupancy modeling. Tiles within a pool run in
+    # parallel across SMs; the per-tile compute scales with
+    # ceil(tile_count / num_sms), not tile_count. Calibrated from
+    # ``torch.cuda.get_device_properties().multi_processor_count``.
+    # A6000 = 84, RTX 6000 Ada = 142, H100 = 132.
+    num_sms: int = 84
+
+    # Auto-tuned (filled by autotune.py). These two parameters absorb
+    # device-specific effects the closed-form expressions above don't
+    # capture:
+    #   * `share_extra_us`     - flat per-layer overhead added to
+    #     T_shared. Captures unmodeled merge-launch cost, plus the
+    #     L2-cache reuse advantage PER_BEAM gets at small K (the
+    #     bandwidth model treats reads as HBM-bound; reality has
+    #     cross-beam KV reuse hot in L2). Tuned upward → favors
+    #     PER_BEAM more.
+    #   * `dual_pool_extra_us` - flat extra overhead added to T_shared
+    #     when pool_count=2. Captures SM-occupancy effects beyond the
+    #     wave-count term — even when both pools fit in 1 wave each,
+    #     the inter-pool sync + extra launch is real overhead.
+    #     Tuned upward → favors single-pool dispatch.
+    # Both default to 0; pass `autotune=True` to calibrate to fit them.
+    share_extra_us: float = 0.0
+    dual_pool_extra_us: float = 0.0
+
     @classmethod
     def defaults(cls) -> "Coefficients":
         return cls()
@@ -189,9 +215,15 @@ def cost_shared(
         bytes_loaded += g_count * kv_tokens * w.bytes_per_kv
 
     bw_us = _bytes_to_us(bytes_loaded, c)
+    # Wave-count compute: tiles within each pool run in parallel
+    # across SMs. compute_us = ceil(N_tiles / num_sms) × per_tile_us.
+    # Critical for high-K workloads — without this, tile-count grows
+    # linearly with K and over-penalizes single-pool large-T choices.
+    waves_large = max(1, _ceil_div(total_t_large_tiles, c.num_sms)) if total_t_large_tiles > 0 else 0
+    waves_small = max(1, _ceil_div(total_t_small_tiles, c.num_sms)) if total_t_small_tiles > 0 else 0
     compute_us = (
-        total_t_large_tiles * c.per_tile_us[t_large]
-        + total_t_small_tiles * c.per_tile_us[T_SMALL]
+        waves_large * c.per_tile_us[t_large]
+        + waves_small * c.per_tile_us[T_SMALL]
     )
 
     # Launch overhead: 1 launch for the prefill kernel(s); pool_count=2
@@ -203,7 +235,12 @@ def cost_shared(
     # Merge: separate CascadeMerge launch unless fused into epilogue.
     merge_us = 0.0 if fused_merge else c.merge_us * (depth - 1)
 
-    return bw_us + compute_us + launch_us + merge_us
+    # Auto-tuned device-specific overheads (see Coefficients docstring).
+    extra_us = c.share_extra_us
+    if pool_count == 2:
+        extra_us += c.dual_pool_extra_us
+
+    return bw_us + compute_us + launch_us + merge_us + extra_us
 
 
 # ---------------------------------------------------------------------------

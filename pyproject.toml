@@ -17,6 +17,9 @@ dependencies = [
 [tool.uv]
 no-build-isolation-package = ["torch"]
 
+[tool.uv.sources]
+flashinfer-python = { path = "3rdparty/flashinfer", editable = true }
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

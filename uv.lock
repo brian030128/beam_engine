@@ -61,7 +61,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=1.12.0" },
-    { name = "flashinfer-python" },
+    { name = "flashinfer-python", editable = "3rdparty/flashinfer" },
     { name = "huggingface-hub" },
     { name = "ninja" },
     { name = "numpy" },
@@ -191,8 +191,7 @@ wheels = [
 
 [[package]]
 name = "flashinfer-python"
-version = "0.6.9"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "3rdparty/flashinfer" }
 dependencies = [
     { name = "apache-tvm-ffi" },
     { name = "click" },
@@ -209,9 +208,23 @@ dependencies = [
     { name = "torch" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dc/38/64c39bc71ec538061f707bc30d36d1a2c4d1e95d662fd6282fb74224f2e3/flashinfer_python-0.6.9.tar.gz", hash = "sha256:044ed74698b5f6c1e719b32cf95189609166740076c11287e81a38450953de50", size = 6786091, upload-time = "2026-04-24T14:20:57.893Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fa/fd/1d1b03d696cee94b387b2e3ee58c23a00fc74bb34b77a7bbdaf63012c530/flashinfer_python-0.6.9-py3-none-any.whl", hash = "sha256:46d013119ecd039a5844c4847325b3571f99cdd8fd9e00839bf008c67b15811a", size = 9507965, upload-time = "2026-04-24T14:20:55.163Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "apache-tvm-ffi", specifier = ">=0.1.6,!=0.1.8,!=0.1.8.post0,<0.2" },
+    { name = "click" },
+    { name = "cuda-tile" },
+    { name = "einops" },
+    { name = "ninja" },
+    { name = "numpy" },
+    { name = "nvidia-cudnn-frontend", specifier = ">=1.13.0" },
+    { name = "nvidia-cutlass-dsl", specifier = ">=4.3.4" },
+    { name = "nvidia-ml-py" },
+    { name = "packaging", specifier = ">=24.2" },
+    { name = "requests" },
+    { name = "tabulate" },
+    { name = "torch" },
+    { name = "tqdm" },
 ]
 
 [[package]]

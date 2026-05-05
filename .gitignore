@@ -27,3 +27,9 @@ dist/
 # Local
 .env
 .env.local
+
+# Claude Code session data
+.claude/
+
+# Out-of-repo backups
+3rdparty.backup/
