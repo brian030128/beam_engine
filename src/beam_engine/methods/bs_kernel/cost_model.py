@@ -135,14 +135,141 @@ def _bytes_to_us(n_bytes: int, c: Coefficients) -> float:
     return n_bytes / c.B_hbm
 
 
-def cost_per_beam(w: WorkloadShape, c: Coefficients) -> float:
-    """Plain paged decode: K independent sequences, each loads (L_p +
-    suffix_len_b) tokens of K/V. No merge.
+def _level_tiles_and_bytes(
+    levels: list[tuple[int, int, int, int]],
+    *,
+    pool_count: int,
+    t_large: int,
+) -> tuple[int, int, int]:
+    """Sum (large_tiles, small_tiles, bytes_loaded) over a list of
+    cascade levels. Each level is (group_count, beams_per_group,
+    kv_tokens, bytes_per_kv).
     """
-    total_kv = sum(w.L_p + s for s in w.suffix_lens)
-    bw_us = _bytes_to_us(total_kv * w.bytes_per_kv, c)
-    # Per-beam paged decode launches one kernel.
-    return bw_us + c.launch_us
+    total_t_large_tiles = 0
+    total_t_small_tiles = 0
+    bytes_loaded = 0
+    for g_count, beams_per_g, kv_tokens, bytes_per_kv in levels:
+        if kv_tokens == 0:
+            continue
+        packed = beams_per_g
+        if pool_count == 1:
+            tiles_per_group = max(1, _ceil_div(packed, t_large))
+            total_t_large_tiles += g_count * tiles_per_group
+        else:
+            if packed <= T_SMALL:
+                tiles_per_group = max(1, _ceil_div(packed, T_SMALL))
+                total_t_small_tiles += g_count * tiles_per_group
+            else:
+                tiles_per_group = max(1, _ceil_div(packed, t_large))
+                total_t_large_tiles += g_count * tiles_per_group
+        bytes_loaded += g_count * kv_tokens * bytes_per_kv
+    return total_t_large_tiles, total_t_small_tiles, bytes_loaded
+
+
+def _per_prompt_levels(w: WorkloadShape, depth: int) -> list[tuple[int, int, int, int]]:
+    """Build the (g_count, beams_per_group, kv_tokens, bytes_per_kv) level
+    tuples for one prompt's contribution to a cascade plan."""
+    levels: list[tuple[int, int, int, int]] = []
+    # Level 0: 1 group of K beams sharing L_p tokens.
+    levels.append((1, w.K, w.L_p, w.bytes_per_kv))
+    # Level mid (depth=3): G groups of group_size beams sharing inter_len.
+    if depth == 3:
+        assert w.intermediate is not None, "depth=3 needs intermediate shape"
+        i = w.intermediate
+        levels.append((i.G, i.group_size, i.inter_len_tokens, w.bytes_per_kv))
+    # Last level: K groups of 1 beam each with avg_suffix tokens.
+    avg_suffix = sum(w.suffix_lens) / max(1, len(w.suffix_lens))
+    levels.append((w.K, 1, int(round(avg_suffix)), w.bytes_per_kv))
+    return levels
+
+
+def cost_per_beam_batch(workloads: list[WorkloadShape], c: Coefficients) -> float:
+    """Plain paged decode for B prompts in one fused kernel launch.
+
+    Each beam loads (L_p_b + suffix_len) of K/V; B prompts share the
+    one launch overhead.
+    """
+    total_kv_bytes = 0
+    for w in workloads:
+        total_kv_bytes += sum(w.L_p + s for s in w.suffix_lens) * w.bytes_per_kv
+    return _bytes_to_us(total_kv_bytes, c) + c.launch_us
+
+
+def cost_shared_batch(
+    workloads: list[WorkloadShape],
+    c: Coefficients,
+    *,
+    depth: int,
+    pool_count: int,
+    t_large: int,
+    fused_merge: bool = False,
+) -> float:
+    """Cost of the shared-prefix path running B prompts in one cascade
+    launch.
+
+    All prompts use the same ``(depth, pool_count, t_large)`` — that's
+    the choice the picker has to make for the fused kernel. Within
+    each prompt, the per-level tile counts are the same as the B=1
+    case. Across prompts, tile counts SUM, then wave count is computed
+    against ``num_sms`` ONCE across the batch — this is the cross-prompt
+    wave-occupancy effect that B=1 reasoning misses.
+
+    depth ∈ {2, 3}. depth=3 requires every prompt's workload have an
+    intermediate (else this candidate is invalid for the batch and the
+    caller should skip it).
+    """
+    assert depth in (2, 3), depth
+    assert pool_count in (1, 2), pool_count
+    assert t_large in T_LARGE_CHOICES, t_large
+    if depth == 3:
+        for w in workloads:
+            assert w.intermediate is not None, (
+                "depth=3 batch needs intermediate on every prompt"
+            )
+
+    # Aggregate tile counts and bytes across all prompts.
+    total_large = 0
+    total_small = 0
+    total_bytes = 0
+    for w in workloads:
+        levels = _per_prompt_levels(w, depth)
+        large, small, b = _level_tiles_and_bytes(
+            levels, pool_count=pool_count, t_large=t_large,
+        )
+        total_large += large
+        total_small += small
+        total_bytes += b
+
+    bw_us = _bytes_to_us(total_bytes, c)
+    # Cross-batch wave count: critical for batched decoding — at B=1 the
+    # per-beam tiles fit in 1 wave on H100; at B=8 they may need 4 waves
+    # at T=64 (and fewer at T=16, which is what tips 2-pool to win).
+    waves_large = max(1, _ceil_div(total_large, c.num_sms)) if total_large > 0 else 0
+    waves_small = max(1, _ceil_div(total_small, c.num_sms)) if total_small > 0 else 0
+    compute_us = (
+        waves_large * c.per_tile_us[t_large]
+        + waves_small * c.per_tile_us[T_SMALL]
+    )
+
+    # ONE launch for the batch (not B). pool_count=2 adds an extra
+    # launch + sync.
+    launch_us = c.launch_us
+    if pool_count == 2:
+        launch_us += c.launch_us + c.sync_us
+
+    # Merge: one CascadeMerge per level transition for the whole batch.
+    merge_us = 0.0 if fused_merge else c.merge_us * (depth - 1)
+
+    extra_us = c.share_extra_us
+    if pool_count == 2:
+        extra_us += c.dual_pool_extra_us
+
+    return bw_us + compute_us + launch_us + merge_us + extra_us
+
+
+def cost_per_beam(w: WorkloadShape, c: Coefficients) -> float:
+    """Plain paged decode for a single prompt — wraps cost_per_beam_batch."""
+    return cost_per_beam_batch([w], c)
 
 
 def cost_shared(
@@ -154,93 +281,13 @@ def cost_shared(
     t_large: int,
     fused_merge: bool = False,
 ) -> float:
-    """Cost of the shared-prefix path with given depth/pool/T choices.
-
-    depth ∈ {2, 3}. depth=3 requires w.intermediate is not None.
-    pool_count ∈ {1, 2}. pool_count=2 launches both T_large and T_small
-    kernels (only relevant when both have non-trivial work).
-    t_large ∈ T_LARGE_CHOICES.
-    fused_merge=True drops the merge_us term (Phase 2 kernel).
-    """
-    assert depth in (2, 3), depth
-    assert pool_count in (1, 2), pool_count
-    assert t_large in T_LARGE_CHOICES, t_large
-    if depth == 3:
-        assert w.intermediate is not None, "depth=3 needs intermediate shape"
-
-    # --- Per-level shapes ---
-    # Level 0: 1 group of K beams sharing L_p tokens.
-    # Level mid (when depth=3): G groups of group_size beams sharing
-    #   inter_len tokens.
-    # Level last: K groups of 1 beam, each with suffix_len_b tokens.
-    levels: list[tuple[int, int, int]] = []  # (group_count, beams_per_group, kv_tokens)
-    levels.append((1, w.K, w.L_p))
-    if depth == 3:
-        i = w.intermediate  # type: ignore[assignment]
-        levels.append((i.G, i.group_size, i.inter_len_tokens))
-    # Last level: each beam has its own suffix_len_b. Approximate as K
-    # groups with the average suffix_len for tile-count estimation.
-    avg_suffix = sum(w.suffix_lens) / max(1, len(w.suffix_lens))
-    levels.append((w.K, 1, int(round(avg_suffix))))
-
-    # --- Tile-count + per-tile cost per level ---
-    # A level with G groups of B beams contributes (G × ceil(B*kv_group / T) ×
-    # num_kv_heads) work tiles. We use kv_group=1 in the cost model for
-    # simplicity (GQA factors in via per_tile_us calibration).
-    total_t_large_tiles = 0
-    total_t_small_tiles = 0
-    bytes_loaded = 0
-    for g_count, beams_per_g, kv_tokens in levels:
-        if kv_tokens == 0:
-            continue
-        # Pool routing: per-group "packed Q" = beams_per_g (× kv_group, =1 here).
-        packed = beams_per_g
-        if pool_count == 1:
-            # Everything in T_large; beams_per_g < T_large pads.
-            tiles_per_group = max(1, _ceil_div(packed, t_large))
-            total_t_large_tiles += g_count * tiles_per_group
-        else:
-            # Two pools: small-Q groups (packed ≤ T_SMALL) → T_SMALL pool;
-            # large-Q groups → T_large pool. In beam search L0 is always
-            # large-Q (packed = K), levels with beams_per_g ≤ T_SMALL go
-            # small.
-            if packed <= T_SMALL:
-                tiles_per_group = max(1, _ceil_div(packed, T_SMALL))
-                total_t_small_tiles += g_count * tiles_per_group
-            else:
-                tiles_per_group = max(1, _ceil_div(packed, t_large))
-                total_t_large_tiles += g_count * tiles_per_group
-        # Bytes loaded for this level: g_count × kv_tokens × bytes_per_kv
-        # (K/V loaded once per group's kernel scan).
-        bytes_loaded += g_count * kv_tokens * w.bytes_per_kv
-
-    bw_us = _bytes_to_us(bytes_loaded, c)
-    # Wave-count compute: tiles within each pool run in parallel
-    # across SMs. compute_us = ceil(N_tiles / num_sms) × per_tile_us.
-    # Critical for high-K workloads — without this, tile-count grows
-    # linearly with K and over-penalizes single-pool large-T choices.
-    waves_large = max(1, _ceil_div(total_t_large_tiles, c.num_sms)) if total_t_large_tiles > 0 else 0
-    waves_small = max(1, _ceil_div(total_t_small_tiles, c.num_sms)) if total_t_small_tiles > 0 else 0
-    compute_us = (
-        waves_large * c.per_tile_us[t_large]
-        + waves_small * c.per_tile_us[T_SMALL]
+    """Cost of the shared-prefix path for a single prompt — wraps
+    ``cost_shared_batch`` with a 1-element list."""
+    return cost_shared_batch(
+        [w], c,
+        depth=depth, pool_count=pool_count, t_large=t_large,
+        fused_merge=fused_merge,
     )
-
-    # Launch overhead: 1 launch for the prefill kernel(s); pool_count=2
-    # adds a sync between them.
-    launch_us = c.launch_us
-    if pool_count == 2:
-        launch_us += c.launch_us + c.sync_us
-
-    # Merge: separate CascadeMerge launch unless fused into epilogue.
-    merge_us = 0.0 if fused_merge else c.merge_us * (depth - 1)
-
-    # Auto-tuned device-specific overheads (see Coefficients docstring).
-    extra_us = c.share_extra_us
-    if pool_count == 2:
-        extra_us += c.dual_pool_extra_us
-
-    return bw_us + compute_us + launch_us + merge_us + extra_us
 
 
 # ---------------------------------------------------------------------------
@@ -262,41 +309,48 @@ class Pick:
         return self.strategy != Strategy.PER_BEAM
 
 
-def pick_strategy(
-    w: WorkloadShape,
+def pick_strategy_batch(
+    workloads: list[WorkloadShape],
     c: Coefficients,
     *,
     fused_merge: bool = False,
     available_strategies: Optional[set[Strategy]] = None,
 ) -> Pick:
-    """Enumerate every strategy the cost model considers, return the min.
+    """Pick the best strategy for a *batch* of prompts decoded together.
 
-    ``available_strategies`` lets ablation switches restrict the choice
-    space (e.g., force always-shared, force fixed-depth=2).
+    All prompts share one ``(depth, pool_count, t_large)`` — that's the
+    choice forced by a single fused kernel launch. Tile counts sum
+    across prompts, so cross-prompt wave overflow tilts the picker
+    toward the 2-pool path at large B (where the per-beam tile count
+    crosses ``num_sms`` and a separate T_SMALL pool reduces wave count).
+
+    ``depth=3`` is only considered if every prompt has an intermediate
+    structure (otherwise the cascade plan can't use a 3-level layout
+    consistently — flashinfer wraps a single ``num_levels``).
     """
     debug: dict[str, float] = {}
 
     # Per-beam baseline.
-    pb_cost = cost_per_beam(w, c)
+    pb_cost = cost_per_beam_batch(workloads, c)
     debug["per_beam"] = pb_cost
     candidates: list[tuple[Strategy, float, int, int, int]] = [
         (Strategy.PER_BEAM, pb_cost, 0, 1, 1),
     ]
 
-    # Shared candidates.
+    all_have_intermediate = all(w.intermediate is not None for w in workloads)
+
     for depth in (2, 3):
-        if depth == 3 and w.intermediate is None:
+        if depth == 3 and not all_have_intermediate:
             continue
         for pool_count in (1, 2):
             for t_large in T_LARGE_CHOICES:
-                cs = cost_shared(
-                    w, c,
+                cs = cost_shared_batch(
+                    workloads, c,
                     depth=depth, pool_count=pool_count,
                     t_large=t_large, fused_merge=fused_merge,
                 )
                 tag = f"shared_d{depth}_p{pool_count}_t{t_large}"
                 debug[tag] = cs
-                # Map (depth, pool_count) → Strategy enum.
                 if depth == 2 and pool_count == 1:
                     s = Strategy.SHARED_2L_1POOL
                 elif depth == 2 and pool_count == 2:
@@ -308,11 +362,10 @@ def pick_strategy(
                 candidates.append((s, cs, t_large, depth, pool_count))
 
     if available_strategies is not None:
-        candidates = [c for c in candidates if c[0] in available_strategies]
+        candidates = [cand for cand in candidates if cand[0] in available_strategies]
         if not candidates:
             raise ValueError("no strategy available after filtering")
 
-    # Pick min.
     best = min(candidates, key=lambda x: x[1])
     return Pick(
         strategy=best[0],
@@ -321,6 +374,23 @@ def pick_strategy(
         depth=best[3],
         pool_count=best[4],
         debug=debug,
+    )
+
+
+def pick_strategy(
+    w: WorkloadShape,
+    c: Coefficients,
+    *,
+    fused_merge: bool = False,
+    available_strategies: Optional[set[Strategy]] = None,
+) -> Pick:
+    """Pick the best strategy for a single prompt — wraps
+    ``pick_strategy_batch`` with a 1-element list. Existing single-prompt
+    callers (driver, oracle_vs_model, autotune) keep working unchanged.
+    """
+    return pick_strategy_batch(
+        [w], c, fused_merge=fused_merge,
+        available_strategies=available_strategies,
     )
 
 
