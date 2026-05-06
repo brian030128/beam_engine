@@ -96,7 +96,7 @@ echo
 #    method doesn't poison the others.
 # ----------------------------------------------------------------
 echo ">>> [4/7] End-to-end sweep (5 methods)"
-for m in paged tree adaptive_pool bs_kernel fasttree mlca; do
+for m in paged tree adaptive_pool bs_kernel fasttree mlca dbs; do
     echo "    --- method: $m ---"
     uv run python benchmarks/bs_kernel/sweep.py "$GRID_FLAG" --methods "$m" \
         --out "$RESULTS_DIR/04-sweep-$m.csv" \
