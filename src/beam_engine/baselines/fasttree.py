@@ -33,6 +33,12 @@ import torch
 import torch.nn.functional as F
 from flashinfer import BatchPrefillWithRaggedKVCacheWrapper
 
+from ..decoding import (
+    DecodeSelect,
+    PrefillSelect,
+    standard_decode_select,
+    standard_prefill_select,
+)
 from ..models.attention import AttentionContext
 
 
@@ -446,6 +452,8 @@ def _beam_search_single(
     KV_SPLIT_SIZES: tuple[int, int] = (1024, 128),
     para_threshs1: tuple[int, int] = (132, 528),
     para_threshs2: tuple[int, int] = (132, 132),
+    select_at_prefill: PrefillSelect = standard_prefill_select,
+    select_at_decode: DecodeSelect = standard_decode_select,
 ) -> list[Beam]:
     num_qo_heads = config.num_attention_heads
     num_kv_heads = config.num_key_value_heads
@@ -500,10 +508,8 @@ def _beam_search_single(
     with torch.no_grad():
         hidden = model.forward(input_ids=input_ids, positions=positions, ctx=pre_ctx)
         logits = model.compute_logits(hidden[:, -1, :])
-        log_probs = F.log_softmax(logits, dim=-1)
-        topk_log_probs, topk_ids = log_probs.topk(K, dim=-1)
-        topk_log_probs = topk_log_probs.squeeze(0)
-        topk_ids = topk_ids.squeeze(0)
+        log_probs = F.log_softmax(logits, dim=-1).squeeze(0)
+        topk_log_probs, topk_ids = select_at_prefill(log_probs, K)
 
     if timings is not None:
         torch.cuda.synchronize()
@@ -585,17 +591,13 @@ def _beam_search_single(
             log_probs = F.log_softmax(logits, dim=-1)
 
             # 4) Top-K + fork.
-            vocab_size = logits.shape[-1]
             cum_probs = torch.tensor(
                 [b.cum_log_prob for b in beams], device=device, dtype=torch.float32,
             )
             scores = cum_probs[:, None] + log_probs.float()
-            topk_scores, topk_flat = scores.reshape(-1).topk(K)
-            ids = torch.stack(
-                (topk_flat // vocab_size, topk_flat % vocab_size), dim=0,
-            ).tolist()
-            parent_ids = ids[0]
-            new_token_ids = ids[1]
+            parent_t, token_t, topk_scores = select_at_decode(scores, K)
+            parent_ids = parent_t.tolist()
+            new_token_ids = token_t.tolist()
             scores_list = topk_scores.tolist()
 
             new_beams: list[Beam] = []
@@ -635,22 +637,32 @@ def beam_search(
     KV_SPLIT_SIZES: tuple[int, int] = (1024, 128),
     para_threshs1: tuple[int, int] = (132, 528),
     para_threshs2: tuple[int, int] = (132, 132),
+    select_at_prefill: PrefillSelect = standard_prefill_select,
+    select_at_decode: DecodeSelect = standard_decode_select,
 ):
     """FastTree beam search. Multi-prompt batches run sequentially (one fused
     KV buffer per prompt), matching the tree-attention baseline's contract.
+
+    ``select_at_prefill`` / ``select_at_decode`` plug in alternate top-K
+    strategies (see ``beam_engine.decoding``); defaults are standard top-K.
     """
+    kwargs = dict(
+        device=device, dtype=dtype,
+        fasttree_params=fasttree_params,
+        KV_SPLIT_SIZES=KV_SPLIT_SIZES,
+        para_threshs1=para_threshs1,
+        para_threshs2=para_threshs2,
+        select_at_prefill=select_at_prefill,
+        select_at_decode=select_at_decode,
+    )
     if return_timings:
         agg = {"prefill_ms": 0.0, "decode_step_ms": []}
         all_beams: list[list[Beam]] = []
         for p in prompt_ids:
             t = {"prefill_ms": 0.0, "decode_step_ms": []}
             beams = _beam_search_single(
-                model, config, p, max_new_tokens, beam_width,
-                device=device, dtype=dtype, timings=t,
-                fasttree_params=fasttree_params,
-                KV_SPLIT_SIZES=KV_SPLIT_SIZES,
-                para_threshs1=para_threshs1,
-                para_threshs2=para_threshs2,
+                model, config, p, max_new_tokens, beam_width, timings=t,
+                **kwargs,
             )
             all_beams.append(beams)
             agg["prefill_ms"] += t["prefill_ms"]
@@ -658,12 +670,7 @@ def beam_search(
         return all_beams, agg
     return [
         _beam_search_single(
-            model, config, p, max_new_tokens, beam_width,
-            device=device, dtype=dtype,
-            fasttree_params=fasttree_params,
-            KV_SPLIT_SIZES=KV_SPLIT_SIZES,
-            para_threshs1=para_threshs1,
-            para_threshs2=para_threshs2,
+            model, config, p, max_new_tokens, beam_width, **kwargs,
         )
         for p in prompt_ids
     ]

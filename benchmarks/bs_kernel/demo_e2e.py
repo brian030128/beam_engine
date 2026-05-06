@@ -34,13 +34,19 @@ DTYPE = torch.float16
 
 
 METHODS = {
-    "paged":         paged.beam_search,
-    "tree":          tree.beam_search,
-    "fasttree":      fasttree.beam_search,
-    "mlca":          mlca.beam_search,
-    "adaptive_pool": adaptive_pool.beam_search,
-    "bs_kernel":     bs_kernel.beam_search,
-    "dbs":           dbs.beam_search,
+    "paged":             paged.beam_search,
+    "tree":              tree.beam_search,
+    "fasttree":          fasttree.beam_search,
+    "mlca":              mlca.beam_search,
+    "adaptive_pool":     adaptive_pool.beam_search,
+    "bs_kernel":         bs_kernel.beam_search,
+    "dbs":               dbs.beam_search,           # alias for dbs_paged
+    "dbs_paged":         dbs.dbs_paged,
+    "dbs_tree":          dbs.dbs_tree,
+    "dbs_fasttree":      dbs.dbs_fasttree,
+    "dbs_mlca":          dbs.dbs_mlca,
+    "dbs_adaptive_pool": dbs.dbs_adaptive_pool,
+    "dbs_bs_kernel":     dbs.dbs_bs_kernel,
 }
 
 

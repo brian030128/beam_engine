@@ -25,6 +25,12 @@ import torch
 import torch.nn.functional as F
 from flashinfer import BatchPrefillWithRaggedKVCacheWrapper
 
+from ..decoding import (
+    DecodeSelect,
+    PrefillSelect,
+    standard_decode_select,
+    standard_prefill_select,
+)
 from ..models.attention import AttentionContext
 
 
@@ -107,6 +113,8 @@ def _beam_search_single(
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
     timings: dict | None = None,
+    select_at_prefill: PrefillSelect = standard_prefill_select,
+    select_at_decode: DecodeSelect = standard_decode_select,
 ) -> list[Beam]:
     num_qo_heads = config.num_attention_heads
     num_kv_heads = config.num_key_value_heads
@@ -164,10 +172,8 @@ def _beam_search_single(
     with torch.no_grad():
         hidden_states = model.forward(input_ids=input_ids, positions=positions, ctx=ctx)
         logits = model.compute_logits(hidden_states[:, -1, :])
-        log_probs = F.log_softmax(logits, dim=-1)
-        topk_log_probs, topk_ids = log_probs.topk(K, dim=-1)
-        topk_log_probs = topk_log_probs.squeeze(0)
-        topk_ids = topk_ids.squeeze(0)
+        log_probs = F.log_softmax(logits, dim=-1).squeeze(0)
+        topk_log_probs, topk_ids = select_at_prefill(log_probs, K)
 
     if timings is not None:
         torch.cuda.synchronize()
@@ -242,17 +248,14 @@ def _beam_search_single(
             log_probs = F.log_softmax(logits, dim=-1)
 
             # 4) Score and pick top-K.
-            vocab_size = logits.shape[-1]
             cum_probs = torch.tensor(
                 [beam.cum_log_prob for beam in beams],
                 device=device, dtype=torch.float32,
             )
             scores = cum_probs[:, None] + log_probs.float()
-            flat_scores = scores.reshape(-1)
-            topk_scores, topk_flat_ids = flat_scores.topk(K)
-
-            parent_beam_ids = (topk_flat_ids // vocab_size).tolist()
-            new_token_ids = (topk_flat_ids % vocab_size).tolist()
+            parent_t, token_t, topk_scores = select_at_decode(scores, K)
+            parent_beam_ids = parent_t.tolist()
+            new_token_ids = token_t.tolist()
 
             # 5) Build new beam list. Forking is fine — multiple new beams may share a parent
             #    path, but each will diverge by appending its own new slot at the next step.
@@ -287,6 +290,8 @@ def beam_search(
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
     return_timings: bool = False,
+    select_at_prefill: PrefillSelect = standard_prefill_select,
+    select_at_decode: DecodeSelect = standard_decode_select,
 ):
     """Tree-attention beam search.
 
@@ -294,6 +299,9 @@ def beam_search(
     a fair single-prompt comparison against paged-attention, this is equivalent
     to B=1. When ``return_timings=True``, returns ``(beams, timings)`` where
     timings aggregates over all prompts (per-step lists are concatenated).
+
+    ``select_at_prefill`` / ``select_at_decode`` plug in alternate top-K
+    strategies (see ``beam_engine.decoding``); defaults are standard top-K.
     """
     if return_timings:
         agg = {"prefill_ms": 0.0, "decode_step_ms": []}
@@ -303,6 +311,8 @@ def beam_search(
             beams = _beam_search_single(
                 model, config, p, max_new_tokens, beam_width,
                 device=device, dtype=dtype, timings=t,
+                select_at_prefill=select_at_prefill,
+                select_at_decode=select_at_decode,
             )
             all_beams.append(beams)
             agg["prefill_ms"] += t["prefill_ms"]
@@ -312,6 +322,8 @@ def beam_search(
         _beam_search_single(
             model, config, p, max_new_tokens, beam_width,
             device=device, dtype=dtype,
+            select_at_prefill=select_at_prefill,
+            select_at_decode=select_at_decode,
         )
         for p in prompt_ids
     ]

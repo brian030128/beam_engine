@@ -28,6 +28,12 @@ from flashinfer import (
     MultiLevelCascadeAttentionWrapper,
 )
 
+from ..decoding import (
+    DecodeSelect,
+    PrefillSelect,
+    standard_decode_select,
+    standard_prefill_select,
+)
 from ..models.attention import AttentionContext
 from ..page_table import PageTable
 
@@ -349,6 +355,8 @@ def beam_search(
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
     return_timings: bool = False,
+    select_at_prefill: PrefillSelect = standard_prefill_select,
+    select_at_decode: DecodeSelect = standard_decode_select,
 ):
     """Adaptive 2-pool beam search with the non-fused multi-level cascade.
 
@@ -444,7 +452,10 @@ def beam_search(
             )
             logits = model.compute_logits(hidden[:, -1, :])
             log_probs = F.log_softmax(logits, dim=-1)
-            topk_lp, topk_ids = log_probs.topk(K, dim=-1)
+            log_probs_1d = log_probs.squeeze(0)
+            topk_lp_1d, topk_ids_1d = select_at_prefill(log_probs_1d, K)
+            topk_lp = topk_lp_1d.unsqueeze(0)
+            topk_ids = topk_ids_1d.unsqueeze(0)
 
         if return_timings:
             torch.cuda.synchronize()
@@ -563,13 +574,10 @@ def beam_search(
                     dtype=torch.float32, device=device,
                 )
                 scores = cum_probs[:, None] + log_probs.float()
-                topk_scores, topk_flat = scores.reshape(-1).topk(K)
-                ids = torch.stack(
-                    (topk_flat // vocab_size, topk_flat % vocab_size), dim=0,
-                ).tolist()
-                # parent index in beam_order space → translate to original beam idx.
-                parent_in_order = ids[0]
-                new_token_ids = ids[1]
+                parent_t, token_t, topk_scores = select_at_decode(scores, K)
+                # parent index is in beam_order space → translate to original beam idx.
+                parent_in_order = parent_t.tolist()
+                new_token_ids = token_t.tolist()
                 scores_list = topk_scores.tolist()
                 parent_beam_ids = [beam_order[p] for p in parent_in_order]
 

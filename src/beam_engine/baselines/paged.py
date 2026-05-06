@@ -20,6 +20,12 @@ from flashinfer import (
     BatchPrefillWithPagedKVCacheWrapper,
 )
 
+from ..decoding import (
+    DecodeSelect,
+    PrefillSelect,
+    standard_decode_select,
+    standard_prefill_select,
+)
 from ..models.attention import AttentionContext
 from ..page_table import PageTable
 
@@ -130,12 +136,17 @@ def beam_search(
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
     return_timings: bool = False,
+    select_at_prefill: PrefillSelect = standard_prefill_select,
+    select_at_decode: DecodeSelect = standard_decode_select,
 ):
     """Batched beam search with copy-on-write paged KV cache.
 
     Returns ``list[list[Beam]]`` — outer index per prompt, inner sorted by
     ``cum_log_prob`` (best first). When ``return_timings=True``, returns
     ``(beams, timings)`` where timings is ``{prefill_ms, decode_step_ms: list}``.
+
+    ``select_at_prefill`` / ``select_at_decode`` plug in alternate top-K
+    strategies (see ``beam_engine.decoding``); defaults are standard top-K.
     """
     timings = {"prefill_ms": 0.0, "decode_step_ms": []}
     num_qo_heads = config.num_attention_heads
@@ -233,7 +244,13 @@ def beam_search(
         last_hidden = hidden_states[0, last_indices, :]
         logits = model.compute_logits(last_hidden)
         log_probs = F.log_softmax(logits, dim=-1)
-        topk_log_probs, topk_ids = log_probs.topk(K, dim=-1)
+        # Per-prompt selection so DBS-style strategies see one prompt at a time.
+        topk_log_probs = torch.empty((B, K), device=device, dtype=log_probs.dtype)
+        topk_ids = torch.empty((B, K), device=device, dtype=torch.long)
+        for b in range(B):
+            lp_b, ids_b = select_at_prefill(log_probs[b], K)
+            topk_log_probs[b] = lp_b
+            topk_ids[b] = ids_b
 
     if return_timings:
         torch.cuda.synchronize()
@@ -343,11 +360,14 @@ def beam_search(
                 dtype=torch.float32,
             )
             scores = cum_probs[:, :, None] + log_probs_bkv.float()
-            flat_scores = scores.reshape(B, -1)
-            topk_scores, topk_flat_ids = flat_scores.topk(K, dim=-1)
-
-            parent_beam_ids = topk_flat_ids // vocab_size
-            new_token_ids = topk_flat_ids % vocab_size
+            topk_scores = torch.empty((B, K), device=device, dtype=scores.dtype)
+            parent_beam_ids = torch.empty((B, K), device=device, dtype=torch.long)
+            new_token_ids = torch.empty((B, K), device=device, dtype=torch.long)
+            for b in range(B):
+                p_b, t_b, s_b = select_at_decode(scores[b], K)
+                parent_beam_ids[b] = p_b
+                new_token_ids[b] = t_b
+                topk_scores[b] = s_b
 
             # 4) Resolve fork / eliminate: refcount surgery + new beam list.
             new_beams_per_prompt: list[list[Beam]] = []
