@@ -173,13 +173,23 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--full", action="store_true", help="run the full design-doc grid")
     ap.add_argument("--quick", action="store_true", help="run a small grid (default)")
+    ap.add_argument("--K", nargs="+", type=int, default=None,
+                    help="custom K list (overrides --quick/--full)")
+    ap.add_argument("--L_p", nargs="+", type=int, default=None,
+                    help="custom L_p list (overrides --quick/--full)")
+    ap.add_argument("--max_new", type=int, default=16,
+                    help="max new tokens (only used with --K/--L_p)")
     ap.add_argument("--methods", nargs="+", default=list(METHODS.keys()),
                     help=f"subset of methods to run; default: all ({list(METHODS.keys())})")
     ap.add_argument("--out", default=None,
                     help="output CSV path; default auto-named under benchmarks/bs_kernel/results/")
     args = ap.parse_args()
 
-    if args.full:
+    if args.K is not None or args.L_p is not None:
+        Ks = args.K or [16, 32, 64]
+        L_ps = args.L_p or [8192]
+        grid = [(K, L_p, args.max_new) for K in Ks for L_p in L_ps]
+    elif args.full:
         grid = FULL_GRID
     else:
         grid = QUICK_GRID
