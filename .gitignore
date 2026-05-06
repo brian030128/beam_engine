@@ -33,3 +33,9 @@ dist/
 
 # Out-of-repo backups
 3rdparty.backup/
+
+# Per-run benchmark outputs (not tracked; use run_all.sh and inspect results dirs locally)
+benchmarks/bs_kernel/results/run-*/
+
+# Local SLURM job logs
+slurm/logs/

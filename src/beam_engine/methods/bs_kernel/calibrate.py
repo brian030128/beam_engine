@@ -222,7 +222,7 @@ def measure_per_tile_us(
         num_pages, 2, page_size, num_kv_heads, head_dim,
         dtype=dtype, device=device,
     )
-    workspace = torch.empty(64 * 1024 * 1024, dtype=torch.uint8, device=device)
+    workspace = torch.empty(256 * 1024 * 1024, dtype=torch.uint8, device=device)
     wrapper = BatchPrefillWithPagedKVCacheWrapper(workspace, kv_layout="NHD")
     wrapper.plan(
         qo_indptr=torch.tensor([0, T], dtype=torch.int32, device=device),

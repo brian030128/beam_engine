@@ -6,3 +6,6 @@
 	path = 3rdparty/FastTree-Artifact
 	url = git@github.com:brian030128/FastTree-Artifact.git
 	branch = main
+[submodule "3rdparty/DeFT"]
+	path = 3rdparty/DeFT
+	url = git@github.com:LINs-lab/DeFT.git
