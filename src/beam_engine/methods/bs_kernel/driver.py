@@ -52,6 +52,7 @@ from .cost_model import (
     Strategy,
     WorkloadShape,
     pick_strategy,
+    pick_strategy_batch,
 )
 
 
@@ -145,6 +146,85 @@ def _pack_cascade_arrays(
     return qo_arr, kvp_arr, kvi_arr, kvl_arr
 
 
+def _pack_batched_cascade_arrays(
+    levels_per_prompt: list[list],
+    page_size: int,
+    device: torch.device,
+):
+    """Concatenate per-prompt cascade levels (each from `_adaptive_levels`
+    with max_levels=2) into one batched cascade plan covering all B prompts.
+
+    Each prompt contributes B groups at level 0 (one group of K beams
+    sharing its prefix) and K singleton groups at level 1 (per-beam tails).
+    Across B prompts the level arrays just concatenate — qo_indptr
+    enumerates queries in prompt-major / beam-minor order.
+
+    Phase 2 only handles depth=2 batched cascades. depth=3 is filtered
+    out by ``pick_strategy_batch`` unless every prompt has an
+    intermediate, which is rare.
+    """
+    qo_arr_per_level: list[list[int]] = [[0], [0]]
+    kvp_arr_per_level: list[list[int]] = [[0], [0]]
+    kvi_arr_per_level: list[list[int]] = [[], []]
+    kvl_arr_per_level: list[list[int]] = [[], []]
+
+    for levels in levels_per_prompt:
+        # Each prompt's `levels` is the result of _adaptive_levels(...,
+        # max_levels=2). Either 1 entry (no shared prefix; degenerate)
+        # or 2 entries (shared + per-beam-tail).
+        # Normalize to always 2 entries so per-level concatenation works:
+        # if the prompt has no shared prefix, emit an empty level-0 group.
+        if len(levels) == 1:
+            sizes_last, group_pages_last, group_lpl_last = levels[0]
+            sizes_shared, group_pages_shared, group_lpl_shared = (
+                [0], [[]], [-1],
+            )
+        else:
+            sizes_shared, group_pages_shared, group_lpl_shared = levels[0]
+            sizes_last, group_pages_last, group_lpl_last = levels[-1]
+
+        # Append level 0 (shared prefix groups for this prompt).
+        for s in sizes_shared:
+            qo_arr_per_level[0].append(qo_arr_per_level[0][-1] + s)
+        for pages, lpl in zip(group_pages_shared, group_lpl_shared):
+            kvi_arr_per_level[0].extend(pages)
+            kvp_arr_per_level[0].append(
+                kvp_arr_per_level[0][-1] + len(pages)
+            )
+            kvl_arr_per_level[0].append(
+                page_size if lpl == -1 else lpl
+            )
+        # Append level last (per-beam tail singleton groups for this prompt).
+        for s in sizes_last:
+            qo_arr_per_level[1].append(qo_arr_per_level[1][-1] + s)
+        for pages, lpl in zip(group_pages_last, group_lpl_last):
+            kvi_arr_per_level[1].extend(pages)
+            kvp_arr_per_level[1].append(
+                kvp_arr_per_level[1][-1] + len(pages)
+            )
+            kvl_arr_per_level[1].append(
+                page_size if lpl == -1 else lpl
+            )
+
+    qo_arr = [
+        torch.tensor(qo_arr_per_level[i], dtype=torch.int32, device=device)
+        for i in range(2)
+    ]
+    kvp_arr = [
+        torch.tensor(kvp_arr_per_level[i], dtype=torch.int32, device=device)
+        for i in range(2)
+    ]
+    kvi_arr = [
+        torch.tensor(kvi_arr_per_level[i], dtype=torch.int32, device=device)
+        for i in range(2)
+    ]
+    kvl_arr = [
+        torch.tensor(kvl_arr_per_level[i], dtype=torch.int32, device=device)
+        for i in range(2)
+    ]
+    return qo_arr, kvp_arr, kvi_arr, kvl_arr
+
+
 # ---------------------------------------------------------------------------
 # Beam-search driver
 # ---------------------------------------------------------------------------
@@ -213,308 +293,348 @@ def beam_search(
         128 * 1024 * 1024, dtype=torch.uint8, device=device,
     )
 
-    all_beams_out: list[list[Beam]] = []
+    # --------------------------------------------------------------
+    # Phase 2: cross-prompt batched cascade. B prompts share one
+    # PageTable, one cascade wrapper, and one fused kernel launch per
+    # decode step. The cost-model picks one (t_large, pool_count, depth)
+    # for the whole batch via pick_strategy_batch — see cost_model.py
+    # for why the cross-prompt wave-occupancy effect changes the
+    # 1-pool/2-pool boundary at large B.
+    # --------------------------------------------------------------
+    B = len(prompt_ids)
+    L_ps = [len(p) for p in prompt_ids]
+    ps = page_size
+    # Auto-grow page table for B-prompt batched workloads. Per prompt:
+    # ceil(L_p/ps) prefix pages + K * (ceil(max_new/ps) + 1) decode +
+    # CoW slack. Bump to whatever the user passed if larger.
+    auto_pages = (
+        sum((L_p + ps - 1) // ps for L_p in L_ps)
+        + B * K * ((max_new_tokens + ps - 1) // ps + 2)
+    )
+    max_pages_eff = max(max_num_pages, auto_pages + 64)
+    page_table = PageTable(
+        layer_num=num_layers,
+        page_size=ps,
+        max_num_pages=max_pages_eff,
+        head_num=num_kv_heads,
+        head_dim=head_dim,
+        device=torch.device(device),
+        store_dtype=dtype,
+    )
 
-    for prompt in prompt_ids:
-        L_p = len(prompt)
-        page_table = PageTable(
-            layer_num=num_layers,
-            page_size=page_size,
-            max_num_pages=max_num_pages,
-            head_num=num_kv_heads,
-            head_dim=head_dim,
-            device=torch.device(device),
-            store_dtype=dtype,
-        )
-        ps = page_table.page_size
+    prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(
+        workspace_buffer, kv_layout="NHD",
+    )
+    decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
+        workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
+    )
+    cascade = FusedMultiLevelCascadeAttentionWrapper(
+        num_levels=2,
+        float_workspace_buffer=workspace_buffer,
+        kv_layout="NHD",
+        device=torch.device(device),
+        max_levels=max_cascade_levels,
+    )
+    cascade_n_levels = 2
 
-        prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(
-            workspace_buffer, kv_layout="NHD",
-        )
-        decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
-            workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
-        )
-        cascade = FusedMultiLevelCascadeAttentionWrapper(
-            num_levels=2,
-            float_workspace_buffer=workspace_buffer,
-            kv_layout="NHD",
-            device=torch.device(device),
-            max_levels=max_cascade_levels,
-        )
+    # ----- Batched prefill (B ragged requests in one launch) -----
+    prompt_pages_per_b: list[list[int]] = []
+    all_kv_pi: list[int] = []
+    all_kv_po: list[int] = []
+    qo_indptr_list: list[int] = [0]
+    paged_kv_indptr_list: list[int] = [0]
+    all_paged_kv_indices: list[int] = []
+    paged_kv_lpl_list: list[int] = []
+    all_token_ids: list[int] = []
+    all_positions: list[int] = []
 
-        # ----- Prefill -----
-        num_pages = (L_p + ps - 1) // ps
-        prompt_pages = [page_table.allocate_block() for _ in range(num_pages)]
-        kv_pi = torch.tensor(
-            [prompt_pages[i // ps] for i in range(L_p)],
-            dtype=torch.int32, device=device,
-        )
-        kv_po = torch.tensor(
-            [i % ps for i in range(L_p)], dtype=torch.int32, device=device,
-        )
-        prefill_wrapper.plan(
-            qo_indptr=torch.tensor([0, L_p], dtype=torch.int32, device=device),
-            paged_kv_indptr=torch.tensor(
-                [0, num_pages], dtype=torch.int32, device=device,
-            ),
-            paged_kv_indices=torch.tensor(
-                prompt_pages, dtype=torch.int32, device=device,
-            ),
-            paged_kv_last_page_len=torch.tensor(
-                [L_p - (num_pages - 1) * ps], dtype=torch.int32, device=device,
-            ),
-            num_qo_heads=num_qo_heads,
-            num_kv_heads=num_kv_heads,
-            head_dim_qk=head_dim,
-            page_size=ps,
-            causal=True,
-        )
-        pre_ctx = _PrefillCtx(
-            page_table=page_table,
-            kv_page_indices=kv_pi,
-            kv_page_offsets=kv_po,
-            wrapper=prefill_wrapper,
-        )
-        input_ids = torch.tensor(prompt, dtype=torch.long, device=device).unsqueeze(0)
-        positions = torch.arange(L_p, device=device).unsqueeze(0)
+    for b, L_p in enumerate(L_ps):
+        n_pages = (L_p + ps - 1) // ps
+        pages = [page_table.allocate_block() for _ in range(n_pages)]
+        prompt_pages_per_b.append(pages)
+        for i in range(L_p):
+            all_kv_pi.append(pages[i // ps])
+            all_kv_po.append(i % ps)
+        qo_indptr_list.append(qo_indptr_list[-1] + L_p)
+        all_paged_kv_indices.extend(pages)
+        paged_kv_indptr_list.append(paged_kv_indptr_list[-1] + n_pages)
+        paged_kv_lpl_list.append(L_p - (n_pages - 1) * ps)
+        all_token_ids.extend(prompt_ids[b])
+        all_positions.extend(range(L_p))
 
-        if return_timings:
-            torch.cuda.synchronize()
-            t_pre = time.perf_counter()
+    prefill_wrapper.plan(
+        qo_indptr=torch.tensor(qo_indptr_list, dtype=torch.int32, device=device),
+        paged_kv_indptr=torch.tensor(
+            paged_kv_indptr_list, dtype=torch.int32, device=device),
+        paged_kv_indices=torch.tensor(
+            all_paged_kv_indices, dtype=torch.int32, device=device),
+        paged_kv_last_page_len=torch.tensor(
+            paged_kv_lpl_list, dtype=torch.int32, device=device),
+        num_qo_heads=num_qo_heads,
+        num_kv_heads=num_kv_heads,
+        head_dim_qk=head_dim,
+        page_size=ps,
+        causal=True,
+    )
+    pre_ctx = _PrefillCtx(
+        page_table=page_table,
+        kv_page_indices=torch.tensor(all_kv_pi, dtype=torch.int32, device=device),
+        kv_page_offsets=torch.tensor(all_kv_po, dtype=torch.int32, device=device),
+        wrapper=prefill_wrapper,
+    )
+    input_ids = torch.tensor(all_token_ids, dtype=torch.long, device=device).unsqueeze(0)
+    positions = torch.tensor(all_positions, dtype=torch.long, device=device).unsqueeze(0)
 
-        with torch.no_grad():
-            hidden = model.forward(
-                input_ids=input_ids, positions=positions, ctx=pre_ctx,
-            )
-            logits = model.compute_logits(hidden[:, -1, :])
-            log_probs = F.log_softmax(logits, dim=-1)
-            log_probs_1d = log_probs.squeeze(0)
-            topk_lp_1d, topk_ids_1d = select_at_prefill(log_probs_1d, K)
-            topk_lp = topk_lp_1d.unsqueeze(0)
-            topk_ids = topk_ids_1d.unsqueeze(0)
+    if return_timings:
+        torch.cuda.synchronize()
+        t_pre = time.perf_counter()
 
-        if return_timings:
-            torch.cuda.synchronize()
-            timings["prefill_ms"] += (time.perf_counter() - t_pre) * 1000.0
+    with torch.no_grad():
+        hidden = model.forward(
+            input_ids=input_ids, positions=positions, ctx=pre_ctx,
+        )
+        last_indices = [qo_indptr_list[b + 1] - 1 for b in range(B)]
+        last_hidden = hidden[0, last_indices, :]            # (B, H)
+        logits = model.compute_logits(last_hidden)          # (B, V)
+        log_probs = F.log_softmax(logits, dim=-1)           # (B, V)
 
+    if return_timings:
+        torch.cuda.synchronize()
+        timings["prefill_ms"] = (time.perf_counter() - t_pre) * 1000.0
+
+    # Per-prompt top-K beams (each prompt picks K independent beams).
+    beams_per_prompt: list[list[Beam]] = []
+    rc_per_prompt: list[dict[int, int]] = []
+    for b in range(B):
+        top_lp, top_ids = select_at_prefill(log_probs[b], K)
         beams = [
             Beam(
-                token_ids=[topk_ids[0, i].item()],
-                cum_log_prob=topk_lp[0, i].item(),
-                pages=list(prompt_pages),
+                token_ids=[top_ids[i].item()],
+                cum_log_prob=top_lp[i].item(),
+                pages=list(prompt_pages_per_b[b]),
             )
             for i in range(K)
         ]
+        beams_per_prompt.append(beams)
         rc: dict[int, int] = {}
-        for p in prompt_pages:
+        for p in prompt_pages_per_b[b]:
             _add_ref(rc, p, K)
-        current_pos = L_p
-        per_prompt_picks: list[Pick] = []
+        rc_per_prompt.append(rc)
 
-        # ----- Decode loop -----
-        with torch.no_grad():
-            for _ in range(max_new_tokens - 1):
-                if return_timings:
-                    torch.cuda.synchronize()
-                    t_step = time.perf_counter()
+    current_pos: list[int] = list(L_ps)
+    picks_per_prompt: list[list[Pick]] = [[] for _ in range(B)]
 
-                # 1) CoW: ensure each beam owns its write page.
-                pos = current_pos
+    # ----- Batched decode loop -----
+    with torch.no_grad():
+        for _ in range(max_new_tokens - 1):
+            if return_timings:
+                torch.cuda.synchronize()
+                t_step = time.perf_counter()
+
+            # 1) CoW per (prompt, beam).
+            for b in range(B):
+                pos = current_pos[b]
                 pli = pos // ps
                 off = pos % ps
-                for beam in beams:
+                for beam in beams_per_prompt[b]:
                     if off == 0:
                         new_page = page_table.allocate_block()
                         beam.pages.append(new_page)
-                        _add_ref(rc, new_page, 1)
+                        _add_ref(rc_per_prompt[b], new_page, 1)
                     else:
                         write_page = beam.pages[pli]
-                        if rc[write_page] > 1:
+                        if rc_per_prompt[b][write_page] > 1:
                             new_page = page_table.copy_block(write_page, off)
-                            _remove_ref(rc, write_page, page_table)
+                            _remove_ref(
+                                rc_per_prompt[b], write_page, page_table)
                             beam.pages[pli] = new_page
-                            _add_ref(rc, new_page, 1)
+                            _add_ref(rc_per_prompt[b], new_page, 1)
 
-                pages_per_beam = [list(b.pages) for b in beams]
-                lpl_per_beam = [off + 1] * K  # all beams just wrote slot off
-
-                # 2) Single LCA + intermediate scan; reuse for both
-                # cost-model workload extraction and cascade plan packing.
-                levels, beam_order_default = _adaptive_levels(
-                    pages_per_beam, lpl_per_beam, K, max_levels=3,
+            # 2) Per-prompt 2-level decomposition + workload.
+            levels_per_prompt: list[list] = []
+            workloads: list[WorkloadShape] = []
+            for b in range(B):
+                pos = current_pos[b]
+                off = pos % ps
+                pages_per_beam = [list(bm.pages) for bm in beams_per_prompt[b]]
+                lpl_per_beam = [off + 1] * K
+                # Phase 2 batched cascade only handles depth=2 across all
+                # prompts (the cost model filters depth=3 unless every
+                # prompt has an intermediate, which is rare).
+                levels, _ = _adaptive_levels(
+                    pages_per_beam, lpl_per_beam, K, max_levels=2,
                 )
+                levels_per_prompt.append(levels)
                 w = _workload_from_levels(
                     levels, K, ps, num_kv_heads, head_dim, dtype_bytes,
                 )
-                pick = pick_strategy(
-                    w, coeff,
-                    fused_merge=fused_merge,
-                    available_strategies=available_strategies,
-                )
-                if return_picks:
-                    per_prompt_picks.append(pick)
+                workloads.append(w)
 
-                # 3) Dispatch.
-                if pick.strategy == Strategy.PER_BEAM:
-                    flat_indptr = [0]
-                    flat_indices: list[int] = []
-                    flat_lpl: list[int] = []
-                    for beam in beams:
+            # 3) Cost-model pick across the whole batch.
+            pick = pick_strategy_batch(
+                workloads, coeff,
+                fused_merge=fused_merge,
+                available_strategies=available_strategies,
+            )
+            if return_picks:
+                for b in range(B):
+                    picks_per_prompt[b].append(pick)
+
+            # 4) Dispatch.
+            if pick.strategy == Strategy.PER_BEAM:
+                # B*K independent paged-decode sequences in one launch.
+                flat_indptr = [0]
+                flat_indices: list[int] = []
+                flat_lpl: list[int] = []
+                write_pi_list: list[int] = []
+                write_po_list: list[int] = []
+                for b in range(B):
+                    pos = current_pos[b]
+                    off = pos % ps
+                    pli = pos // ps
+                    for beam in beams_per_prompt[b]:
                         flat_indices.extend(beam.pages)
                         flat_indptr.append(len(flat_indices))
                         flat_lpl.append(off + 1)
-                    decode_wrapper.plan(
-                        indptr=torch.tensor(
-                            flat_indptr, dtype=torch.int32, device=device),
-                        indices=torch.tensor(
-                            flat_indices, dtype=torch.int32, device=device),
-                        last_page_len=torch.tensor(
-                            flat_lpl, dtype=torch.int32, device=device),
-                        num_qo_heads=num_qo_heads,
-                        num_kv_heads=num_kv_heads,
-                        head_dim=head_dim,
-                        page_size=ps,
+                        write_pi_list.append(beam.pages[pli])
+                        write_po_list.append(off)
+                decode_wrapper.plan(
+                    indptr=torch.tensor(
+                        flat_indptr, dtype=torch.int32, device=device),
+                    indices=torch.tensor(
+                        flat_indices, dtype=torch.int32, device=device),
+                    last_page_len=torch.tensor(
+                        flat_lpl, dtype=torch.int32, device=device),
+                    num_qo_heads=num_qo_heads,
+                    num_kv_heads=num_kv_heads,
+                    head_dim=head_dim,
+                    page_size=ps,
+                )
+                ctx = PagedAttentionContext(
+                    is_prefill=False,
+                    page_table=page_table,
+                    kv_page_indices=torch.tensor(
+                        write_pi_list, dtype=torch.int32, device=device),
+                    kv_page_offsets=torch.tensor(
+                        write_po_list, dtype=torch.int32, device=device),
+                    decode_wrapper=decode_wrapper,
+                )
+            else:
+                # Batched cascade: B groups at level 0 (one per prompt's
+                # shared prefix), B*K singleton groups at level 1.
+                qo_arr, kvp_arr, kvi_arr, kvl_arr = _pack_batched_cascade_arrays(
+                    levels_per_prompt, ps, torch.device(device),
+                )
+                if cascade_n_levels != 2:
+                    cascade = FusedMultiLevelCascadeAttentionWrapper(
+                        num_levels=2,
+                        float_workspace_buffer=workspace_buffer,
+                        kv_layout="NHD",
+                        device=torch.device(device),
+                        max_levels=max_cascade_levels,
                     )
-                    write_pi = torch.tensor(
-                        [b.pages[pli] for b in beams],
-                        dtype=torch.int32, device=device,
-                    )
-                    write_po = torch.tensor(
-                        [off] * K, dtype=torch.int32, device=device,
-                    )
-                    ctx = PagedAttentionContext(
-                        is_prefill=False,
-                        page_table=page_table,
-                        kv_page_indices=write_pi,
-                        kv_page_offsets=write_po,
-                        decode_wrapper=decode_wrapper,
-                    )
-                    beam_order = list(range(K))
-                else:
-                    # If cost model picked depth-2 but our scan found
-                    # 3-level structure, redo the scan at max_levels=2
-                    # (LCA reused; only intermediate detection is skipped).
-                    if pick.depth == 2 and len(levels) == 3:
-                        levels, beam_order_default = _adaptive_levels(
-                            pages_per_beam, lpl_per_beam, K, max_levels=2,
-                        )
-                    qo_arr, kvp_arr, kvi_arr, kvl_arr = _pack_cascade_arrays(
-                        levels, ps, torch.device(device),
-                    )
-                    beam_order = beam_order_default
-                    n_lvls = len(levels)
-                    if cascade.num_levels != n_lvls:
-                        cascade = FusedMultiLevelCascadeAttentionWrapper(
-                            num_levels=n_lvls,
-                            float_workspace_buffer=workspace_buffer,
-                            kv_layout="NHD",
-                            device=torch.device(device),
-                            max_levels=max_cascade_levels,
-                        )
-                    # Mod 2: cost model picks t_large per step.
-                    # Always force the wrapper to honor the cost model's
-                    # T choice. Even when pick.pool_count==2, leaving
-                    # `force_cta_tile_q=None` lets the wrapper's
-                    # `large_cta_tile_q = 128 if max_packed > 64 else 64`
-                    # heuristic flip to T=128 at K=65, which is
-                    # empirically 30-90% slower than T=64 across our
-                    # K∈[17,128] long-prefix regime. The 2-pool win
-                    # over 1-pool in cases where it actually wins is
-                    # <1%; the K-boundary loss when wrapper auto-picks
-                    # T is 30-90%. Net win to force.
-                    plan_force_t = pick.t_large
-                    cascade.plan(
-                        qo_indptr_arr=qo_arr,
-                        paged_kv_indptr_arr=kvp_arr,
-                        paged_kv_indices_arr=kvi_arr,
-                        paged_kv_last_page_len=kvl_arr,
-                        num_qo_heads=num_qo_heads,
-                        num_kv_heads=num_kv_heads,
-                        head_dim=head_dim,
-                        page_size=ps,
-                        causal=False,
-                        q_data_type=dtype,
-                        kv_data_type=dtype,
-                        force_cta_tile_q=plan_force_t,
-                    )
-                    write_pi = torch.tensor(
-                        [beams[i].pages[pli] for i in beam_order],
-                        dtype=torch.int32, device=device,
-                    )
-                    write_po = torch.tensor(
-                        [off] * K, dtype=torch.int32, device=device,
-                    )
-                    ctx = AdaptivePoolContext(
-                        page_table=page_table,
-                        write_pi=write_pi,
-                        write_po=write_po,
-                        wrapper=cascade,
-                    )
+                    cascade_n_levels = 2
+                cascade.plan(
+                    qo_indptr_arr=qo_arr,
+                    paged_kv_indptr_arr=kvp_arr,
+                    paged_kv_indices_arr=kvi_arr,
+                    paged_kv_last_page_len=kvl_arr,
+                    num_qo_heads=num_qo_heads,
+                    num_kv_heads=num_kv_heads,
+                    head_dim=head_dim,
+                    page_size=ps,
+                    causal=False,
+                    q_data_type=dtype,
+                    kv_data_type=dtype,
+                    force_cta_tile_q=pick.t_large,
+                )
+                write_pi_list = []
+                write_po_list = []
+                for b in range(B):
+                    pos = current_pos[b]
+                    off = pos % ps
+                    pli = pos // ps
+                    for beam in beams_per_prompt[b]:
+                        write_pi_list.append(beam.pages[pli])
+                        write_po_list.append(off)
+                ctx = AdaptivePoolContext(
+                    page_table=page_table,
+                    write_pi=torch.tensor(
+                        write_pi_list, dtype=torch.int32, device=device),
+                    write_po=torch.tensor(
+                        write_po_list, dtype=torch.int32, device=device),
+                    wrapper=cascade,
+                )
 
-                # 4) Forward + topk in beam_order space.
-                beam_input = torch.tensor(
-                    [[beams[i].token_ids[-1]] for i in beam_order],
-                    dtype=torch.long, device=device,
-                )
-                beam_positions = torch.full(
-                    (K, 1), current_pos, dtype=torch.long, device=device,
-                )
-                hidden = model.forward(
-                    input_ids=beam_input, positions=beam_positions, ctx=ctx,
-                )
-                logits = model.compute_logits(hidden[:, -1, :])
-                log_probs = F.log_softmax(logits, dim=-1)
-                vocab_size = logits.shape[-1]
+            # 5) Forward over B*K queries (prompt-major / beam-minor).
+            all_input: list[list[int]] = []
+            all_pos: list[list[int]] = []
+            for b in range(B):
+                for beam in beams_per_prompt[b]:
+                    all_input.append([beam.token_ids[-1]])
+                    all_pos.append([current_pos[b]])
+            beam_input = torch.tensor(all_input, dtype=torch.long, device=device)
+            beam_positions = torch.tensor(all_pos, dtype=torch.long, device=device)
+            hidden = model.forward(
+                input_ids=beam_input, positions=beam_positions, ctx=ctx,
+            )
+            logits = model.compute_logits(hidden[:, -1, :])           # (B*K, V)
+            log_probs = F.log_softmax(logits, dim=-1)
+            vocab_size = logits.shape[-1]
+            log_probs_bkv = log_probs.view(B, K, vocab_size)
 
+            # 6) Per-prompt top-K + fork resolution.
+            new_beams_per_prompt: list[list[Beam]] = []
+            for b in range(B):
                 cum_probs = torch.tensor(
-                    [beams[i].cum_log_prob for i in beam_order],
+                    [bm.cum_log_prob for bm in beams_per_prompt[b]],
                     dtype=torch.float32, device=device,
                 )
-                scores = cum_probs[:, None] + log_probs.float()
+                scores = cum_probs[:, None] + log_probs_bkv[b].float()
                 parent_t, token_t, topk_scores = select_at_decode(scores, K)
-                parent_in_order = parent_t.tolist()
-                new_token_ids = token_t.tolist()
+                parent_ids = parent_t.tolist()
+                new_tokens = token_t.tolist()
                 scores_list = topk_scores.tolist()
-                parent_beam_ids = [beam_order[p] for p in parent_in_order]
 
-                # 5) Refcount surgery + new beam list.
                 parent_usage = [0] * K
-                for pid in parent_beam_ids:
+                for pid in parent_ids:
                     parent_usage[pid] += 1
                 for old_idx, usage in enumerate(parent_usage):
                     if usage == 0:
-                        for p in beams[old_idx].pages:
-                            _remove_ref(rc, p, page_table)
+                        for p in beams_per_prompt[b][old_idx].pages:
+                            _remove_ref(rc_per_prompt[b], p, page_table)
                     elif usage > 1:
-                        for p in beams[old_idx].pages:
-                            _add_ref(rc, p, usage - 1)
+                        for p in beams_per_prompt[b][old_idx].pages:
+                            _add_ref(rc_per_prompt[b], p, usage - 1)
                 new_beams: list[Beam] = []
                 for i in range(K):
-                    pid = parent_beam_ids[i]
+                    pid = parent_ids[i]
                     new_beams.append(
                         Beam(
-                            token_ids=beams[pid].token_ids + [new_token_ids[i]],
+                            token_ids=beams_per_prompt[b][pid].token_ids
+                            + [new_tokens[i]],
                             cum_log_prob=scores_list[i],
-                            pages=list(beams[pid].pages),
+                            pages=list(beams_per_prompt[b][pid].pages),
                         )
                     )
-                beams = new_beams
-                current_pos += 1
+                new_beams_per_prompt.append(new_beams)
+            beams_per_prompt = new_beams_per_prompt
+            for b in range(B):
+                current_pos[b] += 1
 
-                if return_timings:
-                    torch.cuda.synchronize()
-                    timings["decode_step_ms"].append(
-                        (time.perf_counter() - t_step) * 1000.0
-                    )
+            if return_timings:
+                torch.cuda.synchronize()
+                timings["decode_step_ms"].append(
+                    (time.perf_counter() - t_step) * 1000.0
+                )
 
+    for beams in beams_per_prompt:
         beams.sort(key=lambda b: b.cum_log_prob, reverse=True)
-        all_beams_out.append(beams)
-        picks_log.append(per_prompt_picks)
 
     if return_timings and return_picks:
-        return all_beams_out, timings, picks_log
+        return beams_per_prompt, timings, picks_per_prompt
     if return_timings:
-        return all_beams_out, timings
+        return beams_per_prompt, timings
     if return_picks:
-        return all_beams_out, picks_log
-    return all_beams_out
+        return beams_per_prompt, picks_per_prompt
+    return beams_per_prompt
