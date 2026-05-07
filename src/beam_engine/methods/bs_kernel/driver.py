@@ -42,6 +42,7 @@ from ..adaptive_pool import (
     _PrefillCtx,
     _add_ref,
     _adaptive_levels,
+    _pack_batched_cascade_arrays,
     _remove_ref,
 )
 from .calibrate import load_or_defaults
@@ -143,85 +144,6 @@ def _pack_cascade_arrays(
         kvp_arr.append(torch.tensor(kv_indptr, dtype=torch.int32, device=device))
         kvi_arr.append(torch.tensor(kv_indices, dtype=torch.int32, device=device))
         kvl_arr.append(torch.tensor(last_page, dtype=torch.int32, device=device))
-    return qo_arr, kvp_arr, kvi_arr, kvl_arr
-
-
-def _pack_batched_cascade_arrays(
-    levels_per_prompt: list[list],
-    page_size: int,
-    device: torch.device,
-):
-    """Concatenate per-prompt cascade levels (each from `_adaptive_levels`
-    with max_levels=2) into one batched cascade plan covering all B prompts.
-
-    Each prompt contributes B groups at level 0 (one group of K beams
-    sharing its prefix) and K singleton groups at level 1 (per-beam tails).
-    Across B prompts the level arrays just concatenate — qo_indptr
-    enumerates queries in prompt-major / beam-minor order.
-
-    Phase 2 only handles depth=2 batched cascades. depth=3 is filtered
-    out by ``pick_strategy_batch`` unless every prompt has an
-    intermediate, which is rare.
-    """
-    qo_arr_per_level: list[list[int]] = [[0], [0]]
-    kvp_arr_per_level: list[list[int]] = [[0], [0]]
-    kvi_arr_per_level: list[list[int]] = [[], []]
-    kvl_arr_per_level: list[list[int]] = [[], []]
-
-    for levels in levels_per_prompt:
-        # Each prompt's `levels` is the result of _adaptive_levels(...,
-        # max_levels=2). Either 1 entry (no shared prefix; degenerate)
-        # or 2 entries (shared + per-beam-tail).
-        # Normalize to always 2 entries so per-level concatenation works:
-        # if the prompt has no shared prefix, emit an empty level-0 group.
-        if len(levels) == 1:
-            sizes_last, group_pages_last, group_lpl_last = levels[0]
-            sizes_shared, group_pages_shared, group_lpl_shared = (
-                [0], [[]], [-1],
-            )
-        else:
-            sizes_shared, group_pages_shared, group_lpl_shared = levels[0]
-            sizes_last, group_pages_last, group_lpl_last = levels[-1]
-
-        # Append level 0 (shared prefix groups for this prompt).
-        for s in sizes_shared:
-            qo_arr_per_level[0].append(qo_arr_per_level[0][-1] + s)
-        for pages, lpl in zip(group_pages_shared, group_lpl_shared):
-            kvi_arr_per_level[0].extend(pages)
-            kvp_arr_per_level[0].append(
-                kvp_arr_per_level[0][-1] + len(pages)
-            )
-            kvl_arr_per_level[0].append(
-                page_size if lpl == -1 else lpl
-            )
-        # Append level last (per-beam tail singleton groups for this prompt).
-        for s in sizes_last:
-            qo_arr_per_level[1].append(qo_arr_per_level[1][-1] + s)
-        for pages, lpl in zip(group_pages_last, group_lpl_last):
-            kvi_arr_per_level[1].extend(pages)
-            kvp_arr_per_level[1].append(
-                kvp_arr_per_level[1][-1] + len(pages)
-            )
-            kvl_arr_per_level[1].append(
-                page_size if lpl == -1 else lpl
-            )
-
-    qo_arr = [
-        torch.tensor(qo_arr_per_level[i], dtype=torch.int32, device=device)
-        for i in range(2)
-    ]
-    kvp_arr = [
-        torch.tensor(kvp_arr_per_level[i], dtype=torch.int32, device=device)
-        for i in range(2)
-    ]
-    kvi_arr = [
-        torch.tensor(kvi_arr_per_level[i], dtype=torch.int32, device=device)
-        for i in range(2)
-    ]
-    kvl_arr = [
-        torch.tensor(kvl_arr_per_level[i], dtype=torch.int32, device=device)
-        for i in range(2)
-    ]
     return qo_arr, kvp_arr, kvi_arr, kvl_arr
 
 

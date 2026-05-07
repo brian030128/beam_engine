@@ -68,7 +68,49 @@ from kv_tree_simple import KVTreeNode  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-def _build_radix_tree(
+def _build_combined_radix_tree(
+    beam_paths_per_prompt: list[list[list[int]]],
+    K: int,
+) -> tuple[list[KVTreeNode], list[list[int]]]:
+    """Combine B per-prompt radix subtrees into one tree with a virtual root.
+
+    Request IDs span [0, B*K) — prompt b's beams have IDs in
+    ``[b*K, (b+1)*K)``. The virtual root at index 0 has seqlen=0 and
+    num_children=B; each per-prompt subtree's root becomes a child of
+    the virtual root.
+
+    The kernel handles the virtual root correctly when its
+    ``node_assignments[0]`` is forced to 0 (own — empty — kv chunk):
+    ``_build_metadata`` then computes 0 kv vnodes for it and emits no
+    work, while ``_compute_parallelism`` uses it as the propagation
+    sink so each subtree root's requests aggregate there cleanly.
+    """
+    B = len(beam_paths_per_prompt)
+    virtual_root = KVTreeNode()
+    virtual_root.parent = -1
+    virtual_root.id = 0
+    virtual_root.seqlen = 0
+    virtual_root.num_children = B
+    virtual_root.requests = []
+    combined_nodes: list[KVTreeNode] = [virtual_root]
+    combined_slots: list[list[int]] = [[]]
+
+    for b, paths in enumerate(beam_paths_per_prompt):
+        sub_nodes, sub_slots = _build_radix_tree_single(paths)
+        offset = len(combined_nodes)
+        for n in sub_nodes:
+            n2 = KVTreeNode()
+            n2.parent = (offset + n.parent) if n.parent != -1 else 0
+            n2.id = offset + n.id
+            n2.seqlen = n.seqlen
+            n2.num_children = n.num_children
+            n2.requests = [r + b * K for r in n.requests]
+            combined_nodes.append(n2)
+            combined_slots.append(list(sub_slots[n.id]))
+    return combined_nodes, combined_slots
+
+
+def _build_radix_tree_single(
     beam_paths: list[list[int]],
 ) -> tuple[list[KVTreeNode], list[list[int]]]:
     """Compress K beam slot-paths into a radix tree.
@@ -438,10 +480,10 @@ class Beam:
     path: list[int]   # ordered fused-buffer indices on this beam's KV path
 
 
-def _beam_search_single(
+def _beam_search_batched(
     model,
     config,
-    prompt_ids: list[int],
+    prompt_ids_list: list[list[int]],
     max_new_tokens: int,
     beam_width: int,
     *,
@@ -454,15 +496,25 @@ def _beam_search_single(
     para_threshs2: tuple[int, int] = (132, 132),
     select_at_prefill: PrefillSelect = standard_prefill_select,
     select_at_decode: DecodeSelect = standard_decode_select,
-) -> list[Beam]:
+) -> list[list[Beam]]:
+    """Cross-prompt batched FastTree beam search.
+
+    All B prompts share one fused KV buffer and one ``fasttree_decode``
+    launch per decode step. Each step builds B per-prompt radix subtrees
+    and combines them under a virtual root (``_build_combined_radix_tree``).
+    Request IDs span ``[0, B*K)`` so the kernel processes all beams in one
+    pass.
+    """
     num_qo_heads = config.num_attention_heads
     num_kv_heads = config.num_key_value_heads
     head_dim = config.head_dim
     num_layers = config.num_hidden_layers
 
     K = beam_width
-    L_p = len(prompt_ids)
-    max_tokens = L_p + K * max_new_tokens + K
+    B = len(prompt_ids_list)
+    L_ps = [len(p) for p in prompt_ids_list]
+    total_prefill = sum(L_ps)
+    max_tokens = total_prefill + B * K * max_new_tokens + B * K
 
     kv_cache = [
         torch.zeros(
@@ -478,13 +530,26 @@ def _beam_search_single(
         workspace_buffer, kv_layout="NHD",
     )
 
-    # ----- Prefill -----
-    prefill_write = torch.arange(L_p, dtype=torch.long, device=device)
-    qo_indptr = torch.tensor([0, L_p], dtype=torch.int32, device=device)
-    kv_indptr = torch.tensor([0, L_p], dtype=torch.int32, device=device)
+    # ----- Batched prefill (B ragged requests in one launch) -----
+    prefill_write_list: list[int] = []
+    qo_indptr_list: list[int] = [0]
+    kv_indptr_list: list[int] = [0]
+    all_token_ids: list[int] = []
+    all_positions: list[int] = []
+    prompt_offsets: list[int] = []
+    cursor = 0
+    for b, L_p in enumerate(L_ps):
+        prompt_offsets.append(cursor)
+        prefill_write_list.extend(range(cursor, cursor + L_p))
+        cursor += L_p
+        qo_indptr_list.append(qo_indptr_list[-1] + L_p)
+        kv_indptr_list.append(kv_indptr_list[-1] + L_p)
+        all_token_ids.extend(prompt_ids_list[b])
+        all_positions.extend(range(L_p))
+
     prefill_wrapper.plan(
-        qo_indptr=qo_indptr,
-        kv_indptr=kv_indptr,
+        qo_indptr=torch.tensor(qo_indptr_list, dtype=torch.int32, device=device),
+        kv_indptr=torch.tensor(kv_indptr_list, dtype=torch.int32, device=device),
         num_qo_heads=num_qo_heads,
         num_kv_heads=num_kv_heads,
         head_dim_qk=head_dim,
@@ -492,14 +557,14 @@ def _beam_search_single(
     )
     pre_ctx = _PrefillCtx(
         kv_cache=kv_cache,
-        write_indices=prefill_write,
+        write_indices=torch.tensor(prefill_write_list, dtype=torch.long, device=device),
         num_kv_heads=num_kv_heads,
         head_dim=head_dim,
         num_qo_heads=num_qo_heads,
         wrapper=prefill_wrapper,
     )
-    input_ids = torch.tensor(prompt_ids, dtype=torch.long, device=device).unsqueeze(0)
-    positions = torch.arange(L_p, device=device).unsqueeze(0)
+    input_ids = torch.tensor(all_token_ids, dtype=torch.long, device=device).unsqueeze(0)
+    positions = torch.tensor(all_positions, dtype=torch.long, device=device).unsqueeze(0)
 
     if timings is not None:
         torch.cuda.synchronize()
@@ -507,55 +572,69 @@ def _beam_search_single(
 
     with torch.no_grad():
         hidden = model.forward(input_ids=input_ids, positions=positions, ctx=pre_ctx)
-        logits = model.compute_logits(hidden[:, -1, :])
-        log_probs = F.log_softmax(logits, dim=-1).squeeze(0)
-        topk_log_probs, topk_ids = select_at_prefill(log_probs, K)
+        last_indices = [qo_indptr_list[b + 1] - 1 for b in range(B)]
+        last_hidden = hidden[0, last_indices, :]
+        logits = model.compute_logits(last_hidden)
+        log_probs = F.log_softmax(logits, dim=-1)
 
     if timings is not None:
         torch.cuda.synchronize()
         timings["prefill_ms"] = (time.perf_counter() - t_pre) * 1000.0
 
-    prefix_path = list(range(L_p))
-    beams = [
-        Beam(
-            token_ids=[topk_ids[i].item()],
-            cum_log_prob=topk_log_probs[i].item(),
-            path=list(prefix_path),
-        )
-        for i in range(K)
-    ]
-    kv_total_len = L_p
-    current_pos = L_p
+    beams_per_prompt: list[list[Beam]] = []
+    for b in range(B):
+        topk_lp, topk_ids = select_at_prefill(log_probs[b], K)
+        prefix_path = list(range(prompt_offsets[b], prompt_offsets[b] + L_ps[b]))
+        beams_per_prompt.append([
+            Beam(
+                token_ids=[topk_ids[i].item()],
+                cum_log_prob=topk_lp[i].item(),
+                path=list(prefix_path),
+            )
+            for i in range(K)
+        ])
+
+    kv_total_len = total_prefill
+    current_pos: list[int] = list(L_ps)
 
     sm_scale = 1.0 / (head_dim ** 0.5)
     out_buf = torch.empty(
-        (K, num_qo_heads, head_dim), dtype=dtype, device=device,
+        (B * K, num_qo_heads, head_dim), dtype=dtype, device=device,
     )
 
-    # ----- Decode loop -----
+    # ----- Batched decode loop -----
     with torch.no_grad():
         for _ in range(max_new_tokens - 1):
             if timings is not None:
                 torch.cuda.synchronize()
                 t_step = time.perf_counter()
 
-            # 1) Allocate K new slots, one per beam.
-            new_slots = list(range(kv_total_len, kv_total_len + K))
-            kv_total_len += K
-            for k in range(K):
-                beams[k].path.append(new_slots[k])
+            # 1) Allocate B*K new slots in prompt-major / beam-minor order.
+            new_slots_per_prompt: list[list[int]] = []
+            for b in range(B):
+                slots_b = list(range(kv_total_len, kv_total_len + K))
+                kv_total_len += K
+                new_slots_per_prompt.append(slots_b)
+                for k in range(K):
+                    beams_per_prompt[b][k].path.append(slots_b[k])
 
-            # 2) Build radix tree from the beams' slot paths.
-            paths = [b.path for b in beams]
-            tree_info, node_slots = _build_radix_tree(paths)
+            # 2) Build the combined radix tree (virtual root + B subtrees).
+            paths_per_prompt = [
+                [beam.path for beam in beams_per_prompt[b]] for b in range(B)
+            ]
+            tree_info, node_slots = _build_combined_radix_tree(
+                paths_per_prompt, K,
+            )
 
-            # 3) Build FastTree metadata + heuristic-tune the tile sizes.
+            # 3) Build FastTree metadata. Force virtual root assignment to 0
+            # so it doesn't try to merge with parent=-1; its kv_len=0 means
+            # _build_metadata emits 0 kv vnodes for it (no work).
             params = fasttree_params or FastTreeParams()
             params.set_kv_group_num(num_qo_heads // num_kv_heads)
             meta = _build_metadata(
                 tree_info,
                 node_slots,
-                batch_size=K,
+                batch_size=B * K,
                 num_qo_heads=num_qo_heads,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
@@ -566,10 +645,15 @@ def _beam_search_single(
                 device=torch.device(device),
             )
 
+            # Concatenate write slots in the same prompt-major / beam-minor
+            # order the model will emit Q rows.
+            flat_new_slots: list[int] = []
+            for b in range(B):
+                flat_new_slots.extend(new_slots_per_prompt[b])
             ctx = FastTreeAttentionContext(
                 kv_cache=kv_cache,
                 write_indices=torch.tensor(
-                    new_slots, dtype=torch.long, device=device,
+                    flat_new_slots, dtype=torch.long, device=device,
                 ),
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
@@ -579,39 +663,51 @@ def _beam_search_single(
                 out=out_buf,
             )
 
-            beam_input = torch.tensor(
-                [[b.token_ids[-1]] for b in beams], dtype=torch.long, device=device,
-            )
-            beam_positions = torch.full((K, 1), current_pos, device=device)
+            all_input: list[list[int]] = []
+            all_pos: list[list[int]] = []
+            for b in range(B):
+                for beam in beams_per_prompt[b]:
+                    all_input.append([beam.token_ids[-1]])
+                    all_pos.append([current_pos[b]])
+            beam_input = torch.tensor(all_input, dtype=torch.long, device=device)
+            beam_positions = torch.tensor(all_pos, dtype=torch.long, device=device)
 
             hidden = model.forward(
                 input_ids=beam_input, positions=beam_positions, ctx=ctx,
             )
             logits = model.compute_logits(hidden[:, -1, :])
             log_probs = F.log_softmax(logits, dim=-1)
+            vocab_size = logits.shape[-1]
+            log_probs_bkv = log_probs.view(B, K, vocab_size)
 
-            # 4) Top-K + fork.
-            cum_probs = torch.tensor(
-                [b.cum_log_prob for b in beams], device=device, dtype=torch.float32,
-            )
-            scores = cum_probs[:, None] + log_probs.float()
-            parent_t, token_t, topk_scores = select_at_decode(scores, K)
-            parent_ids = parent_t.tolist()
-            new_token_ids = token_t.tolist()
-            scores_list = topk_scores.tolist()
-
-            new_beams: list[Beam] = []
-            for i in range(K):
-                pid = parent_ids[i]
-                new_beams.append(
-                    Beam(
-                        token_ids=beams[pid].token_ids + [new_token_ids[i]],
-                        cum_log_prob=scores_list[i],
-                        path=list(beams[pid].path),
-                    )
+            # 4) Per-prompt top-K + fork.
+            new_beams_per_prompt: list[list[Beam]] = []
+            for b in range(B):
+                cum_probs = torch.tensor(
+                    [bm.cum_log_prob for bm in beams_per_prompt[b]],
+                    device=device, dtype=torch.float32,
                 )
-            beams = new_beams
-            current_pos += 1
+                scores = cum_probs[:, None] + log_probs_bkv[b].float()
+                parent_t, token_t, topk_scores = select_at_decode(scores, K)
+                parent_ids = parent_t.tolist()
+                new_token_ids = token_t.tolist()
+                scores_list = topk_scores.tolist()
+
+                new_beams: list[Beam] = []
+                for i in range(K):
+                    pid = parent_ids[i]
+                    new_beams.append(
+                        Beam(
+                            token_ids=beams_per_prompt[b][pid].token_ids
+                            + [new_token_ids[i]],
+                            cum_log_prob=scores_list[i],
+                            path=list(beams_per_prompt[b][pid].path),
+                        )
+                    )
+                new_beams_per_prompt.append(new_beams)
+            beams_per_prompt = new_beams_per_prompt
+            for b in range(B):
+                current_pos[b] += 1
 
             if timings is not None:
                 torch.cuda.synchronize()
@@ -619,8 +715,9 @@ def _beam_search_single(
                     (time.perf_counter() - t_step) * 1000.0
                 )
 
-    beams.sort(key=lambda b: b.cum_log_prob, reverse=True)
-    return beams
+    for beams in beams_per_prompt:
+        beams.sort(key=lambda b: b.cum_log_prob, reverse=True)
+    return beams_per_prompt
 
 
 def beam_search(
@@ -640,8 +737,8 @@ def beam_search(
     select_at_prefill: PrefillSelect = standard_prefill_select,
     select_at_decode: DecodeSelect = standard_decode_select,
 ):
-    """FastTree beam search. Multi-prompt batches run sequentially (one fused
-    KV buffer per prompt), matching the tree-attention baseline's contract.
+    """FastTree beam search. Cross-prompt batched: all B prompts share one
+    fused KV buffer and one ``fasttree_decode`` launch per decode step.
 
     ``select_at_prefill`` / ``select_at_decode`` plug in alternate top-K
     strategies (see ``beam_engine.decoding``); defaults are standard top-K.
@@ -656,21 +753,12 @@ def beam_search(
         select_at_decode=select_at_decode,
     )
     if return_timings:
-        agg = {"prefill_ms": 0.0, "decode_step_ms": []}
-        all_beams: list[list[Beam]] = []
-        for p in prompt_ids:
-            t = {"prefill_ms": 0.0, "decode_step_ms": []}
-            beams = _beam_search_single(
-                model, config, p, max_new_tokens, beam_width, timings=t,
-                **kwargs,
-            )
-            all_beams.append(beams)
-            agg["prefill_ms"] += t["prefill_ms"]
-            agg["decode_step_ms"].extend(t["decode_step_ms"])
-        return all_beams, agg
-    return [
-        _beam_search_single(
-            model, config, p, max_new_tokens, beam_width, **kwargs,
+        timings = {"prefill_ms": 0.0, "decode_step_ms": []}
+        all_beams = _beam_search_batched(
+            model, config, prompt_ids, max_new_tokens, beam_width,
+            timings=timings, **kwargs,
         )
-        for p in prompt_ids
-    ]
+        return all_beams, timings
+    return _beam_search_batched(
+        model, config, prompt_ids, max_new_tokens, beam_width, **kwargs,
+    )
