@@ -14,12 +14,13 @@ from transformers import AutoTokenizer
 
 from beam_engine.baselines.fasttree import beam_search as ft_search
 from beam_engine.baselines.mlca import beam_search as mlca_search
+from beam_engine.baselines.paged import beam_search as paged_search
 from beam_engine.methods.adaptive_pool import beam_search as ap_search
 from beam_engine.methods.bs_kernel import beam_search as bk_search
 from beam_engine.models.modeling_llama import LlamaForCausalLM
 
 
-MODEL_NAME = "meta-llama/Llama-3.1-8B"
+MODEL_NAME = "meta-llama/Llama-3.2-1B"
 DEVICE = "cuda"
 DTYPE = torch.float16
 
@@ -49,6 +50,7 @@ def main():
     prompt = _make_prompt(tok, L_p)
 
     methods = {
+        "paged": paged_search,
         "adaptive_pool": ap_search,
         "mlca": mlca_search,
         "fasttree": ft_search,

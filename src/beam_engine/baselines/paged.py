@@ -120,7 +120,99 @@ def _remove_ref(rc: dict[int, int], page: int, page_table: PageTable, count: int
 
 
 # ---------------------------------------------------------------------------
-# Beam search driver
+# Backend
+# ---------------------------------------------------------------------------
+
+
+from dataclasses import dataclass as _dataclass
+
+
+class _PagedWrappers:
+    __slots__ = ("decode_wrapper",)
+
+
+@_dataclass
+class PagedBackend:
+    name: str = "paged"
+    use_split_pages: bool = False  # paged doesn't model "shared prefix" the way cascade does
+
+    def init_wrappers(
+        self,
+        *,
+        workspace_buffer: torch.Tensor,
+        num_qo_heads: int,
+        num_kv_heads: int,
+        head_dim: int,
+        page_size: int,
+        max_cascade_levels: int,
+        dtype: torch.dtype,
+        device: torch.device,
+    ):
+        wb = _PagedWrappers()
+        wb.decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
+            workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
+        )
+        return wb
+
+    def plan_decode_step(
+        self,
+        *,
+        wrappers,
+        beams_per_prompt,
+        current_pos,
+        page_table,
+        K,
+        B,
+        num_qo_heads,
+        num_kv_heads,
+        head_dim,
+        page_size,
+        dtype,
+        device,
+        last_lca_per_prompt,
+    ):
+        from ..page_driver import StepPlan
+
+        ps = page_size
+        # B*K independent paged-decode sequences in one launch.
+        flat_indptr = [0]
+        flat_indices: list[int] = []
+        flat_lpl: list[int] = []
+        write_pi_list: list[int] = []
+        write_po_list: list[int] = []
+        for b in range(B):
+            pos = current_pos[b]
+            off = pos % ps
+            pli = pos // ps
+            for beam in beams_per_prompt[b]:
+                flat_indices.extend(beam.pages)
+                flat_indptr.append(len(flat_indices))
+                flat_lpl.append(off + 1)
+                write_pi_list.append(beam.pages[pli])
+                write_po_list.append(off)
+        wrappers.decode_wrapper.plan(
+            indptr=torch.tensor(flat_indptr, dtype=torch.int32, device=device),
+            indices=torch.tensor(flat_indices, dtype=torch.int32, device=device),
+            last_page_len=torch.tensor(flat_lpl, dtype=torch.int32, device=device),
+            num_qo_heads=num_qo_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            page_size=ps,
+        )
+        ctx = PagedAttentionContext(
+            is_prefill=False,
+            page_table=page_table,
+            kv_page_indices=torch.tensor(
+                write_pi_list, dtype=torch.int32, device=device),
+            kv_page_offsets=torch.tensor(
+                write_po_list, dtype=torch.int32, device=device),
+            decode_wrapper=wrappers.decode_wrapper,
+        )
+        return StepPlan(ctx=ctx, beam_order_per_prompt=None, pick=None)
+
+
+# ---------------------------------------------------------------------------
+# Public driver
 # ---------------------------------------------------------------------------
 
 
@@ -148,265 +240,18 @@ def beam_search(
     ``select_at_prefill`` / ``select_at_decode`` plug in alternate top-K
     strategies (see ``beam_engine.decoding``); defaults are standard top-K.
     """
-    timings = {"prefill_ms": 0.0, "decode_step_ms": []}
-    num_qo_heads = config.num_attention_heads
-    num_kv_heads = config.num_key_value_heads
-    head_dim = config.head_dim
-    num_layers = config.num_hidden_layers
+    from ..page_driver import beam_search as _shared_beam_search
 
-    B = len(prompt_ids)
-    K = beam_width
-    prompt_lens = [len(p) for p in prompt_ids]
-
-    page_table = PageTable(
-        layer_num=num_layers,
+    return _shared_beam_search(
+        model, config, prompt_ids, max_new_tokens, beam_width,
+        backend=PagedBackend(),
         page_size=page_size,
         max_num_pages=max_num_pages,
-        head_num=num_kv_heads,
-        head_dim=head_dim,
-        device=torch.device(device),
-        store_dtype=dtype,
-    )
-    ps = page_table.page_size
-
-    workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=device)
-    prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(workspace_buffer, kv_layout="NHD")
-    decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
-        workspace_buffer, kv_layout="NHD", use_tensor_cores=True
+        device=device,
+        dtype=dtype,
+        return_timings=return_timings,
+        select_at_prefill=select_at_prefill,
+        select_at_decode=select_at_decode,
     )
 
-    # ----- Prefill (ragged batch over B prompts) -----
-    prompt_pages_list: list[list[int]] = []
-    for plen in prompt_lens:
-        num_pages = (plen + ps - 1) // ps
-        prompt_pages_list.append([page_table.allocate_block() for _ in range(num_pages)])
 
-    all_kv_pi: list[int] = []
-    all_kv_po: list[int] = []
-    for b in range(B):
-        pages = prompt_pages_list[b]
-        for i in range(prompt_lens[b]):
-            all_kv_pi.append(pages[i // ps])
-            all_kv_po.append(i % ps)
-
-    kv_page_indices = torch.tensor(all_kv_pi, dtype=torch.int32, device=device)
-    kv_page_offsets = torch.tensor(all_kv_po, dtype=torch.int32, device=device)
-
-    qo_indptr_list = [0]
-    for plen in prompt_lens:
-        qo_indptr_list.append(qo_indptr_list[-1] + plen)
-
-    paged_kv_indptr_list = [0]
-    all_paged_kv_indices: list[int] = []
-    paged_kv_lpl_list: list[int] = []
-    for b in range(B):
-        pages = prompt_pages_list[b]
-        all_paged_kv_indices.extend(pages)
-        paged_kv_indptr_list.append(paged_kv_indptr_list[-1] + len(pages))
-        paged_kv_lpl_list.append(prompt_lens[b] - (len(pages) - 1) * ps)
-
-    prefill_wrapper.plan(
-        qo_indptr=torch.tensor(qo_indptr_list, dtype=torch.int32, device=device),
-        paged_kv_indptr=torch.tensor(paged_kv_indptr_list, dtype=torch.int32, device=device),
-        paged_kv_indices=torch.tensor(all_paged_kv_indices, dtype=torch.int32, device=device),
-        paged_kv_last_page_len=torch.tensor(paged_kv_lpl_list, dtype=torch.int32, device=device),
-        num_qo_heads=num_qo_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim_qk=head_dim,
-        page_size=ps,
-        causal=True,
-    )
-
-    all_token_ids: list[int] = []
-    all_positions: list[int] = []
-    for b in range(B):
-        all_token_ids.extend(prompt_ids[b])
-        all_positions.extend(range(prompt_lens[b]))
-
-    input_ids = torch.tensor(all_token_ids, dtype=torch.long, device=device).unsqueeze(0)
-    positions = torch.tensor(all_positions, device=device).unsqueeze(0)
-
-    ctx = PagedAttentionContext(
-        is_prefill=True,
-        page_table=page_table,
-        kv_page_indices=kv_page_indices,
-        kv_page_offsets=kv_page_offsets,
-        prefill_wrapper=prefill_wrapper,
-    )
-
-    if return_timings:
-        torch.cuda.synchronize()
-        t_pre = time.perf_counter()
-
-    with torch.no_grad():
-        hidden_states = model.forward(input_ids=input_ids, positions=positions, ctx=ctx)
-        last_indices = [qo_indptr_list[b + 1] - 1 for b in range(B)]
-        last_hidden = hidden_states[0, last_indices, :]
-        logits = model.compute_logits(last_hidden)
-        log_probs = F.log_softmax(logits, dim=-1)
-        # Per-prompt selection so DBS-style strategies see one prompt at a time.
-        topk_log_probs = torch.empty((B, K), device=device, dtype=log_probs.dtype)
-        topk_ids = torch.empty((B, K), device=device, dtype=torch.long)
-        for b in range(B):
-            lp_b, ids_b = select_at_prefill(log_probs[b], K)
-            topk_log_probs[b] = lp_b
-            topk_ids[b] = ids_b
-
-    if return_timings:
-        torch.cuda.synchronize()
-        timings["prefill_ms"] = (time.perf_counter() - t_pre) * 1000.0
-
-    # All K beams of prompt b initially share that prompt's pages — refcount = K each.
-    beams_per_prompt: list[list[Beam]] = []
-    page_ref_counts_list: list[dict[int, int]] = []
-    for b in range(B):
-        beams = [
-            Beam(
-                token_ids=[topk_ids[b, i].item()],
-                cum_log_prob=topk_log_probs[b, i].item(),
-                pages=list(prompt_pages_list[b]),
-            )
-            for i in range(K)
-        ]
-        rc: dict[int, int] = {}
-        for p in prompt_pages_list[b]:
-            _add_ref(rc, p, K)
-        beams_per_prompt.append(beams)
-        page_ref_counts_list.append(rc)
-
-    # ----- Decode loop -----
-    current_positions = list(prompt_lens)
-
-    with torch.no_grad():
-        for _ in range(max_new_tokens - 1):
-            if return_timings:
-                torch.cuda.synchronize()
-                t_step = time.perf_counter()
-            # 1) Copy-on-write: ensure each beam owns its write page.
-            for b in range(B):
-                pos = current_positions[b]
-                pli = pos // ps
-                off = pos % ps
-                for beam in beams_per_prompt[b]:
-                    if off == 0:
-                        new_page = page_table.allocate_block()
-                        beam.pages.append(new_page)
-                        _add_ref(page_ref_counts_list[b], new_page, 1)
-                    else:
-                        write_page = beam.pages[pli]
-                        if page_ref_counts_list[b][write_page] > 1:
-                            new_page = page_table.copy_block(write_page, off)
-                            _remove_ref(page_ref_counts_list[b], write_page, page_table)
-                            beam.pages[pli] = new_page
-                            _add_ref(page_ref_counts_list[b], new_page, 1)
-
-            # 2) Build per-beam decode metadata (B*K independent sequences).
-            flat_indptr = [0]
-            flat_indices: list[int] = []
-            flat_lpl: list[int] = []
-            all_write_pi: list[int] = []
-            all_write_po: list[int] = []
-            all_input: list[list[int]] = []
-            all_pos: list[list[int]] = []
-
-            for b in range(B):
-                pos = current_positions[b]
-                off = pos % ps
-                pli = pos // ps
-                for beam in beams_per_prompt[b]:
-                    flat_indices.extend(beam.pages)
-                    flat_indptr.append(len(flat_indices))
-                    flat_lpl.append(off + 1)
-                    all_write_pi.append(beam.pages[pli])
-                    all_write_po.append(off)
-                    all_input.append([beam.token_ids[-1]])
-                    all_pos.append([pos])
-
-            decode_wrapper.plan(
-                indptr=torch.tensor(flat_indptr, dtype=torch.int32, device=device),
-                indices=torch.tensor(flat_indices, dtype=torch.int32, device=device),
-                last_page_len=torch.tensor(flat_lpl, dtype=torch.int32, device=device),
-                num_qo_heads=num_qo_heads,
-                num_kv_heads=num_kv_heads,
-                head_dim=head_dim,
-                page_size=ps,
-            )
-
-            ctx = PagedAttentionContext(
-                is_prefill=False,
-                page_table=page_table,
-                kv_page_indices=torch.tensor(all_write_pi, dtype=torch.int32, device=device),
-                kv_page_offsets=torch.tensor(all_write_po, dtype=torch.int32, device=device),
-                decode_wrapper=decode_wrapper,
-            )
-
-            beam_input_ids = torch.tensor(all_input, dtype=torch.long, device=device)
-            beam_positions = torch.tensor(all_pos, device=device)
-
-            hidden_states = model.forward(
-                input_ids=beam_input_ids,
-                positions=beam_positions,
-                ctx=ctx,
-            )
-            logits = model.compute_logits(hidden_states[:, -1, :])
-            log_probs = F.log_softmax(logits, dim=-1)
-
-            # 3) Score and pick top-K independently per prompt.
-            vocab_size = logits.shape[-1]
-            log_probs_bkv = log_probs.view(B, K, vocab_size)
-            cum_probs = torch.tensor(
-                [[beam.cum_log_prob for beam in beams_per_prompt[b]] for b in range(B)],
-                device=device,
-                dtype=torch.float32,
-            )
-            scores = cum_probs[:, :, None] + log_probs_bkv.float()
-            topk_scores = torch.empty((B, K), device=device, dtype=scores.dtype)
-            parent_beam_ids = torch.empty((B, K), device=device, dtype=torch.long)
-            new_token_ids = torch.empty((B, K), device=device, dtype=torch.long)
-            for b in range(B):
-                p_b, t_b, s_b = select_at_decode(scores[b], K)
-                parent_beam_ids[b] = p_b
-                new_token_ids[b] = t_b
-                topk_scores[b] = s_b
-
-            # 4) Resolve fork / eliminate: refcount surgery + new beam list.
-            new_beams_per_prompt: list[list[Beam]] = []
-            for b in range(B):
-                parent_usage = [0] * K
-                for pid in parent_beam_ids[b].tolist():
-                    parent_usage[pid] += 1
-
-                for old_idx, usage in enumerate(parent_usage):
-                    if usage == 0:
-                        for p in beams_per_prompt[b][old_idx].pages:
-                            _remove_ref(page_ref_counts_list[b], p, page_table)
-                    elif usage > 1:
-                        for p in beams_per_prompt[b][old_idx].pages:
-                            _add_ref(page_ref_counts_list[b], p, usage - 1)
-
-                new_beams: list[Beam] = []
-                for i in range(K):
-                    pid = parent_beam_ids[b, i].item()
-                    new_beams.append(
-                        Beam(
-                            token_ids=beams_per_prompt[b][pid].token_ids
-                            + [new_token_ids[b, i].item()],
-                            cum_log_prob=topk_scores[b, i].item(),
-                            pages=list(beams_per_prompt[b][pid].pages),
-                        )
-                    )
-                new_beams_per_prompt.append(new_beams)
-
-            beams_per_prompt = new_beams_per_prompt
-            for b in range(B):
-                current_positions[b] += 1
-
-            if return_timings:
-                torch.cuda.synchronize()
-                timings["decode_step_ms"].append((time.perf_counter() - t_step) * 1000.0)
-
-    for b in range(B):
-        beams_per_prompt[b].sort(key=lambda beam: beam.cum_log_prob, reverse=True)
-    if return_timings:
-        return beams_per_prompt, timings
-    return beams_per_prompt

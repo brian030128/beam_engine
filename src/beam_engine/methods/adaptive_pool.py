@@ -167,9 +167,34 @@ class AdaptivePoolContext(AttentionContext):
 
 @dataclass
 class Beam:
+    """Per-beam state carried across decode steps.
+
+    Two parallel representations of the beam's KV pages list coexist:
+
+    * ``pages: list[int]`` — the canonical unified list. Used by all
+      legacy methods (paged, mlca, tree, fasttree, the legacy
+      adaptive_pool decode loop) and by callers that read the final
+      output. Mutated in place by those methods' ``page_update``.
+
+    * ``pages_prefix`` + ``pages_tail`` — split form used by the
+      bs_kernel driver to avoid the per-fork ~528-int list copy. The
+      prefix holds the prompt's prefix pages by *reference*, shared
+      across all K beams in a prompt; the tail holds decode-added
+      pages (≤ 16 entries by step 256) and is private per beam. Forks
+      copy only the tail. The driver materialises ``pages =
+      pages_prefix + pages_tail`` once at end of decode for output
+      compatibility.
+
+    A method picks one representation; they are not kept in sync
+    during decode. Drivers using the split form should leave
+    ``pages = []`` and only set the prefix/tail; legacy methods leave
+    ``pages_prefix`` / ``pages_tail`` empty.
+    """
     token_ids: list[int]
     cum_log_prob: float
-    pages: list[int]
+    pages: list[int] = field(default_factory=list)
+    pages_prefix: list[int] = field(default_factory=list)
+    pages_tail: list[int] = field(default_factory=list)
 
 
 def _add_ref(rc: dict[int, int], page: int, count: int = 1) -> None:
@@ -192,24 +217,41 @@ def _remove_ref(
 
 
 def _adaptive_levels(
-    pages_per_beam: list[list[int]],
+    pages_prefix: list[int],
+    pages_tails: list[list[int]],
     last_page_len_per_beam: list[int],
     K: int,
     *,
     max_levels: int,
-) -> list[tuple[list[int], list[list[int]], list[int]]]:
+    start_lca: int = 0,
+):
     """Decide cascade level layout for the current step.
 
-    Returns a list of (group_sizes, group_pages, group_lpl), one entry per
-    level (top-down: L0 = shared root). Each level partitions the K beams
-    into groups, and each group has one page list + one last-page-len.
+    Takes the per-beam page list in *split* form: ``pages_prefix`` is
+    the (typically prompt-derived) shared prefix, identical by
+    reference across all K beams; ``pages_tails[i]`` holds beam i's
+    private decode-added pages. The legacy unified-list form is
+    available via :func:`_adaptive_levels_unified`.
+
+    Returns ``(levels, beam_order, lca)`` where ``levels`` is a list of
+    ``(group_sizes, group_pages, group_lpl)`` (one entry per cascade
+    level, top-down with L0 = shared root), ``beam_order`` is a length-K
+    permutation aligning per-beam tails to their position within the
+    cascade dispatch, and ``lca`` is the discovered shared-prefix depth
+    in pages (measured against the unified ``prefix + tail`` ordering).
+
+    The optional ``start_lca`` lets callers seed the LCA scan from a
+    cached value (the LCA is provably monotone non-decreasing across
+    consecutive decode steps — pages in the shared prefix are immutable
+    and beam forks inherit page lists verbatim). Default 0 preserves the
+    original "scan from scratch" behavior.
 
     Layout rule:
       * Level 0 (shared) — longest common page-prefix across all K beams.
-        Its `last_page_len` is the *shared* part of the trailing page;
-        we conservatively pass the common page's full size (page_size) when
-        all beams agree on it being a "completed" page (no one has appended
-        a divergent slot in it yet) — see _compute_shared_lpl.
+        When ``lca == len(pages_prefix)`` (the typical case after
+        prefill since per-beam decode pages diverge immediately) the
+        L0 ``shared_pages`` is *the same Python list object* as
+        ``pages_prefix`` — no copy.
       * Last level — per-beam unique tail (one group per beam, with that
         beam's true last_page_len).
       * Optional intermediate level — when the beams partition into G
@@ -219,69 +261,87 @@ def _adaptive_levels(
         the intermediate run as far as members of each group continue to
         agree.
     """
-    # 1) LCA depth — longest common page prefix.
-    lca = 0
-    min_len = min(len(p) for p in pages_per_beam)
+    pl = len(pages_prefix)
+    # 1) LCA depth — start from max(start_lca, pl): the shared prefix is
+    # by construction common to all beams, so the LCA is always at
+    # least its length.
+    lca = max(start_lca, pl)
+    min_tail_len = min(len(t) for t in pages_tails)
+    min_len = pl + min_tail_len
     while lca < min_len:
-        first = pages_per_beam[0][lca]
-        if all(p[lca] == first for p in pages_per_beam):
+        idx = lca - pl  # always >= 0 since lca >= pl
+        first = pages_tails[0][idx]
+        if all(t[idx] == first for t in pages_tails):
             lca += 1
         else:
             break
 
-    shared_pages = pages_per_beam[0][:lca]
-    # Shared lpl: if no beam has appended into the lca-th-from-front page
-    # yet (i.e., the last shared page is a fully-populated previous page),
-    # use page_size. The shared region only includes whole pages.
-    # We always take all `lca` pages as full (they couldn't be shared if
-    # any beam diverged on a slot inside them — CoW would have split).
+    # shared_pages: prefix + the (typically empty) common tail prefix.
+    # When lca == pl, this is just `pages_prefix` by reference — no
+    # copy. When lca > pl (rare; happens when all K beams happened to
+    # produce the same first decoded page), we materialize the
+    # prefix+tail concat once.
+    if lca == pl:
+        shared_pages = pages_prefix
+    else:
+        shared_pages = pages_prefix + pages_tails[0][:lca - pl]
     page_size = -1  # filled by caller; placeholder used in lpl computation
 
     levels: list[tuple[list[int], list[list[int]], list[int]]] = []
 
-    # 2) Try to find a uniform intermediate group structure (3-level).
-    intermediate: tuple[int, list[list[int]], int] | None = None
+    def _page_at(beam_i: int, d: int) -> int:
+        # d is a depth index against the unified prefix+tail ordering.
+        if d < pl:
+            return pages_prefix[d]
+        return pages_tails[beam_i][d - pl]
+
+    # 2) Detect intermediate (depth=3) layout — non-uniform groups allowed.
+    # Each group is the beams sharing the same first-divergent page at
+    # depth lca. Each group has its own run length: how far that group's
+    # beams continue to agree past the LCA. Singletons are admitted as
+    # 1-beam groups with run_len=1 (their first-div page sits at L1 as
+    # a private 1-page group; bandwidth-equivalent to putting it in the
+    # tail, but keeps every query in a group at every level).
+    #
+    # We use depth=3 whenever there is at least one *viable* group
+    # (size ≥ 2): without that the layout collapses to depth=2 with no
+    # bandwidth savings.
+    intermediate: tuple[
+        list[list[int]], list[list[int]], list[int],
+    ] | None = None
     if max_levels >= 3 and lca < min_len:
-        # Group beams by their page at depth lca.
         first_div: dict[int, list[int]] = defaultdict(list)
-        for i, p in enumerate(pages_per_beam):
-            first_div[p[lca]].append(i)
-        sizes = {len(v) for v in first_div.values()}
-        # Real intermediate only if 1 < G < K (every group has ≥2 beams).
-        if len(sizes) == 1 and 1 < len(first_div) < K:
-            G = len(first_div)
-            # Beams in each group must continue to agree on subsequent pages
-            # for the intermediate run.
-            group_lists = list(first_div.values())
-            run_len = 1
-            while True:
-                d = lca + run_len
-                ok = True
-                for grp in group_lists:
-                    if d >= min(len(pages_per_beam[b]) for b in grp):
-                        ok = False
+        for i in range(K):
+            first_div[_page_at(i, lca)].append(i)
+        # Sort groups by smallest member index for deterministic ordering.
+        group_lists = sorted(first_div.values(), key=lambda g: g[0])
+        any_viable = any(len(grp) >= 2 for grp in group_lists)
+        # depth=3 only meaningful when (a) at least one viable group and
+        # (b) more than one group exists (else it's just LCA extension).
+        if any_viable and 1 < len(group_lists) <= K:
+            per_group_run: list[int] = []
+            for grp in group_lists:
+                if len(grp) == 1:
+                    # Singleton: trivial run of 1 page (its first-div page).
+                    per_group_run.append(1)
+                    continue
+                run_len = 1
+                while True:
+                    d = lca + run_len
+                    if d >= pl + min(len(pages_tails[b]) for b in grp):
                         break
-                    pivot = pages_per_beam[grp[0]][d]
-                    if any(pages_per_beam[b][d] != pivot for b in grp):
-                        ok = False
+                    pivot = _page_at(grp[0], d)
+                    if any(_page_at(b, d) != pivot for b in grp):
                         break
-                if not ok:
-                    break
-                run_len += 1
-            # Each group's intermediate pages.
-            intermediate_pages = [
-                pages_per_beam[grp[0]][lca : lca + run_len] for grp in group_lists
+                    run_len += 1
+                per_group_run.append(run_len)
+            # Inter pages: slice from the group's first member's tail.
+            # Since lca >= pl, the slice is entirely within the tail.
+            inter_pages_per_group = [
+                pages_tails[grp[0]][lca - pl : lca - pl + per_group_run[gi]]
+                for gi, grp in enumerate(group_lists)
             ]
-            intermediate = (G, intermediate_pages, run_len)
-            # Beams reordered per group so the per-beam tail level uses the
-            # same row ordering — caller is responsible for emitting Q rows
-            # in this order. We put the order in the levels metadata via
-            # group_sizes; but the grouping in level 1 implies row layout.
-            # For simplicity here we don't reorder rows — instead we emit
-            # qo_indptr per level honoring the natural beam order, which
-            # the *non-fused* cascade wrapper supports. The fused wrapper
-            # also supports per-level qo_indptr arrays. So this works.
-            # Override `group_lists` ordering via levels metadata below.
+            intermediate = (group_lists, inter_pages_per_group, per_group_run)
 
     # Build the levels.
     # Level 0: 1 group of K beams sharing `shared_pages`.
@@ -289,33 +349,65 @@ def _adaptive_levels(
         levels.append(([K], [shared_pages], [page_size]))  # lpl=page_size sentinel
 
     if intermediate is not None:
-        G, inter_pages_per_group, run_len = intermediate
-        # Group sizes: beams in group g = K // G
-        sizes_per_group = [K // G] * G
-        # Intermediate pages are also fully-populated past pages (beams
-        # continue past them), so lpl = page_size sentinel.
-        levels.append((sizes_per_group, inter_pages_per_group, [page_size] * G))
-        # Final per-beam tail level — emit beams in the same group order
-        # used for level 1 so the row layout lines up.
-        first_div: dict[int, list[int]] = defaultdict(list)
-        for i, p in enumerate(pages_per_beam):
-            first_div[p[lca]].append(i)
+        group_lists, inter_pages_per_group, per_group_run = intermediate
+        sizes_per_group = [len(grp) for grp in group_lists]
+        # Intermediate pages are fully-populated past pages (beams continue
+        # past them), so lpl = page_size sentinel.
+        levels.append((
+            sizes_per_group,
+            inter_pages_per_group,
+            [page_size] * len(group_lists),
+        ))
+        # Per-beam tails — emit beams in group order so the row layout
+        # lines up across L1 and L2. Each beam's tail starts at
+        # lca + that group's run_len.
         beam_order: list[int] = []
-        for grp in first_div.values():
-            beam_order.extend(grp)
-        per_beam_tail = [
-            pages_per_beam[i][lca + run_len:] for i in beam_order
-        ]
-        per_beam_lpl = [last_page_len_per_beam[i] for i in beam_order]
+        per_beam_tail: list[list[int]] = []
+        per_beam_lpl: list[int] = []
+        for gi, grp in enumerate(group_lists):
+            tail_start = lca + per_group_run[gi]
+            tail_start_in_tail = tail_start - pl  # >= 0 since tail_start >= lca >= pl
+            for b in grp:
+                beam_order.append(b)
+                per_beam_tail.append(pages_tails[b][tail_start_in_tail:])
+                per_beam_lpl.append(last_page_len_per_beam[b])
         levels.append(([1] * K, per_beam_tail, per_beam_lpl))
-        return levels, beam_order
+        return levels, beam_order, lca
 
-    # Final level: per-beam unique tail past LCA.
-    per_beam_tail = [pages_per_beam[i][lca:] for i in range(K)]
+    # Final level: per-beam unique tail past LCA. lca >= pl so tail
+    # starts at (lca - pl) within each beam's tail.
+    tail_start_in_tail = lca - pl
+    per_beam_tail = [pages_tails[i][tail_start_in_tail:] for i in range(K)]
     per_beam_lpl = list(last_page_len_per_beam)
     levels.append(([1] * K, per_beam_tail, per_beam_lpl))
     beam_order = list(range(K))
-    return levels, beam_order
+    return levels, beam_order, lca
+
+
+def _adaptive_levels_unified(
+    pages_per_beam: list[list[int]],
+    last_page_len_per_beam: list[int],
+    K: int,
+    *,
+    max_levels: int,
+    start_lca: int = 0,
+):
+    """Backwards-compat wrapper for callers using a unified pages list.
+
+    Treats every beam's full page list as its tail, with an empty
+    prefix. Behavior is identical to the pre-split-form code path.
+    Used by the legacy ``adaptive_pool`` decode loop and by
+    ``_build_cascade_plan`` (which serves the prefill cascade plan,
+    where there's no notion of a shared decode-prefix yet).
+    """
+    return _adaptive_levels(
+        pages_prefix=[],
+        pages_tails=pages_per_beam,
+        last_page_len_per_beam=last_page_len_per_beam,
+        K=K,
+        max_levels=max_levels,
+        start_lca=start_lca,
+    )
 
 
 def _pack_batched_cascade_arrays(
@@ -396,7 +488,7 @@ def _build_cascade_plan(
     kv_indices, last_page_len) arrays. Returns the four arrays, the
     re-ordered beam list, and the chosen num_levels.
     """
-    levels, beam_order = _adaptive_levels(
+    levels, beam_order, _lca = _adaptive_levels_unified(
         pages_per_beam, last_page_len_per_beam, K, max_levels=max_levels,
     )
     # Substitute the page_size sentinel introduced inside _adaptive_levels.
@@ -427,7 +519,126 @@ def _build_cascade_plan(
 
 
 # ---------------------------------------------------------------------------
-# Beam-search driver
+# Backend
+# ---------------------------------------------------------------------------
+
+
+from dataclasses import dataclass as _dataclass
+
+
+class _AdaptivePoolWrappers:
+    """Wrapper bundle: one fused 2-level cascade wrapper, reused across steps."""
+    __slots__ = ("cascade",)
+
+
+@_dataclass
+class AdaptivePoolBackend:
+    name: str = "adaptive_pool"
+    use_split_pages: bool = True
+
+    def init_wrappers(
+        self,
+        *,
+        workspace_buffer: torch.Tensor,
+        num_qo_heads: int,
+        num_kv_heads: int,
+        head_dim: int,
+        page_size: int,
+        max_cascade_levels: int,
+        dtype: torch.dtype,
+        device: torch.device,
+    ):
+        wb = _AdaptivePoolWrappers()
+        wb.cascade = FusedMultiLevelCascadeAttentionWrapper(
+            num_levels=2,
+            float_workspace_buffer=workspace_buffer,
+            kv_layout="NHD",
+            device=device,
+            max_levels=max_cascade_levels,
+        )
+        return wb
+
+    def plan_decode_step(
+        self,
+        *,
+        wrappers,
+        beams_per_prompt,
+        current_pos,
+        page_table,
+        K,
+        B,
+        num_qo_heads,
+        num_kv_heads,
+        head_dim,
+        page_size,
+        dtype,
+        device,
+        last_lca_per_prompt,
+    ):
+        from ..page_driver import StepPlan
+
+        ps = page_size
+        levels_per_prompt = []
+        for b in range(B):
+            pos = current_pos[b]
+            off = pos % ps
+            bp_b = beams_per_prompt[b]
+            pages_prefix = bp_b[0].pages_prefix
+            pages_tails = [bm.pages_tail for bm in bp_b]
+            lpl_per_beam = [off + 1] * K
+            # Force depth=2 in batched mode — depth=3 batching requires
+            # all prompts to agree on intermediate layout, rare for
+            # deterministic decoding.
+            levels, _beam_order, lca_b = _adaptive_levels(
+                pages_prefix, pages_tails, lpl_per_beam, K,
+                max_levels=2,
+                start_lca=last_lca_per_prompt[b],
+            )
+            last_lca_per_prompt[b] = lca_b
+            levels_per_prompt.append(levels)
+
+        qo_arr, kvp_arr, kvi_arr, kvl_arr = _pack_batched_cascade_arrays(
+            levels_per_prompt, ps, device,
+        )
+        wrappers.cascade.plan(
+            qo_indptr_arr=qo_arr,
+            paged_kv_indptr_arr=kvp_arr,
+            paged_kv_indices_arr=kvi_arr,
+            paged_kv_last_page_len=kvl_arr,
+            num_qo_heads=num_qo_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            page_size=ps,
+            causal=False,
+            q_data_type=dtype,
+            kv_data_type=dtype,
+        )
+
+        write_pi_list = []
+        write_po_list = []
+        for b in range(B):
+            pos = current_pos[b]
+            off = pos % ps
+            pli = pos // ps
+            bp_b = beams_per_prompt[b]
+            prefix_len = len(bp_b[0].pages_prefix)
+            tail_idx = pli - prefix_len
+            for beam in bp_b:
+                write_pi_list.append(beam.pages_tail[tail_idx])
+                write_po_list.append(off)
+        ctx = AdaptivePoolContext(
+            page_table=page_table,
+            write_pi=torch.tensor(
+                write_pi_list, dtype=torch.int32, device=device),
+            write_po=torch.tensor(
+                write_po_list, dtype=torch.int32, device=device),
+            wrapper=wrappers.cascade,
+        )
+        return StepPlan(ctx=ctx, beam_order_per_prompt=None, pick=None)
+
+
+# ---------------------------------------------------------------------------
+# Public driver
 # ---------------------------------------------------------------------------
 
 
@@ -449,278 +660,22 @@ def beam_search(
 ):
     """Adaptive 2-pool beam search with the fused multi-level cascade kernel.
 
-    Multi-prompt batches run sequentially (one PageTable / cascade wrapper
-    per prompt), matching the contract of the tree / FastTree baselines so
-    timings are directly comparable.
-
-    ``max_cascade_levels`` is passed to ``FusedMultiLevelCascadeAttentionWrapper``
-    as the JIT compile bound. The actual num_levels chosen each step is
-    2 (default) or 3 when the beams partition into uniform shared-intermediate
-    groups (the only multi-group structure beam search produces — fork
-    children inherit the same parent's pages until they themselves diverge).
+    Always 2 cascade levels in batched mode — depth=3 would require all B
+    prompts to agree on intermediate layout, which is rare for deterministic
+    decoding. (Single-prompt depth=3 dispatch lives in bs_kernel via the
+    cost-model picker.)
     """
-    timings = {"prefill_ms": 0.0, "decode_step_ms": []}
-    num_qo_heads = config.num_attention_heads
-    num_kv_heads = config.num_key_value_heads
-    head_dim = config.head_dim
-    num_layers = config.num_hidden_layers
+    from ..page_driver import beam_search as _shared_beam_search
 
-    K = beam_width
-    B = len(prompt_ids)
-    L_ps = [len(p) for p in prompt_ids]
-    ps = page_size
-
-    workspace_buffer = torch.empty(
-        128 * 1024 * 1024, dtype=torch.uint8, device=device,
+    return _shared_beam_search(
+        model, config, prompt_ids, max_new_tokens, beam_width,
+        backend=AdaptivePoolBackend(),
+        page_size=page_size,
+        max_num_pages=max_num_pages,
+        max_cascade_levels=max_cascade_levels,
+        device=device,
+        dtype=dtype,
+        return_timings=return_timings,
+        select_at_prefill=select_at_prefill,
+        select_at_decode=select_at_decode,
     )
-
-    auto_pages = (
-        sum((L_p + ps - 1) // ps for L_p in L_ps)
-        + B * K * ((max_new_tokens + ps - 1) // ps + 2)
-    )
-    max_pages_eff = max(max_num_pages, auto_pages + 64)
-    page_table = PageTable(
-        layer_num=num_layers,
-        page_size=ps,
-        max_num_pages=max_pages_eff,
-        head_num=num_kv_heads,
-        head_dim=head_dim,
-        device=torch.device(device),
-        store_dtype=dtype,
-    )
-
-    prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(
-        workspace_buffer, kv_layout="NHD",
-    )
-    cascade = FusedMultiLevelCascadeAttentionWrapper(
-        num_levels=2,
-        float_workspace_buffer=workspace_buffer,
-        kv_layout="NHD",
-        device=torch.device(device),
-        max_levels=max_cascade_levels,
-    )
-
-    # ----- Batched prefill (B ragged requests in one launch) -----
-    prompt_pages_per_b: list[list[int]] = []
-    all_kv_pi: list[int] = []
-    all_kv_po: list[int] = []
-    qo_indptr_list: list[int] = [0]
-    paged_kv_indptr_list: list[int] = [0]
-    all_paged_kv_indices: list[int] = []
-    paged_kv_lpl_list: list[int] = []
-    all_token_ids: list[int] = []
-    all_positions: list[int] = []
-    for b, L_p in enumerate(L_ps):
-        n_pages = (L_p + ps - 1) // ps
-        pages = [page_table.allocate_block() for _ in range(n_pages)]
-        prompt_pages_per_b.append(pages)
-        for i in range(L_p):
-            all_kv_pi.append(pages[i // ps])
-            all_kv_po.append(i % ps)
-        qo_indptr_list.append(qo_indptr_list[-1] + L_p)
-        all_paged_kv_indices.extend(pages)
-        paged_kv_indptr_list.append(paged_kv_indptr_list[-1] + n_pages)
-        paged_kv_lpl_list.append(L_p - (n_pages - 1) * ps)
-        all_token_ids.extend(prompt_ids[b])
-        all_positions.extend(range(L_p))
-
-    prefill_wrapper.plan(
-        qo_indptr=torch.tensor(qo_indptr_list, dtype=torch.int32, device=device),
-        paged_kv_indptr=torch.tensor(
-            paged_kv_indptr_list, dtype=torch.int32, device=device),
-        paged_kv_indices=torch.tensor(
-            all_paged_kv_indices, dtype=torch.int32, device=device),
-        paged_kv_last_page_len=torch.tensor(
-            paged_kv_lpl_list, dtype=torch.int32, device=device),
-        num_qo_heads=num_qo_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim_qk=head_dim,
-        page_size=ps,
-        causal=True,
-    )
-    pre_ctx = _PrefillCtx(
-        page_table=page_table,
-        kv_page_indices=torch.tensor(all_kv_pi, dtype=torch.int32, device=device),
-        kv_page_offsets=torch.tensor(all_kv_po, dtype=torch.int32, device=device),
-        wrapper=prefill_wrapper,
-    )
-    input_ids = torch.tensor(all_token_ids, dtype=torch.long, device=device).unsqueeze(0)
-    positions = torch.tensor(all_positions, dtype=torch.long, device=device).unsqueeze(0)
-
-    if return_timings:
-        torch.cuda.synchronize()
-        t_pre = time.perf_counter()
-
-    with torch.no_grad():
-        hidden = model.forward(
-            input_ids=input_ids, positions=positions, ctx=pre_ctx,
-        )
-        last_indices = [qo_indptr_list[b + 1] - 1 for b in range(B)]
-        last_hidden = hidden[0, last_indices, :]
-        logits = model.compute_logits(last_hidden)
-        log_probs = F.log_softmax(logits, dim=-1)
-
-    if return_timings:
-        torch.cuda.synchronize()
-        timings["prefill_ms"] = (time.perf_counter() - t_pre) * 1000.0
-
-    beams_per_prompt: list[list[Beam]] = []
-    rc_per_prompt: list[dict[int, int]] = []
-    for b in range(B):
-        top_lp, top_ids = select_at_prefill(log_probs[b], K)
-        beams_per_prompt.append([
-            Beam(
-                token_ids=[top_ids[i].item()],
-                cum_log_prob=top_lp[i].item(),
-                pages=list(prompt_pages_per_b[b]),
-            )
-            for i in range(K)
-        ])
-        rc: dict[int, int] = {}
-        for p in prompt_pages_per_b[b]:
-            _add_ref(rc, p, K)
-        rc_per_prompt.append(rc)
-
-    current_pos: list[int] = list(L_ps)
-
-    # ----- Batched decode loop (depth=2 cascade across all B prompts) -----
-    with torch.no_grad():
-        for _ in range(max_new_tokens - 1):
-            if return_timings:
-                torch.cuda.synchronize()
-                t_step = time.perf_counter()
-
-            for b in range(B):
-                pos = current_pos[b]
-                pli = pos // ps
-                off = pos % ps
-                for beam in beams_per_prompt[b]:
-                    if off == 0:
-                        new_page = page_table.allocate_block()
-                        beam.pages.append(new_page)
-                        _add_ref(rc_per_prompt[b], new_page, 1)
-                    else:
-                        write_page = beam.pages[pli]
-                        if rc_per_prompt[b][write_page] > 1:
-                            new_page = page_table.copy_block(write_page, off)
-                            _remove_ref(
-                                rc_per_prompt[b], write_page, page_table)
-                            beam.pages[pli] = new_page
-                            _add_ref(rc_per_prompt[b], new_page, 1)
-
-            levels_per_prompt: list[list] = []
-            for b in range(B):
-                pos = current_pos[b]
-                off = pos % ps
-                pages_per_beam = [list(bm.pages) for bm in beams_per_prompt[b]]
-                lpl_per_beam = [off + 1] * K
-                # Always force depth=2 in batched mode — depth=3 batching
-                # would require all prompts to agree on intermediate layout,
-                # which is rare for deterministic decoding.
-                levels, _ = _adaptive_levels(
-                    pages_per_beam, lpl_per_beam, K, max_levels=2,
-                )
-                levels_per_prompt.append(levels)
-
-            qo_arr, kvp_arr, kvi_arr, kvl_arr = _pack_batched_cascade_arrays(
-                levels_per_prompt, ps, torch.device(device),
-            )
-            cascade.plan(
-                qo_indptr_arr=qo_arr,
-                paged_kv_indptr_arr=kvp_arr,
-                paged_kv_indices_arr=kvi_arr,
-                paged_kv_last_page_len=kvl_arr,
-                num_qo_heads=num_qo_heads,
-                num_kv_heads=num_kv_heads,
-                head_dim=head_dim,
-                page_size=ps,
-                causal=False,
-                q_data_type=dtype,
-                kv_data_type=dtype,
-            )
-
-            write_pi_list: list[int] = []
-            write_po_list: list[int] = []
-            for b in range(B):
-                pos = current_pos[b]
-                off = pos % ps
-                pli = pos // ps
-                for beam in beams_per_prompt[b]:
-                    write_pi_list.append(beam.pages[pli])
-                    write_po_list.append(off)
-            ctx = AdaptivePoolContext(
-                page_table=page_table,
-                write_pi=torch.tensor(
-                    write_pi_list, dtype=torch.int32, device=device),
-                write_po=torch.tensor(
-                    write_po_list, dtype=torch.int32, device=device),
-                wrapper=cascade,
-            )
-
-            all_input: list[list[int]] = []
-            all_pos: list[list[int]] = []
-            for b in range(B):
-                for beam in beams_per_prompt[b]:
-                    all_input.append([beam.token_ids[-1]])
-                    all_pos.append([current_pos[b]])
-            beam_input = torch.tensor(all_input, dtype=torch.long, device=device)
-            beam_positions = torch.tensor(all_pos, dtype=torch.long, device=device)
-
-            hidden = model.forward(
-                input_ids=beam_input, positions=beam_positions, ctx=ctx,
-            )
-            logits = model.compute_logits(hidden[:, -1, :])
-            log_probs = F.log_softmax(logits, dim=-1)
-            vocab_size = logits.shape[-1]
-            log_probs_bkv = log_probs.view(B, K, vocab_size)
-
-            new_beams_per_prompt: list[list[Beam]] = []
-            for b in range(B):
-                cum_probs = torch.tensor(
-                    [bm.cum_log_prob for bm in beams_per_prompt[b]],
-                    dtype=torch.float32, device=device,
-                )
-                scores = cum_probs[:, None] + log_probs_bkv[b].float()
-                parent_t, token_t, topk_scores = select_at_decode(scores, K)
-                parent_ids = parent_t.tolist()
-                new_tokens = token_t.tolist()
-                scores_list = topk_scores.tolist()
-
-                parent_usage = [0] * K
-                for pid in parent_ids:
-                    parent_usage[pid] += 1
-                for old_idx, usage in enumerate(parent_usage):
-                    if usage == 0:
-                        for p in beams_per_prompt[b][old_idx].pages:
-                            _remove_ref(rc_per_prompt[b], p, page_table)
-                    elif usage > 1:
-                        for p in beams_per_prompt[b][old_idx].pages:
-                            _add_ref(rc_per_prompt[b], p, usage - 1)
-                new_beams: list[Beam] = []
-                for i in range(K):
-                    pid = parent_ids[i]
-                    new_beams.append(
-                        Beam(
-                            token_ids=beams_per_prompt[b][pid].token_ids
-                            + [new_tokens[i]],
-                            cum_log_prob=scores_list[i],
-                            pages=list(beams_per_prompt[b][pid].pages),
-                        )
-                    )
-                new_beams_per_prompt.append(new_beams)
-            beams_per_prompt = new_beams_per_prompt
-            for b in range(B):
-                current_pos[b] += 1
-
-            if return_timings:
-                torch.cuda.synchronize()
-                timings["decode_step_ms"].append(
-                    (time.perf_counter() - t_step) * 1000.0
-                )
-
-    for beams in beams_per_prompt:
-        beams.sort(key=lambda b: b.cum_log_prob, reverse=True)
-
-    if return_timings:
-        return beams_per_prompt, timings
-    return beams_per_prompt
