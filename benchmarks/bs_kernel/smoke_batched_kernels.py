@@ -12,11 +12,14 @@ import inspect
 import torch
 from transformers import AutoTokenizer
 
+from functools import partial
+
 from beam_engine.baselines.fasttree import beam_search as ft_search
 from beam_engine.baselines.mlca import beam_search as mlca_search
 from beam_engine.baselines.paged import beam_search as paged_search
 from beam_engine.methods.adaptive_pool import beam_search as ap_search
 from beam_engine.methods.bs_kernel import beam_search as bk_search
+from beam_engine.methods.bs_kernel.cost_model import Strategy
 from beam_engine.models.modeling_llama import LlamaForCausalLM
 
 
@@ -55,6 +58,12 @@ def main():
         "mlca": mlca_search,
         "fasttree": ft_search,
         "bs_kernel": bk_search,
+        "bs_kernel_2L_dec": partial(
+            bk_search, available_strategies={Strategy.SHARED_2L_DEC_TAIL},
+        ),
+        "bs_kernel_3L_dec": partial(
+            bk_search, available_strategies={Strategy.SHARED_3L_DEC_TAIL},
+        ),
     }
 
     for B in (1, 4):
@@ -78,10 +87,10 @@ def main():
                 f"  {name:<14} prefill={timings['prefill_ms']:7.1f}ms  "
                 f"mean_step={mean_step:6.2f}ms  top={top_tokens}"
             )
-        # All three should match at deterministic decoding.
+        # All methods must agree at deterministic decoding.
         token_sets = {tuple(v) for v in results.values()}
         if len(token_sets) == 1:
-            print(f"  ✓ all three match")
+            print(f"  ✓ all {len(results)} methods match")
         else:
             print(f"  ✗ MISMATCH:")
             for name, toks in results.items():

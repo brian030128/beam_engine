@@ -72,6 +72,8 @@ def _to_payload(c: Coefficients) -> dict:
         "num_sms": c.num_sms,
         "share_extra_us": c.share_extra_us,
         "dual_pool_extra_us": c.dual_pool_extra_us,
+        "decode_us_per_beam_kv_token": c.decode_us_per_beam_kv_token,
+        "decode_launch_us": c.decode_launch_us,
     }
 
 
@@ -86,6 +88,8 @@ def _from_payload(d: dict) -> Coefficients:
         num_sms=d.get("num_sms", 84),
         share_extra_us=d.get("share_extra_us", 0.0),
         dual_pool_extra_us=d.get("dual_pool_extra_us", 0.0),
+        decode_us_per_beam_kv_token=d.get("decode_us_per_beam_kv_token", 0.0008),
+        decode_launch_us=d.get("decode_launch_us", 6.0),
     )
 
 
@@ -194,6 +198,84 @@ def measure_merge_us(
     )
 
 
+def measure_decode_per_kv_us(
+    device: torch.device,
+    *,
+    num_kv_heads: int = 8,
+    num_qo_heads: int = 32,
+    head_dim: int = 128,
+    page_size: int = 16,
+    n: int = 50,
+    dtype: torch.dtype = torch.float16,
+    BS_pairs: tuple[tuple[int, int], ...] = (
+        (256, 256), (256, 1024), (2048, 64), (2048, 256),
+    ),
+) -> tuple[float, float]:
+    """Linear regression of ``BatchDecodeWithPagedKVCacheWrapper`` time vs
+    (BS × L_kv).
+
+    Returns ``(launch_us, us_per_kv_token)``: the intercept and slope of
+    the best-fit line ``time_us ≈ launch_us + us_per_kv_token *
+    (BS × L_kv)``. Used by the cost model's DEC_TAIL pricing — at
+    decode time CTA_Q=1 so per-tile padding is irrelevant; cost is
+    bandwidth (proportional to KV bytes loaded) plus a per-call
+    constant.
+    """
+    from flashinfer import BatchDecodeWithPagedKVCacheWrapper
+
+    workspace = torch.empty(256 * 1024 * 1024, dtype=torch.uint8, device=device)
+    wrapper = BatchDecodeWithPagedKVCacheWrapper(
+        workspace, kv_layout="NHD", use_tensor_cores=True,
+    )
+    xs: list[float] = []
+    ys: list[float] = []
+    for BS, L_kv in BS_pairs:
+        num_pages_per_req = max(1, L_kv // page_size)
+        # Each request reads `num_pages_per_req` pages, all distinct
+        # (paged-KV needs unique page indices per request, but kernel
+        # cost depends only on per-request KV length).
+        total_pages = BS * num_pages_per_req
+        kv = torch.randn(
+            total_pages, 2, page_size, num_kv_heads, head_dim,
+            dtype=dtype, device=device,
+        )
+        indptr = torch.arange(
+            0, (BS + 1) * num_pages_per_req, num_pages_per_req,
+            dtype=torch.int32, device=device,
+        )
+        indices = torch.arange(total_pages, dtype=torch.int32, device=device)
+        last_page_len = torch.full(
+            (BS,), page_size, dtype=torch.int32, device=device,
+        )
+        wrapper.plan(
+            indptr=indptr,
+            indices=indices,
+            last_page_len=last_page_len,
+            num_qo_heads=num_qo_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            page_size=page_size,
+        )
+        q = torch.randn(BS, num_qo_heads, head_dim, dtype=dtype, device=device)
+        us = _time_event_us(lambda: wrapper.run(q, kv), n, device=device)
+        xs.append(float(BS * L_kv))
+        ys.append(us)
+    # Closed-form least squares: minimise sum (y - (a + b x))^2.
+    n_pts = len(xs)
+    sx = sum(xs)
+    sy = sum(ys)
+    sxx = sum(x * x for x in xs)
+    sxy = sum(x * y for x, y in zip(xs, ys))
+    denom = n_pts * sxx - sx * sx
+    if denom == 0:
+        slope = ys[0] / xs[0] if xs[0] > 0 else 0.0
+        intercept = 0.0
+    else:
+        slope = (n_pts * sxy - sx * sy) / denom
+        intercept = (sy - slope * sx) / n_pts
+    return max(0.0, intercept), max(0.0, slope)
+
+
 def measure_per_tile_us(
     device: torch.device,
     T: int,
@@ -269,6 +351,7 @@ def calibrate(
         print(f"[calibrate] probing {torch.cuda.get_device_name(device)}")
 
     num_sms = torch.cuda.get_device_properties(device).multi_processor_count
+    decode_launch, decode_per_kv = measure_decode_per_kv_us(device)
     coeffs = Coefficients(
         B_hbm=measure_B_hbm(device),
         launch_us=measure_launch_us(device),
@@ -279,6 +362,8 @@ def calibrate(
             for T in (T_SMALL, *T_LARGE_CHOICES)
         },
         num_sms=num_sms,
+        decode_us_per_beam_kv_token=decode_per_kv,
+        decode_launch_us=decode_launch,
     )
     _save(coeffs, path)
     if verbose:
@@ -293,6 +378,8 @@ def _print_coeffs(c: Coefficients) -> None:
     print(f"  merge_us     = {c.merge_us:>10.2f}")
     for T, t in sorted(c.per_tile_us.items()):
         print(f"  per_tile[{T:3d}] = {t:>10.2f} µs")
+    print(f"  decode_launch_us         = {c.decode_launch_us:>10.2f}")
+    print(f"  decode_us_per_beam_kv    = {c.decode_us_per_beam_kv_token:>10.6f}")
 
 
 if __name__ == "__main__":

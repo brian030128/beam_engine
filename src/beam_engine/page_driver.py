@@ -196,6 +196,7 @@ def beam_search(
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
     return_timings: bool = False,
+    return_phase_timings: bool = False,
     return_picks: bool = False,
     select_at_prefill: PrefillSelect = standard_prefill_select,
     select_at_decode: DecodeSelect = standard_decode_select,
@@ -213,6 +214,9 @@ def beam_search(
     ``PageDecodeBackend`` implementation). See module docstring.
     """
     timings = {"prefill_ms": 0.0, "decode_step_ms": []}
+    if return_phase_timings:
+        for k in ("cow_ms", "plan_ms", "forward_ms", "topk_ms", "fork_ms"):
+            timings[k] = []
     picks_per_prompt: list[list[Any]] = []
 
     num_qo_heads = config.num_attention_heads
@@ -409,6 +413,9 @@ def beam_search(
             if return_timings:
                 torch.cuda.synchronize()
                 t_step = time.perf_counter()
+            if return_phase_timings:
+                torch.cuda.synchronize()
+                t_phase = time.perf_counter()
 
             # ---- 1) CoW per (prompt, beam). ----
             # Two regimes:
@@ -461,6 +468,12 @@ def beam_search(
                     kv = page_table.kv_cache_at_layer[layer_idx]
                     kv[dst_t, :, :cow_length] = kv[src_t, :, :cow_length]
 
+            if return_phase_timings:
+                torch.cuda.synchronize()
+                _t = time.perf_counter()
+                timings["cow_ms"].append((_t - t_phase) * 1000.0)
+                t_phase = _t
+
             # ---- 2) Method-specific decode plan. ----
             plan = backend.plan_decode_step(
                 wrappers=wrappers,
@@ -508,6 +521,12 @@ def beam_search(
             beam_input = torch.tensor(all_input, dtype=torch.long, device=device)
             beam_positions = torch.tensor(all_pos, dtype=torch.long, device=device)
 
+            if return_phase_timings:
+                torch.cuda.synchronize()
+                _t = time.perf_counter()
+                timings["plan_ms"].append((_t - t_phase) * 1000.0)
+                t_phase = _t
+
             hidden = model.forward(
                 input_ids=beam_input, positions=beam_positions, ctx=ctx,
             )
@@ -515,6 +534,12 @@ def beam_search(
             log_probs = F.log_softmax(logits, dim=-1)
             vocab_size = logits.shape[-1]
             log_probs_bkv_dispatched = log_probs.view(B, K, vocab_size)
+
+            if return_phase_timings:
+                torch.cuda.synchronize()
+                _t = time.perf_counter()
+                timings["forward_ms"].append((_t - t_phase) * 1000.0)
+                t_phase = _t
 
             # Un-permute back to natural beam order so per-prompt top-K
             # operates on natural-indexed scores.
@@ -561,6 +586,12 @@ def beam_search(
                     parents_b[b] = parent_t.tolist()
                     tokens_b[b] = token_t.tolist()
                 cum_log_probs_bk = torch.stack(new_cum_rows, dim=0)
+
+            if return_phase_timings:
+                torch.cuda.synchronize()
+                _t = time.perf_counter()
+                timings["topk_ms"].append((_t - t_phase) * 1000.0)
+                t_phase = _t
 
             # ---- 5) Apply forks (refcount surgery + new beam list). ----
             new_beams_per_prompt: list[list[Beam]] = []
@@ -657,6 +688,11 @@ def beam_search(
             beams_per_prompt = new_beams_per_prompt
             for b in range(B):
                 current_pos[b] += 1
+
+            if return_phase_timings:
+                torch.cuda.synchronize()
+                _t = time.perf_counter()
+                timings["fork_ms"].append((_t - t_phase) * 1000.0)
 
             if return_timings:
                 torch.cuda.synchronize()

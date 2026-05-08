@@ -16,10 +16,12 @@ decode steps.
 
 from __future__ import annotations
 
+import numpy as np
 import torch
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from flashinfer import (
     BatchDecodeWithPagedKVCacheWrapper,
+    BatchPrefillWithPagedKVCacheWrapper,
     FusedMultiLevelCascadeAttentionWrapper,
     MultiLevelCascadeAttentionWrapper,
 )
@@ -48,6 +50,7 @@ from .cost_model import (
     pick_strategy,
     pick_strategy_batch,
 )
+from .decode_tail_context import DecodeTailCascadeContext
 
 
 # ---------------------------------------------------------------------------
@@ -201,14 +204,21 @@ def _pack_batched_cascade_arrays_any_depth(
 
 
 class _BsKernelWrappers(WrapperBundle):
-    """Wrapper bundle for bs_kernel. Five wrappers cached at startup; the
-    picker chooses one per step."""
+    """Wrapper bundle for bs_kernel. Wrappers cached at startup; the
+    picker chooses one per step.
+
+    For DEC_TAIL strategies the prefix and (optional) intermediate
+    levels go through ``prefix_prefill`` / ``inter_prefill`` and the
+    tail goes through ``decode_wrapper`` (shared with PER_BEAM).
+    """
     __slots__ = (
         "decode_wrapper",
         "cascade_2l",
         "cascade_3l",
         "cascade_dual_2l",
         "cascade_dual_3l",
+        "prefix_prefill",
+        "inter_prefill",
     )
 
 
@@ -220,6 +230,32 @@ class BsKernelBackend:
     coefficients: Coefficients | None = None
     fused_merge: bool = False
     available_strategies: set[Strategy] | None = None
+
+    # DEC_TAIL plan cache: skip prefix_prefill.plan() when the LCA is
+    # unchanged for every prompt across consecutive steps. The LCA is
+    # monotone non-decreasing within a beam_search call, so re-plans
+    # only happen when a new prefix page becomes shared (bursts at fork
+    # events). At K=64/B=32 in steady state, LCA usually grows once
+    # every page_size=16 steps → cache hits on ~94% of steps.
+    _planned_prefix_lca: list[int] | None = field(
+        default=None, init=False, repr=False,
+    )
+
+    # Decode-wrapper plan_info cache: FlashInfer's plan() call runs a
+    # C++ scheduler that allocates CTAs to (beam, kv-tile) tuples. The
+    # scheduling depends on per-beam kv_len, which grows monotonically
+    # but only by ±1 token per step. Reuse the plan_info across steps
+    # and swap only the (indptr, indices, last_page_len) buffers — the
+    # kernel still produces correct outputs (the schedule is suboptimal
+    # but not incorrect for our shape regime). Re-plan only when the
+    # max per-beam kv_len roughly doubles, which would shift the
+    # split-K factor and could exceed workspace.
+    _decode_plan_info_cached: object = field(
+        default=None, init=False, repr=False,
+    )
+    _decode_max_kv_at_plan: int = field(
+        default=0, init=False, repr=False,
+    )
 
     def init_wrappers(
         self,
@@ -263,6 +299,15 @@ class BsKernelBackend:
             num_levels=3,
             float_workspace_buffer=workspace_buffer,
             kv_layout="NHD",
+        )
+        # Single-level prefill wrappers for the front half of DEC_TAIL.
+        # Re-planned per step against (prefix-only) or (intermediate-only)
+        # KV layouts.
+        wb.prefix_prefill = BatchPrefillWithPagedKVCacheWrapper(
+            workspace_buffer, kv_layout="NHD",
+        )
+        wb.inter_prefill = BatchPrefillWithPagedKVCacheWrapper(
+            workspace_buffer, kv_layout="NHD",
         )
         return wb
 
@@ -375,6 +420,172 @@ class BsKernelBackend:
             # PER_BEAM uses natural order — no permute needed.
             return StepPlan(ctx=ctx, beam_order_per_prompt=None, pick=pick)
 
+        # DEC_TAIL — prefix(/intermediate) prefill + per-beam decode + merge.
+        if pick.strategy in (
+            Strategy.SHARED_2L_DEC_TAIL, Strategy.SHARED_3L_DEC_TAIL,
+        ):
+            # ---- Plan prefix prefill (cache across steps when LCA stable). ----
+            # The prefix layout is determined entirely by per-prompt LCA
+            # depth (the prefix pages themselves are immutable). When
+            # last_lca_per_prompt is unchanged from the previous DEC_TAIL
+            # step, the prefix wrapper's plan is still valid — skip the
+            # re-plan and the qo/kv array build for the prefix level.
+            cur_lcas = list(last_lca_per_prompt)
+            need_prefix_replan = (
+                self._planned_prefix_lca is None
+                or self._planned_prefix_lca != cur_lcas
+                or dispatch_depth == 3   # 3L plans both prefix + inter together
+            )
+            if need_prefix_replan:
+                qo_arr, kvp_arr, kvi_arr, kvl_arr = (
+                    _pack_batched_cascade_arrays_any_depth(
+                        levels_per_prompt, ps, device,
+                        n_levels=dispatch_depth,
+                    )
+                )
+                wrappers.prefix_prefill.plan(
+                    qo_indptr=qo_arr[0],
+                    paged_kv_indptr=kvp_arr[0],
+                    paged_kv_indices=kvi_arr[0],
+                    paged_kv_last_page_len=kvl_arr[0],
+                    num_qo_heads=num_qo_heads,
+                    num_kv_heads=num_kv_heads,
+                    head_dim_qk=head_dim,
+                    page_size=ps,
+                    causal=False,
+                    q_data_type=dtype,
+                    kv_data_type=dtype,
+                )
+                inter_w = None
+                if dispatch_depth == 3:
+                    wrappers.inter_prefill.plan(
+                        qo_indptr=qo_arr[1],
+                        paged_kv_indptr=kvp_arr[1],
+                        paged_kv_indices=kvi_arr[1],
+                        paged_kv_last_page_len=kvl_arr[1],
+                        num_qo_heads=num_qo_heads,
+                        num_kv_heads=num_kv_heads,
+                        head_dim_qk=head_dim,
+                        page_size=ps,
+                        causal=False,
+                        q_data_type=dtype,
+                        kv_data_type=dtype,
+                    )
+                    inter_w = wrappers.inter_prefill
+                self._planned_prefix_lca = cur_lcas
+            else:
+                # Reuse last step's plan. inter_w is None at depth=2;
+                # depth=3 forces replan above so this branch only handles
+                # the depth=2 cache hit.
+                inter_w = None
+
+            # ---- Build decode wrapper plan via numpy (single H2D each). ----
+            BK = B * K
+            # write_po is uniform per-prompt (off = pos % ps). Build once
+            # per prompt and broadcast.
+            write_po_np = np.empty(BK, dtype=np.int32)
+            write_pi_np = np.empty(BK, dtype=np.int32)
+            decode_lpl_np = np.empty(BK, dtype=np.int32)
+            decode_indptr_np = np.empty(BK + 1, dtype=np.int32)
+            decode_indptr_np[0] = 0
+
+            # First pass: compute per-beam tail-page count to size the
+            # indices buffer + fill scalar arrays.
+            tail_lens: list[int] = []
+            tail_pages_per_beam: list[list[int]] = []
+            row = 0
+            for b in range(B):
+                pos = current_pos[b]
+                off = pos % ps
+                pli = pos // ps
+                order = beam_order_per_prompt[b]
+                bp_b = beams_per_prompt[b]
+                prefix_len = len(bp_b[0].pages_prefix)
+                tail_idx = pli - prefix_len
+                _sizes_last, pages_last, lpl_last = (
+                    levels_per_prompt[b][-1]
+                )
+                for cidx in range(K):
+                    pages_i = pages_last[cidx]
+                    tail_pages_per_beam.append(pages_i)
+                    tail_lens.append(len(pages_i))
+                    lpl_i = lpl_last[cidx]
+                    decode_lpl_np[row] = ps if lpl_i == -1 else lpl_i
+                    beam = bp_b[order[cidx]]
+                    write_pi_np[row] = beam.pages_tail[tail_idx]
+                    write_po_np[row] = off
+                    row += 1
+            tail_lens_np = np.asarray(tail_lens, dtype=np.int32)
+            np.cumsum(tail_lens_np, out=decode_indptr_np[1:])
+            total_tail = int(decode_indptr_np[BK])
+            decode_indices_np = np.empty(total_tail, dtype=np.int32)
+            for i, pages_i in enumerate(tail_pages_per_beam):
+                start = decode_indptr_np[i]
+                end = decode_indptr_np[i + 1]
+                decode_indices_np[start:end] = pages_i
+
+            # Async H2D — torch.from_numpy is zero-copy on CPU side, .to()
+            # with non_blocking lets the small copies overlap.
+            indptr_t = torch.from_numpy(decode_indptr_np).to(
+                device, non_blocking=True,
+            )
+            indices_t = torch.from_numpy(decode_indices_np).to(
+                device, non_blocking=True,
+            )
+            lpl_t = torch.from_numpy(decode_lpl_np).to(
+                device, non_blocking=True,
+            )
+            write_pi_t = torch.from_numpy(write_pi_np).to(
+                device, non_blocking=True,
+            )
+            write_po_t = torch.from_numpy(write_po_np).to(
+                device, non_blocking=True,
+            )
+
+            # Estimate current max per-beam kv_len cheaply (off + (last
+            # page index) * page_size). Using current_pos[0] as a proxy
+            # since all prompts in this bench have identical pos.
+            cur_max_kv = max(current_pos)
+            need_decode_full_plan = (
+                self._decode_plan_info_cached is None
+                or cur_max_kv >= 2 * self._decode_max_kv_at_plan
+            )
+            if need_decode_full_plan:
+                wrappers.decode_wrapper.plan(
+                    indptr=indptr_t,
+                    indices=indices_t,
+                    last_page_len=lpl_t,
+                    num_qo_heads=num_qo_heads,
+                    num_kv_heads=num_kv_heads,
+                    head_dim=head_dim,
+                    page_size=ps,
+                )
+                self._decode_plan_info_cached = (
+                    wrappers.decode_wrapper._plan_info
+                )
+                self._decode_max_kv_at_plan = cur_max_kv
+            else:
+                # Fast path: reuse cached plan_info, swap KV buffers.
+                wrappers.decode_wrapper._paged_kv_indptr_buf = indptr_t
+                wrappers.decode_wrapper._paged_kv_indices_buf = indices_t
+                wrappers.decode_wrapper._paged_kv_last_page_len_buf = lpl_t
+                wrappers.decode_wrapper._plan_info = (
+                    self._decode_plan_info_cached
+                )
+            ctx = DecodeTailCascadeContext(
+                page_table=page_table,
+                write_pi=write_pi_t,
+                write_po=write_po_t,
+                prefix_wrapper=wrappers.prefix_prefill,
+                decode_wrapper=wrappers.decode_wrapper,
+                inter_wrapper=inter_w,
+            )
+            return StepPlan(
+                ctx=ctx,
+                beam_order_per_prompt=beam_order_per_prompt,
+                pick=pick,
+            )
+
         # SHARED — fused or non-fused cascade depending on pool_count.
         qo_arr, kvp_arr, kvi_arr, kvl_arr = (
             _pack_batched_cascade_arrays_any_depth(
@@ -474,6 +685,7 @@ def beam_search(
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
     return_timings: bool = False,
+    return_phase_timings: bool = False,
     coefficients: Coefficients | None = None,
     fused_merge: bool = False,
     available_strategies: set[Strategy] | None = None,
@@ -515,6 +727,7 @@ def beam_search(
         device=device,
         dtype=dtype,
         return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
         return_picks=return_picks,
         select_at_prefill=select_at_prefill,
         select_at_decode=select_at_decode,
