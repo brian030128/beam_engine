@@ -48,6 +48,7 @@ class DecodeTailCascadeContext(AttentionContext):
         head_dim = self.page_table.head_dim
         num_heads = q.shape[-1] // head_dim
         kv_cache = self.page_table.kv_cache_at_layer[layer_idx]
+        kv_tuple = (kv_cache[0], kv_cache[1])
 
         k_3d = k.view(-1, num_kv_heads, head_dim)
         v_3d = v.view(-1, num_kv_heads, head_dim)
@@ -67,7 +68,7 @@ class DecodeTailCascadeContext(AttentionContext):
             append_value=v_3d,
             batch_indices=batch_idx,
             positions=self.write_po,
-            paged_kv_cache=kv_cache,
+            paged_kv_cache=kv_tuple,
             kv_indices=self.write_pi,
             kv_indptr=kv_indptr,
             kv_last_page_len=self.write_po,
@@ -80,15 +81,15 @@ class DecodeTailCascadeContext(AttentionContext):
         # the in-place merge accumulator; prefix and intermediate are
         # folded in.
         out_tail, lse_tail = self.decode_wrapper.run(
-            q_3d, kv_cache, return_lse=True,
+            q_3d, kv_tuple, return_lse=True,
         )
         out_pre, lse_pre = self.prefix_wrapper.run(
-            q_3d, kv_cache, return_lse=True,
+            q_3d, kv_tuple, return_lse=True,
         )
         merge_state_in_place(out_tail, lse_tail, out_pre, lse_pre)
         if self.inter_wrapper is not None:
             out_int, lse_int = self.inter_wrapper.run(
-                q_3d, kv_cache, return_lse=True,
+                q_3d, kv_tuple, return_lse=True,
             )
             merge_state_in_place(out_tail, lse_tail, out_int, lse_int)
 

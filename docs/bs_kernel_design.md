@@ -1,5 +1,17 @@
 # Beam-search-specialized attention kernel — design plan
 
+> **Status note (2026-05).** This document is the original design plan.
+> Sections are annotated [LANDED] / [PARTIAL] / [DEFERRED] to reflect
+> what shipped. The implementation diverged from the plan in three
+> ways: (1) `DEC_TAIL` strategies (decode-kernel tail with online
+> softmax merge) were added — this is the natural CTA_Q=1 case of the
+> two-pool concept, see `docs/cta_tile_q_design.md`; (2) the GPU-side
+> plan-update kernel landed only in Phase 1 (`plan_update.py`) — the
+> hot path still goes through `pick_strategy_batch` on CPU with two
+> aggressive plan caches keyed by LCA and decode-kv-len; (3) the
+> ablation list condensed to D1 + per-decision sweeps run via
+> `bench_modes.py` rather than a separate `oracle_vs_model.py`.
+
 ## Context
 
 The user is writing a paper on the fastest LLM beam-search engine. The
@@ -21,20 +33,26 @@ engineering target — Pareto dominance is.
 The contribution decomposes into three layers, each with a separate
 ablation story:
 
-1. **Kernel** — persistent grid, in-kernel pool routing across CTA tile
-   sizes, fused LSE merge in the kernel epilogue.
-2. **Cost model** — unified decision over (share-prefix-or-not, cascade
-   depth, pool count, T-per-pool), running on GPU as part of the
-   plan-update kernel, with device-calibrated coefficients.
-3. **Per-device cost-model calibration** — at engine init, measure the
-   device's HBM bandwidth, kernel-launch overhead, merge cost, and
-   per-tile time for each compiled T value. The cost model uses these
-   calibrated coefficients (not hardcoded constants) so the same model
-   makes correct picks across H100, A100, RTX-PRO. The kernel itself is
-   not re-tuned per device; FlashInfer's JIT already does that.
+1. **Kernel** [LANDED, partial] — per-call `force_cta_tile_q` lets the
+   picker pick T per step (FlashInfer commit `3df5803b`); fused LSE
+   merge in epilogue is implemented behind `fused_merge=False` flag
+   (default off); persistent grid is the upstream FlashInfer kernel
+   (we reuse it).
+2. **Cost model** [LANDED, extended] — unified decision over
+   (cascade depth × pool count × T_per_pool × tail-kernel). The
+   tail-kernel axis was added during implementation:
+   `SHARED_*L_DEC_TAIL` strategies route the per-beam tail through
+   `BatchDecodeWithPagedKVCacheWrapper` (CTA_Q=1, 0% padding) and
+   merge with the prefix via `merge_state_in_place`. See
+   `decode_tail_context.py` and `cost_model.py:Strategy`.
+3. **Per-device cost-model calibration** [LANDED] — `calibrate.py`
+   probes prefill per-tile cost (`_T_tile_cost`) and decode per-tile
+   cost (`_decode_tile_cost`); cached at
+   `~/.cache/beam_engine/coeffs-<gpu>.json`. Picks adapt across H100 /
+   A100 / RTX-PRO with the same code.
 
 The 2-pool cascade we already built (`src/beam_engine/methods/adaptive_pool.py`)
-becomes the *baseline we beat*, not the proposed method.
+became the *first baseline we beat* and remains shipped.
 
 ## Files to add / modify
 
@@ -238,7 +256,18 @@ intermediate-run lengths (0, 1, 2, 4, 8, 16 pages) and group counts
 verify model picks correctly. **Hypothesis:** 3-level wins only when
 intermediate run ≥ 1 page AND group size ≥ 2.
 
-### Decision 3 — pool count (single launch vs dual launch)
+### Decision 3 — pool count (single launch vs dual launch vs DEC_TAIL)
+
+**Status update.** What shipped is a 3-way choice, not 2-way. The
+third option, `DEC_TAIL`, is the conceptual CTA_Q=1 limit of the
+small-T pool: instead of running per-beam tails through a prefill
+kernel with `T=16` and 4/16=25% MMA utilization, route them through
+`BatchDecodeWithPagedKVCacheWrapper` (which is purpose-built for
+CTA_Q=1) and merge with the prefix-kernel output via online softmax.
+At K=64/B=32/L_p=8K, DEC_TAIL gives 0% padding on the tail level vs
+98.4% under the prefill `T=64` pool. Two-pool and DEC_TAIL share the
+same shape detection and merge machinery; DEC_TAIL just substitutes
+the small-T launch for a decode-kernel launch.
 
 **Justification.** This is the FastTree weakness we explicitly attack.
 FastTree's `_build_metadata` (3rdparty/FastTree-Artifact/kernel_bench/fasttree.py:233)

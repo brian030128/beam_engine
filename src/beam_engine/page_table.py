@@ -3,9 +3,15 @@
 Pages are physical fixed-size blocks (``page_size`` tokens each) holding KV
 entries for one transformer layer. ``allocate_block()`` and ``free_block()``
 manage the free list. ``copy_block()`` clones a populated page (used for
-copy-on-write at beam divergence). The cache uses FlashInfer's 5D NHD layout:
-``[max_num_pages, 2, page_size, num_kv_heads, head_dim]`` per layer, where
-index 0 holds keys and index 1 holds values.
+copy-on-write at beam divergence).
+
+Layout per layer: ``[2, max_num_pages, page_size, num_kv_heads, head_dim]``
+where ``kv[0]`` is the K cache and ``kv[1]`` is the V cache. Both are
+contiguous tensors. This is equivalent to FlashInfer's NHD format split
+into two top-level slabs — wrappers consume them as a ``(k_cache, v_cache)``
+tuple. The split form lets baselines that need a flat slot-indexed K/V
+view (FastTree, DeFT) reshape ``kv[0]`` to ``[max_num_pages * page_size,
+num_kv_heads, head_dim]`` without copying.
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ class PageTable:
 
         self.kv_cache_at_layer: List[torch.Tensor] = [
             torch.zeros(
-                (max_num_pages, 2, page_size, head_num, head_dim),
+                (2, max_num_pages, page_size, head_num, head_dim),
                 dtype=store_dtype,
                 device=self.device,
             )
@@ -59,9 +65,30 @@ class PageTable:
     def allocate_block(self) -> int:
         if not self.free_pages:
             raise MemoryError("No free pages available")
-        page_idx = self.free_pages.pop(0)
+        # ``pop()`` is O(1); ``pop(0)`` was O(N) and made slot-boundary
+        # decode steps quadratic in max_num_pages. The free list is a
+        # stack (LIFO); page-id ordering doesn't matter for correctness.
+        page_idx = self.free_pages.pop()
         self.allocated_pages.add(page_idx)
         return page_idx
+
+    def allocate_blocks(self, n: int) -> list[int]:
+        """Pop ``n`` free page IDs in one shot.
+
+        Equivalent to calling ``allocate_block()`` ``n`` times but
+        avoids ``n`` Python method calls and ``n`` ``set.add`` calls
+        on the hot slot-boundary path. Each decode step at
+        ``current_pos % page_size == 0`` allocates B*K new pages —
+        with B=32, K=64 that's 2048 allocations per affected step.
+        """
+        if len(self.free_pages) < n:
+            raise MemoryError(
+                f"Need {n} free pages, only {len(self.free_pages)} available"
+            )
+        out = self.free_pages[-n:]
+        del self.free_pages[-n:]
+        self.allocated_pages.update(out)
+        return out
 
     def copy_block(self, page_idx: int, length: int) -> int:
         if length > self.page_size:
@@ -71,7 +98,8 @@ class PageTable:
         new_page = self.allocate_block()
         for layer in range(self.layer_num):
             kv = self.kv_cache_at_layer[layer]
-            kv[new_page, :, :length].copy_(kv[page_idx, :, :length])
+            # kv shape: [2, max_pages, page_size, ...].
+            kv[:, new_page, :length].copy_(kv[:, page_idx, :length])
         return new_page
 
     def free_block(self, page_idx: int) -> None:

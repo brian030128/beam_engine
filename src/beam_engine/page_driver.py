@@ -466,7 +466,8 @@ def beam_search(
                 )
                 for layer_idx in range(page_table.layer_num):
                     kv = page_table.kv_cache_at_layer[layer_idx]
-                    kv[dst_t, :, :cow_length] = kv[src_t, :, :cow_length]
+                    # kv shape: [2, max_pages, page_size, ...].
+                    kv[:, dst_t, :cow_length] = kv[:, src_t, :cow_length]
 
             if return_phase_timings:
                 torch.cuda.synchronize()

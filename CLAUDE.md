@@ -1,75 +1,101 @@
 # beam_engine
 
-Research project — building the fastest LLM beam search engine. Two baselines
-under `docs/baseline/`:
+Research project — building the fastest LLM beam search engine.
 
-- **paged attention** (`src/beam_engine/baselines/paged.py`) — FlashInfer paged
-  decode wrapper, refcounted page sharing for prefix, copy-on-write at
-  divergence.
-- **tree attention** (`src/beam_engine/baselines/tree.py`, arXiv:2502.00085) —
-  fused-sequence layout, single FlashAttention call with a tree-shaped custom
-  mask.
+The repo ships **six** beam-search methods, all driven by a unified
+`page_driver.beam_search` (cross-prompt batched: B prompts × K beams in
+one launch):
 
-Both share the same Llama model code (`src/beam_engine/models/`) via the
+- **paged** (`baselines/paged.py`) — FlashInfer paged decode wrapper;
+  refcounted prefix sharing, copy-on-write at divergence.
+- **tree** (`baselines/tree.py`, arXiv:2502.00085) — fused-sequence
+  layout, single FlashAttention call with a tree-shaped mask.
+- **mlca** (`baselines/mlca.py`) — FlashInfer
+  `MultiLevelCascadeAttentionWrapper` (1 launch, 2 levels: shared
+  prefix + per-beam tail).
+- **fasttree** (`baselines/fasttree.py`, MLSys'25) — Triton
+  two-stage radix-tree decode kernel; rewritten on top of
+  `page_driver` with page-level radix + LCA-prefix-skip + numpy-bridged
+  metadata. See `docs/baseline/fasttree_analysis.md`.
+- **adaptive_pool** (`methods/adaptive_pool.py`) — adaptive 2-pool
+  routing on top of FlashInfer's `FusedMultiLevelCascadeAttentionWrapper`;
+  picks pool sizes per step.
+- **bs_kernel** (`methods/bs_kernel/`, our proposed method) — unified
+  cost-model picker over (cascade depth × pool count × tail-kernel),
+  with online-calibrated coefficients and plan-state caching keyed by
+  page-level LCA. See `docs/bs_kernel_design.md`. Tail-kernel choice
+  includes `DEC_TAIL` (CTA_Q=1 decode kernel + online softmax merge),
+  the natural CTA_Q=1 case of the two-pool concept in
+  `docs/cta_tile_q_design.md`.
+
+All methods share the same Llama model code (`models/`) via the
 `AttentionContext` dispatch layer.
 
 ## Environment
 
-- `uv` for env management. Python 3.11. Dependencies pinned in
-  `pyproject.toml` (torch 2.9, flashinfer-python, transformers 4.57.3).
+- `uv` for env management. Python 3.11. Dependencies in
+  `pyproject.toml` (torch 2.9, flashinfer-python at the
+  `brian030128/flashinfer@beam_engine` fork in `3rdparty/flashinfer`,
+  transformers 4.57.3).
 - `uv sync` to install. `uv run python ...` to run.
-- Conda env `flashtree` is the host shell environment (`test.sh` activates it
-  before invoking `uv`).
 
-## GPU usage — ALWAYS check before running
+## GPU usage
 
-The host is a shared multi-GPU machine. Before running any command that uses
-the GPU:
+GPU access varies by host. Check `docs/h100_usage.md` for cluster
+specifics.
 
-1. Run `nvidia-smi` and pick a **fully idle** GPU. Required: ~0% utilization
-   AND only minimal memory in use (effectively no other user's process).
-   "Mostly idle" or "lots of memory free but high util" is NOT acceptable —
-   running there will steal cycles from another user and produce noisy
-   benchmarks. If no GPU is fully idle, **do not run**; wait or ask the user.
-2. Pin every CUDA-using command to that GPU with `CUDA_VISIBLE_DEVICES=<id>`.
-
-Examples:
-
-```bash
-nvidia-smi   # check first
-
-CUDA_VISIBLE_DEVICES=2 uv run python tests/test_baselines.py
-
-# Quick imports / sanity checks: still pin a GPU even if you think it won't allocate.
-CUDA_VISIBLE_DEVICES=2 uv run python -c "from beam_engine.baselines import paged, tree; print('ok')"
-```
-
-The `test.sh` wrapper accepts a GPU id as its second arg and forwards it via
-`CUDA_VISIBLE_DEVICES`:
-
-```bash
-./test.sh tests/test_baselines.py 2
-```
-
-Never launch a GPU job without picking a free GPU first — taking a GPU another
-user is on will OOM both jobs.
+- **nano5 (current default)** — SLURM cluster. H100s on
+  `hgpn[01-06,17-21]`; the login node has no usable GPU. Submit work
+  with `sbatch slurm/<job>.sbatch`. Account `MST114554`, partition
+  `dev`. SLURM sets `CUDA_VISIBLE_DEVICES`. Do NOT pick a GPU manually
+  via `nvidia-smi` here.
+- **Shared-workstation hosts** — run `nvidia-smi` first, pick a GPU at
+  ~0% util / ≤2 MiB used, pin via `CUDA_VISIBLE_DEVICES=<id>`.
 
 ## Layout
 
 ```
 src/beam_engine/
-  models/                    # standalone Llama (no vLLM deps)
-    attention.py             # AttentionContext protocol + thin Attention call site
-    modeling_llama.py        # LlamaForCausalLM, weight remap from HF safetensors
+  models/                       # standalone Llama (no vLLM deps)
+    attention.py                # AttentionContext protocol + thin Attention call site
+    modeling_llama.py           # LlamaForCausalLM, weight remap from HF safetensors
     rmsnorm.py, rotary_embedding.py, configuration_llama.py
-  page_table.py              # paged KV cache (FlashInfer 5D NHD layout)
+  page_table.py                 # paged KV cache; layout
+                                #   [2, max_pages, page_size, num_kv_heads, head_dim]
+                                # (kv[0] = K slab, kv[1] = V slab; flat slot view
+                                # = kv[i].view(max_pages*page_size, ...) is no-copy,
+                                # consumed by fasttree's slot-indexed kernel.)
+  page_driver.py                # unified beam_search(model, ..., backend=...).
+                                # Backend protocol (init_wrappers + plan_decode_step)
+                                # is what each method implements.
+  decoding.py                   # standard / DBS top-K selectors (batched + per-prompt)
   baselines/
-    paged.py                 # baseline 1 — paged-attention beam search
-    tree.py                  # baseline 2 — tree-attention beam search
-  logger.py
+    paged.py, tree.py, mlca.py, fasttree.py
+  methods/
+    adaptive_pool.py            # PageDecodeBackend; 2-pool fused-cascade picker
+    bs_kernel/
+      cost_model.py             # Strategy enum, pick_strategy_batch, fallbacks
+      driver.py                 # _BsKernelWrappers + dispatch (PER_BEAM/SHARED_*L/DEC_TAIL)
+      calibrate.py              # per-tile cost probes (prefill + decode); cached
+      autotune.py               # fits share_extra_us / dual_pool_extra_us
+      plan_update.py            # Phase-1 GPU-resident plan-state Triton kernels
+      decode_tail_context.py    # AttentionContext for SHARED_*L_DEC_TAIL
+benchmarks/
+  bs_kernel/                    # see benchmarks/bs_kernel/README.md
+slurm/                          # *.sbatch entry points (nano5 cluster)
+docs/
+  bs_kernel_design.md           # design plan for bs_kernel (cost model + kernel)
+  cta_tile_q_design.md          # two-pool CTA_TILE_Q justification
+  baseline/
+    paged_attention.md          # paged-attention baseline
+    tree_attention.md           # tree-attention baseline
+    fasttree_analysis.md        # FastTree weaknesses + bs_kernel novelty
 tests/
-  test_baselines.py          # cross-baseline equality + greedy match
-docs/baseline/
-  paged_attention.md
-  tree_attention.md
+  test_baselines.py             # cross-baseline equality + greedy match
 ```
+
+## Cascade attention references
+
+- https://docs.flashinfer.ai/tutorials/kv_layout.html#page-table-layout
+- https://docs.flashinfer.ai/api/attention.html#batch-prefill-append-attention
+- https://docs.flashinfer.ai/generated/flashinfer.decode.cudnn_batch_decode_with_kv_cache.html

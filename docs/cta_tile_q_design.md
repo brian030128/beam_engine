@@ -116,6 +116,41 @@ and the failure modes of single-T choices are catastrophic (1.46–1.59×
 worse) while two-pool's worst case is mild (≤ 14 % off the best single-T
 in any regime).
 
+## Extending the small-T pool to CTA_Q=1: DEC_TAIL
+
+The two-pool model above splits a call between `T_lg ∈ {64, 128}` for
+root-style large-R tiles and `T = 16` for tail-style small-R tiles. At
+beam decode the tail's real `R = G = 4` (Llama-3.1-8B / -3.2-1B GQA
+group), and even `T = 16` pads the tile by 75 % (`U = 4/16 = 25 %`).
+
+The natural CTA_Q=1 limit of the small-T pool replaces the prefill
+launch with a **decode kernel** purpose-built for one query token per
+request: `BatchDecodeWithPagedKVCacheWrapper`. The CTA's logical packed
+queries are the GQA-group's `G` heads of a single token, processed
+without padding. This shipped as the `SHARED_*L_DEC_TAIL` strategy in
+`src/beam_engine/methods/bs_kernel/cost_model.py:Strategy`, with the
+hybrid context in `decode_tail_context.py` running:
+
+```
+out_tail, lse_tail = decode_wrapper.run(q, kv, return_lse=True)
+out_pre,  lse_pre  = prefix_wrapper.run(q, kv, return_lse=True)
+merge_state_in_place(out_tail, lse_tail, out_pre, lse_pre)
+```
+
+`merge_state_in_place` is FlashInfer's public elementwise online-softmax
+merge (`flashinfer/cascade.py:136`), already used by FlashInfer's own
+`SharedPrefixPagedKVCache`. Padding factor on the bottleneck tail
+level: 98.4 % under prefill `T=64` (the K=64/B=32/L_p=8K canonical cell)
+→ 0 % under DEC_TAIL. End-to-end at that cell, the picker chooses
+DEC_TAIL once the cost model is calibrated; verified in
+`benchmarks/bs_kernel/bench_modes.py` mode `SHARED_2L_DEC_TAIL`.
+
+Conceptually nothing in the cost model below changes: DEC_TAIL is
+"two-pool with the small-T pool replaced by the device's decode
+kernel." The same crossover/picker logic applies — the cost expression
+for the small-T pool just substitutes `per_decode_tile_us(L)` for
+`per_tile_us(T=16)` in the calibration table.
+
 ## Conclusion
 
 > Under the FA2 tile-cost model

@@ -43,7 +43,7 @@ from ..models.attention import AttentionContext
 class TreeAttentionContext(AttentionContext):
     """Per-forward state for tree attention over a single prompt's fused buffer."""
 
-    kv_cache: list[torch.Tensor]      # per layer: [max_tokens, 2, num_kv_heads, head_dim]
+    kv_cache: list[torch.Tensor]      # per layer: [2, max_tokens, num_kv_heads, head_dim]
     write_indices: torch.Tensor       # [nnz] int64 — buffer index per input token to write
     kv_total_len: int                 # number of valid KV entries after this forward writes
     num_kv_heads: int
@@ -64,12 +64,12 @@ class TreeAttentionContext(AttentionContext):
         v_3d = v.view(-1, self.num_kv_heads, self.head_dim)
 
         # Append k/v into the fused buffer at the requested slots.
-        kv[self.write_indices, 0] = k_3d
-        kv[self.write_indices, 1] = v_3d
+        kv[0, self.write_indices] = k_3d
+        kv[1, self.write_indices] = v_3d
 
         # Slice the active region as the ragged K/V tensor for FlashAttention.
-        k_view = kv[: self.kv_total_len, 0]   # [total_len, num_kv_heads, head_dim]
-        v_view = kv[: self.kv_total_len, 1]
+        k_view = kv[0, : self.kv_total_len]  # [total_len, num_kv_heads, head_dim]
+        v_view = kv[1, : self.kv_total_len]
 
         q_3d = q.view(-1, self.num_qo_heads, self.head_dim)
         out = self.wrapper.run(q_3d, k_view, v_view)
@@ -125,10 +125,12 @@ def _beam_search_single(
     L_p = len(prompt_ids)
     max_tokens = L_p + K * max_new_tokens + K  # +K head room
 
-    # Per-layer fused KV buffer.
+    # Per-layer fused KV buffer. Layout [2, max_tokens, ...] so kv[0] and
+    # kv[1] are contiguous slices for the ragged kernel (avoids implicit
+    # memcpy on every layer).
     kv_cache = [
         torch.zeros(
-            (max_tokens, 2, num_kv_heads, head_dim),
+            (2, max_tokens, num_kv_heads, head_dim),
             dtype=dtype,
             device=device,
         )

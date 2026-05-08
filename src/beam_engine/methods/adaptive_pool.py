@@ -100,14 +100,14 @@ class _PrefillCtx(AttentionContext):
             append_value=v_3d,
             batch_indices=batch_idx,
             positions=self.kv_page_offsets,
-            paged_kv_cache=kv_cache,
+            paged_kv_cache=(kv_cache[0], kv_cache[1]),
             kv_indices=self.kv_page_indices,
             kv_indptr=kv_indptr,
             kv_last_page_len=self.kv_page_offsets,
             kv_layout="NHD",
         )
         q_3d = q.view(-1, num_heads, head_dim)
-        out = self.wrapper.run(q_3d, kv_cache)
+        out = self.wrapper.run(q_3d, (kv_cache[0], kv_cache[1]))
         return out.reshape(*q.shape[:-1], num_heads * head_dim)
 
 
@@ -148,7 +148,7 @@ class AdaptivePoolContext(AttentionContext):
             append_value=v_3d,
             batch_indices=batch_idx,
             positions=self.write_po,
-            paged_kv_cache=kv_cache,
+            paged_kv_cache=(kv_cache[0], kv_cache[1]),
             kv_indices=self.write_pi,
             kv_indptr=kv_indptr,
             kv_last_page_len=self.write_po,
@@ -156,7 +156,7 @@ class AdaptivePoolContext(AttentionContext):
         )
 
         q_3d = q.view(-1, num_heads, head_dim)
-        out = self.wrapper.run(q_3d, kv_cache)
+        out = self.wrapper.run(q_3d, (kv_cache[0], kv_cache[1]))
         return out.reshape(*q.shape[:-1], num_heads * head_dim)
 
 

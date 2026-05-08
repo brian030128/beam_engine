@@ -1,37 +1,31 @@
-"""Baseline 3 — FastTree (MLSys'25, arXiv:2502.18030).
+"""Baseline 3 — FastTree (MLSys'25, arXiv:2502.18030), integrated with the
+shared page_driver beam-search loop.
 
-FastTree replaces the tree-mask approach (baseline 2) with an explicit radix
-tree over the KV cache. Its Triton kernel runs a per-tree-node decode in
-stage 1 — each "vnode" (a (kv_chunk, q_tile) pair) is one CTA — then merges
-per-request partials in stage 2 with online softmax. The kernel-tile
-parameters and the K-vs-Q split decision per node are picked by a cost
-heuristic (``_tree_heuristic``) at plan time.
+FastTree's Triton kernel reads K/V via a flat slot index
+``slot = page * page_size + offset``. With our PageTable layout
+``[2, max_pages, page_size, num_kv_heads, head_dim]``, ``kv[0]`` and ``kv[1]``
+are contiguous slabs that view as ``[max_pages * page_size, num_kv_heads,
+head_dim]`` with no copy — exactly the flat layout the kernel expects.
 
-For beam search we feed FastTree a radix tree built each decode step from
-the beams' KV-slot paths: the longest common slot prefix is one node, and
-each diverging subtree continues recursively. Right after prefill this is
-just one root (prompt) + K leaves (one per beam); after a fork that keeps
-several beams sharing a parent's freshly-allocated slot, intermediate
-nodes appear naturally.
+The radix tree is built at PAGE level (16× less data than slot level).
+Each tree node owns a contiguous run of pages; we expand to slot indices
+only when emitting the kernel's ``vnode_to_kv_entries`` array. The
+per-beam leaf's last page may be partial (``current_pos % page_size + 1``
+tokens written so far).
 
-The upstream ``fasttree_preparation`` assumes each tree node owns a
-contiguous slice ``[KV_ptrs[i], KV_ptrs[i+1])`` of a single flat KV tensor.
-Our beam-search slots are interleaved (every step writes K scattered
-positions), so we port that preparation here but feed actual slot indices
-into ``vnode_to_kv_entries`` directly. Stage 2 is unchanged.
+Reuses the upstream FastTree heuristic (``_tree_heuristic`` from the
+artifact) and Triton kernel (``fasttree_decode``) unchanged.
 """
 
 from __future__ import annotations
 
 import queue as _queue
 import sys
-import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import torch
-import torch.nn.functional as F
-from flashinfer import BatchPrefillWithRaggedKVCacheWrapper
 
 from ..decoding import (
     DecodeSelect,
@@ -39,7 +33,14 @@ from ..decoding import (
     standard_decode_select,
     standard_prefill_select,
 )
+from ..methods.adaptive_pool import Beam
 from ..models.attention import AttentionContext
+from ..page_driver import (
+    StepPlan,
+    WrapperBundle,
+    beam_search as _shared_beam_search,
+)
+from ..page_table import PageTable
 
 
 # ---------------------------------------------------------------------------
@@ -64,28 +65,104 @@ from kv_tree_simple import KVTreeNode  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Radix-tree construction over beam KV-slot paths
+# Page-level radix-tree construction
 # ---------------------------------------------------------------------------
 
 
-def _build_combined_radix_tree(
-    beam_paths_per_prompt: list[list[list[int]]],
+def _build_radix_tree_pages_single(
+    shared_prefix: list[int],
+    tails: list[list[int]],
+) -> tuple[list[KVTreeNode], list[list[int]]]:
+    """Compress K beam page-paths into a radix tree.
+
+    Beams share ``shared_prefix`` (by construction in our beam search,
+    after split-pages CoW) and have their own ``tails[i]``. The root
+    node's run = ``shared_prefix`` (aliased; never mutated) plus any
+    further shared tail pages. The walker only scans the divergent
+    tail portion, avoiding the O(K × prefix_len) prefix scan.
+
+    Returns ``(tree_info, node_pages)`` where:
+      * ``tree_info[i]``: KVTreeNode with ``parent``, ``num_children``,
+        ``requests`` (beam IDs), and ``seqlen`` set in **pages**. The caller
+        is expected to scale to tokens after the partial-last-page check.
+      * ``node_pages[i]``: pages owned by node i (in KV order).
+    """
+    K = len(tails)
+    nodes: list[KVTreeNode] = []
+    node_pages: list[list[int]] = []
+
+    def walk(beams: list[int], tail_d: int, parent_id: int) -> None:
+        tail_len = len(tails[beams[0]])
+        if parent_id == -1:
+            # Root: scan for further-shared tail pages past the prefix.
+            ext: list[int] = []
+            d = 0
+            while d < tail_len:
+                page = tails[beams[0]][d]
+                same = True
+                for b in beams:
+                    if tails[b][d] != page:
+                        same = False
+                        break
+                if not same:
+                    break
+                ext.append(page)
+                d += 1
+            # Aliasing is safe within one plan_decode_step; if no tail
+            # pages are shared, run is the prefix list itself (no copy).
+            run: list[int] = shared_prefix if not ext else (shared_prefix + ext)
+        else:
+            run = []
+            d = tail_d
+            while d < tail_len:
+                page = tails[beams[0]][d]
+                same = True
+                for b in beams:
+                    if tails[b][d] != page:
+                        same = False
+                        break
+                if not same:
+                    break
+                run.append(page)
+                d += 1
+
+        n = KVTreeNode()
+        n.parent = parent_id
+        n.id = len(nodes)
+        n.seqlen = len(run)
+        n.num_children = 0
+        n.requests = list(beams)
+        my_id = n.id
+        nodes.append(n)
+        node_pages.append(run)
+
+        if d == tail_len:
+            return  # leaf
+
+        groups: dict[int, list[int]] = {}
+        for b in beams:
+            groups.setdefault(tails[b][d], []).append(b)
+        for sub_beams in groups.values():
+            walk(sub_beams, d, my_id)
+            nodes[my_id].num_children += 1
+
+    walk(list(range(K)), 0, -1)
+    return nodes, node_pages
+
+
+def _build_combined_radix_tree_pages(
+    shared_prefix_per_prompt: list[list[int]],
+    tails_per_beam_per_prompt: list[list[list[int]]],
     K: int,
 ) -> tuple[list[KVTreeNode], list[list[int]]]:
-    """Combine B per-prompt radix subtrees into one tree with a virtual root.
+    """Combine B per-prompt page-radix subtrees under a virtual root.
 
-    Request IDs span [0, B*K) — prompt b's beams have IDs in
-    ``[b*K, (b+1)*K)``. The virtual root at index 0 has seqlen=0 and
-    num_children=B; each per-prompt subtree's root becomes a child of
-    the virtual root.
-
-    The kernel handles the virtual root correctly when its
-    ``node_assignments[0]`` is forced to 0 (own — empty — kv chunk):
-    ``_build_metadata`` then computes 0 kv vnodes for it and emits no
-    work, while ``_compute_parallelism`` uses it as the propagation
-    sink so each subtree root's requests aggregate there cleanly.
+    Each prompt's K beams share ``shared_prefix_per_prompt[b]`` (aliased
+    in by reference) and have their own ``tails_per_beam_per_prompt[b][k]``.
+    Request IDs span ``[0, B*K)``: prompt b's beams have IDs
+    ``[b*K, (b+1)*K)``. Virtual root has ``seqlen=0`` and ``num_children=B``.
     """
-    B = len(beam_paths_per_prompt)
+    B = len(shared_prefix_per_prompt)
     virtual_root = KVTreeNode()
     virtual_root.parent = -1
     virtual_root.id = 0
@@ -93,10 +170,12 @@ def _build_combined_radix_tree(
     virtual_root.num_children = B
     virtual_root.requests = []
     combined_nodes: list[KVTreeNode] = [virtual_root]
-    combined_slots: list[list[int]] = [[]]
+    combined_pages: list[list[int]] = [[]]
 
-    for b, paths in enumerate(beam_paths_per_prompt):
-        sub_nodes, sub_slots = _build_radix_tree_single(paths)
+    for b in range(B):
+        sub_nodes, sub_pages = _build_radix_tree_pages_single(
+            shared_prefix_per_prompt[b], tails_per_beam_per_prompt[b],
+        )
         offset = len(combined_nodes)
         for n in sub_nodes:
             n2 = KVTreeNode()
@@ -106,75 +185,55 @@ def _build_combined_radix_tree(
             n2.num_children = n.num_children
             n2.requests = [r + b * K for r in n.requests]
             combined_nodes.append(n2)
-            combined_slots.append(list(sub_slots[n.id]))
-    return combined_nodes, combined_slots
+            # ``sub_pages[n.id]`` is already a fresh list; alias it.
+            combined_pages.append(sub_pages[n.id])
+    return combined_nodes, combined_pages
 
 
-def _build_radix_tree_single(
-    beam_paths: list[list[int]],
-) -> tuple[list[KVTreeNode], list[list[int]]]:
-    """Compress K beam slot-paths into a radix tree.
+def _expand_pages_to_slots(
+    nodes: list[KVTreeNode],
+    node_pages: list[list[int]],
+    page_size: int,
+    leaf_partial_last_per_node: dict[int, int],
+) -> list[np.ndarray]:
+    """Flatten per-node page lists into slot arrays, handling partial leaf
+    last pages.
 
-    Returns (tree_info, node_slots):
-      tree_info[i].parent / .seqlen / .num_children / .requests
-      node_slots[i] — physical slot indices owned by node i (in KV order).
-    All beam paths must share the same length (true after prefill).
+    For non-leaf nodes (or non-partial leaves) all owned pages contribute
+    the full ``page_size`` slots. For nodes in ``leaf_partial_last_per_node``
+    the last page contributes only the given token count (typically
+    ``current_pos[b] % page_size + 1``).
+
+    Mutates each node's ``seqlen`` to the resulting slot count (in tokens).
+    Returns numpy arrays so downstream metadata packing can use
+    ``np.concatenate`` and feed ``torch.from_numpy`` without a Python-level
+    list→tensor conversion.
     """
-    assert beam_paths and all(len(p) == len(beam_paths[0]) for p in beam_paths)
-    K = len(beam_paths)
-    nodes: list[KVTreeNode] = []
-    node_slots: list[list[int]] = []
-
-    def walk(beams: list[int], depth: int, parent_id: int) -> None:
-        path_len = len(beam_paths[beams[0]])
-        slots: list[int] = []
-        d = depth
-        # Extend run as long as every beam in this group agrees on the slot.
-        while d < path_len:
-            slot = beam_paths[beams[0]][d]
-            same = True
-            for b in beams:
-                if beam_paths[b][d] != slot:
-                    same = False
-                    break
-            if not same:
-                break
-            slots.append(slot)
-            d += 1
-
-        n = KVTreeNode()
-        n.parent = parent_id
-        n.id = len(nodes)
-        n.seqlen = len(slots)
-        n.num_children = 0
-        n.requests = list(beams)  # ancestors store the union of leaf reqs
-        my_id = n.id
-        nodes.append(n)
+    arange_ps = np.arange(page_size, dtype=np.int32)
+    node_slots: list[np.ndarray] = []
+    for i, pages in enumerate(node_pages):
+        if not pages:
+            nodes[i].seqlen = 0
+            node_slots.append(np.empty(0, dtype=np.int32))
+            continue
+        pages_arr = np.asarray(pages, dtype=np.int32)
+        # slots[p, j] = pages[p]*ps + j ; flatten row-major.
+        slots = (pages_arr[:, None] * page_size + arange_ps[None, :]).ravel()
+        partial = leaf_partial_last_per_node.get(i)
+        if partial is not None:
+            slots = slots[: (len(pages) - 1) * page_size + partial]
+        nodes[i].seqlen = int(slots.size)
         node_slots.append(slots)
-
-        if d == path_len:
-            return  # leaf
-
-        groups: dict[int, list[int]] = {}
-        for b in beams:
-            groups.setdefault(beam_paths[b][d], []).append(b)
-        for sub_beams in groups.values():
-            walk(sub_beams, d, my_id)
-            nodes[my_id].num_children += 1
-
-    walk(list(range(K)), 0, -1)
-    return nodes, node_slots
+    return node_slots
 
 
 # ---------------------------------------------------------------------------
-# FastTree-style metadata build (port of ``fasttree_preparation`` that takes
-# scattered slot indices instead of contiguous KV_ptrs ranges).
+# FastTree metadata build (unchanged from the standalone driver)
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class _FTMeta:
-    """All tensors + scalars that fasttree_decode needs for a step."""
     vnode_to_kv_entries: torch.Tensor
     vnode_to_kv_offs: torch.Tensor
     vnode_to_kv_lens: torch.Tensor
@@ -286,7 +345,11 @@ def _build_metadata(
                 break
 
     Q_TILE_SIZE = Q_TILE_SIZE_PER_PHASE[0]
-    vnode_to_kv_entries: list[int] = []
+    # ``vnode_to_kv_chunks`` collects per-vnode KV-slot arrays as numpy
+    # chunks (avoids per-step Python list extends of ~262K ints). Other
+    # offsets/lens are small (~1000 entries) so plain Python lists.
+    vnode_to_kv_chunks: list[np.ndarray] = []
+    total_kv_entries = 0
     vnode_to_kv_offs: list[int] = []
     vnode_to_kv_lens: list[int] = []
     vnode_to_q_entries: list[int] = []
@@ -302,22 +365,23 @@ def _build_metadata(
         KV_SPLIT_SIZE = KV_SPLIT_SIZE_PER_PHASE[phase]
 
         node = i
-        curr_KV_indices = list(node_slots[node])
+        chunks: list[np.ndarray] = [node_slots[node]]
         kv_len = tree_info[node].seqlen
         while node_assignments[node] == 1:
             node = tree_info[node].parent
             kv_len += tree_info[node].seqlen
-            curr_KV_indices = list(node_slots[node]) + curr_KV_indices
+            chunks.insert(0, node_slots[node])
+        curr_KV_indices = chunks[0] if len(chunks) == 1 else np.concatenate(chunks)
 
-        acc_kv_len = len(vnode_to_kv_entries)
-        vnode_to_kv_entries.extend(curr_KV_indices)
+        acc_kv_len = total_kv_entries
+        vnode_to_kv_chunks.append(curr_KV_indices)
+        total_kv_entries += curr_KV_indices.size
 
         kv_vnode_count = (kv_len - 1) // KV_SPLIT_SIZE + 1
         q_vnode_count = (req_num - 1) // Q_TILE_SIZE + 1
         for kv_vnode_id in range(kv_vnode_count):
             acc_q_len = len(vnode_to_q_entries)
-            for req in node_to_reqs[i]:
-                vnode_to_q_entries.append(req)
+            vnode_to_q_entries.extend(node_to_reqs[i])
             split_kv_off = kv_vnode_id * KV_SPLIT_SIZE
             vnode_kv_len = min(split_kv_off + KV_SPLIT_SIZE, kv_len) - split_kv_off
             for q_vnode_id in range(q_vnode_count):
@@ -353,14 +417,28 @@ def _build_metadata(
     vnode_to_kv_lens = [vnode_to_kv_lens[i] for i in new_order]
     vnode_to_kv_offs = [vnode_to_kv_offs[i] for i in new_order]
 
-    # Padding (kernel reads up to KV_TILE_SIZE entries past end with masking).
-    vnode_to_kv_entries = vnode_to_kv_entries + [-1] * 64
-    req_to_vnode_entries = req_to_vnode_entries + [-1] * 64
+    # Consolidate KV chunks into a single int32 numpy array + padding.
+    pad = np.full(64, -1, dtype=np.int32)
+    if vnode_to_kv_chunks:
+        kv_entries_np = np.concatenate(vnode_to_kv_chunks + [pad])
+    else:
+        kv_entries_np = pad.copy()
+    req_to_vnode_entries_np = np.asarray(
+        req_to_vnode_entries + [-1] * 64, dtype=np.int32,
+    )
 
+    # Single host buffer + single H2D copy for all small int32 metadata.
+    # ``torch.from_numpy`` is zero-copy on host; ``.to(device)`` is one
+    # async memcpy per tensor — but using pinned memory + non_blocking
+    # lets them overlap. Most savings come from skipping the
+    # ``torch.tensor(list)`` Python-list-iteration path.
     def _t(arr):
-        return torch.tensor(arr, dtype=torch.int32, device=device)
+        if isinstance(arr, np.ndarray):
+            return torch.from_numpy(arr).to(device, non_blocking=True)
+        return torch.from_numpy(
+            np.asarray(arr, dtype=np.int32),
+        ).to(device, non_blocking=True)
 
-    n_vnodes = max(1, sum(phase_node_nums))
     n_q_entries = max(1, len(vnode_to_q_entries))
     mid_o = torch.empty(
         (n_q_entries, num_qo_heads, head_dim), dtype=torch.float32, device=device,
@@ -370,13 +448,13 @@ def _build_metadata(
     )
 
     return _FTMeta(
-        vnode_to_kv_entries=_t(vnode_to_kv_entries),
+        vnode_to_kv_entries=_t(kv_entries_np),
         vnode_to_kv_offs=_t(vnode_to_kv_offs),
         vnode_to_kv_lens=_t(vnode_to_kv_lens),
         vnode_to_q_entries=_t(vnode_to_q_entries),
         vnode_to_q_offs=_t(vnode_to_q_offs),
         vnode_to_q_lens=_t(vnode_to_q_lens),
-        req_to_vnode_entries=_t(req_to_vnode_entries),
+        req_to_vnode_entries=_t(req_to_vnode_entries_np),
         req_to_vnode_offs=_t(req_to_vnode_offs),
         req_to_vnode_lens=_t(req_to_vnode_lens),
         mid_o=mid_o,
@@ -389,59 +467,41 @@ def _build_metadata(
 
 
 # ---------------------------------------------------------------------------
-# Attention contexts — separate prefill (FlashInfer ragged) and decode (FastTree)
+# AttentionContext — writes K/V at slot indices, then runs FastTree's kernel.
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class _PrefillCtx(AttentionContext):
-    """Standard ragged-prefill: writes prompt KV into the fused buffer at
-    ``write_indices`` and runs FlashInfer's causal ragged kernel.
-    """
-    kv_cache: list[torch.Tensor]      # per layer: [max_tokens, 2, num_kv_heads, head_dim]
-    write_indices: torch.Tensor       # [L_p] int64
-    num_kv_heads: int
-    head_dim: int
-    num_qo_heads: int
-    wrapper: BatchPrefillWithRaggedKVCacheWrapper
-
-    def attend(self, q, k, v, layer_idx):
-        kv = self.kv_cache[layer_idx]
-        k_3d = k.view(-1, self.num_kv_heads, self.head_dim)
-        v_3d = v.view(-1, self.num_kv_heads, self.head_dim)
-        kv[self.write_indices, 0] = k_3d
-        kv[self.write_indices, 1] = v_3d
-        q_3d = q.view(-1, self.num_qo_heads, self.head_dim)
-        out = self.wrapper.run(q_3d, kv[:, 0], kv[:, 1])
-        return out.reshape(*q.shape[:-1], self.num_qo_heads * self.head_dim)
-
-
-@dataclass
 class FastTreeAttentionContext(AttentionContext):
-    """Per-decode-step FastTree state. Built once; reused across all layers."""
-    kv_cache: list[torch.Tensor]      # per layer: [max_tokens, 2, num_kv_heads, head_dim]
-    write_indices: torch.Tensor       # [K] int64 — slot to write per beam this step
-    num_kv_heads: int
-    head_dim: int
-    num_qo_heads: int
+    """Per-decode-step state. Built by ``FastTreeBackend.plan_decode_step``;
+    reused across all model layers for the same decode step.
+    """
+    page_table: PageTable
+    write_slots: torch.Tensor   # [B*K] int64 — flat slot to write K/V into
     sm_scale: float
     meta: _FTMeta
-    out: torch.Tensor                  # scratch [K, num_qo_heads, head_dim]
+    out: torch.Tensor           # scratch [B*K, num_qo_heads, head_dim]
 
     def attend(self, q, k, v, layer_idx):
-        kv = self.kv_cache[layer_idx]
-        k_3d = k.view(-1, self.num_kv_heads, self.head_dim)
-        v_3d = v.view(-1, self.num_kv_heads, self.head_dim)
-        kv[self.write_indices, 0] = k_3d
-        kv[self.write_indices, 1] = v_3d
+        num_kv_heads = self.page_table.head_num
+        head_dim = self.page_table.head_dim
+        num_heads = q.shape[-1] // head_dim
+        kv = self.page_table.kv_cache_at_layer[layer_idx]
+        # kv shape: [2, max_pages, page_size, num_kv_heads, head_dim].
+        # Both kv[0] and kv[1] are contiguous; view as flat slot-indexed.
+        max_pages = kv.shape[1]
+        page_size = kv.shape[2]
+        flat_len = max_pages * page_size
+        K_buf = kv[0].view(flat_len, num_kv_heads, head_dim)
+        V_buf = kv[1].view(flat_len, num_kv_heads, head_dim)
 
-        q_3d = q.view(-1, self.num_qo_heads, self.head_dim)
-        # FastTree wants K and V as [total_kv_tokens, num_kv_heads, head_dim] —
-        # use the appropriate slice of the fused buffer (shared across layers
-        # in shape, sliced per call by layer).
-        K_buf = kv[:, 0].contiguous() if not kv[:, 0].is_contiguous() else kv[:, 0]
-        V_buf = kv[:, 1].contiguous() if not kv[:, 1].is_contiguous() else kv[:, 1]
+        # Append new K/V at the per-beam tail slots.
+        k_3d = k.view(-1, num_kv_heads, head_dim)
+        v_3d = v.view(-1, num_kv_heads, head_dim)
+        K_buf[self.write_slots] = k_3d
+        V_buf[self.write_slots] = v_3d
 
+        q_3d = q.view(-1, num_heads, head_dim)
         m = self.meta
         fasttree_decode(
             q_3d,
@@ -465,259 +525,157 @@ class FastTreeAttentionContext(AttentionContext):
             m.kv_tile_sizes,
             self.sm_scale,
         )
-        return self.out.reshape(*q.shape[:-1], self.num_qo_heads * self.head_dim)
+        return self.out.reshape(*q.shape[:-1], num_heads * head_dim)
 
 
 # ---------------------------------------------------------------------------
-# Beam state + per-prompt driver
+# Backend
 # ---------------------------------------------------------------------------
+
+
+class _FastTreeWrappers(WrapperBundle):
+    """Cached at backend startup. ``out_buf`` is reused across decode steps;
+    ``ft_params`` carries autotuned (alpha, beta, gamma) cost-model
+    coefficients for ``_tree_heuristic``.
+    """
+    __slots__ = ("ft_params", "out_buf")
 
 
 @dataclass
-class Beam:
-    token_ids: list[int]
-    cum_log_prob: float
-    path: list[int]   # ordered fused-buffer indices on this beam's KV path
+class FastTreeBackend:
+    name: str = "fasttree"
+    use_split_pages: bool = True
 
+    fasttree_params: FastTreeParams | None = None
+    KV_SPLIT_SIZES: tuple[int, int] = (1024, 128)
+    para_threshs1: tuple[int, int] = (132, 528)
+    para_threshs2: tuple[int, int] = (132, 132)
 
-def _beam_search_batched(
-    model,
-    config,
-    prompt_ids_list: list[list[int]],
-    max_new_tokens: int,
-    beam_width: int,
-    *,
-    device: str | torch.device = "cuda",
-    dtype: torch.dtype = torch.float16,
-    timings: dict | None = None,
-    fasttree_params: FastTreeParams | None = None,
-    KV_SPLIT_SIZES: tuple[int, int] = (1024, 128),
-    para_threshs1: tuple[int, int] = (132, 528),
-    para_threshs2: tuple[int, int] = (132, 132),
-    select_at_prefill: PrefillSelect = standard_prefill_select,
-    select_at_decode: DecodeSelect = standard_decode_select,
-) -> list[list[Beam]]:
-    """Cross-prompt batched FastTree beam search.
+    def init_wrappers(
+        self,
+        *,
+        workspace_buffer: torch.Tensor,
+        num_qo_heads: int,
+        num_kv_heads: int,
+        head_dim: int,
+        page_size: int,
+        max_cascade_levels: int,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> _FastTreeWrappers:
+        wb = _FastTreeWrappers()
+        wb.ft_params = self.fasttree_params or FastTreeParams()
+        wb.ft_params.set_kv_group_num(num_qo_heads // num_kv_heads)
+        # ``out_buf`` is sized once we know B*K at the first decode call; we
+        # over-allocate to a generous bound so subsequent steps reuse it.
+        wb.out_buf = None
+        return wb
 
-    All B prompts share one fused KV buffer and one ``fasttree_decode``
-    launch per decode step. Each step builds B per-prompt radix subtrees
-    and combines them under a virtual root (``_build_combined_radix_tree``).
-    Request IDs span ``[0, B*K)`` so the kernel processes all beams in one
-    pass.
-    """
-    num_qo_heads = config.num_attention_heads
-    num_kv_heads = config.num_key_value_heads
-    head_dim = config.head_dim
-    num_layers = config.num_hidden_layers
+    def plan_decode_step(
+        self,
+        *,
+        wrappers: _FastTreeWrappers,
+        beams_per_prompt: list[list[Beam]],
+        current_pos: list[int],
+        page_table: PageTable,
+        K: int,
+        B: int,
+        num_qo_heads: int,
+        num_kv_heads: int,
+        head_dim: int,
+        page_size: int,
+        dtype: torch.dtype,
+        device: torch.device,
+        last_lca_per_prompt: list[int],
+    ) -> StepPlan:
+        ps = page_size
 
-    K = beam_width
-    B = len(prompt_ids_list)
-    L_ps = [len(p) for p in prompt_ids_list]
-    total_prefill = sum(L_ps)
-    max_tokens = total_prefill + B * K * max_new_tokens + B * K
+        # ---- Gather per-prompt prefixes + per-beam tails (by reference). ----
+        # Aliasing is safe within one plan_decode_step: pages_prefix /
+        # pages_tail are not mutated until the next CoW. Avoiding the
+        # ``prefix + tail`` concatenation saves ~M element copies.
+        shared_prefix_per_prompt: list[list[int]] = []
+        tails_per_beam_per_prompt: list[list[list[int]]] = []
+        for b in range(B):
+            bp_b = beams_per_prompt[b]
+            shared_prefix_per_prompt.append(bp_b[0].pages_prefix)
+            tails_per_beam_per_prompt.append([beam.pages_tail for beam in bp_b])
 
-    kv_cache = [
-        torch.zeros(
-            (max_tokens, 2, num_kv_heads, head_dim), dtype=dtype, device=device,
+        # ---- Build the combined page-level radix tree. ----
+        # All K beams of a prompt share ``pages_prefix`` by construction
+        # (split-pages form). The builder aliases the prefix and only
+        # walks the divergent tail portion — mirror of bs_kernel's LCA
+        # cache, applied to fasttree's radix tree.
+        tree_info, node_pages = _build_combined_radix_tree_pages(
+            shared_prefix_per_prompt, tails_per_beam_per_prompt, K,
         )
-        for _ in range(num_layers)
-    ]
 
-    workspace_buffer = torch.empty(
-        128 * 1024 * 1024, dtype=torch.uint8, device=device,
-    )
-    prefill_wrapper = BatchPrefillWithRaggedKVCacheWrapper(
-        workspace_buffer, kv_layout="NHD",
-    )
+        # ---- Determine each leaf's partial-last-page count + expand to slots.
+        leaf_partial_last: dict[int, int] = {}
+        for i, n in enumerate(tree_info):
+            if n.num_children == 0 and len(n.requests) == 1 and node_pages[i]:
+                rid = n.requests[0]
+                b_idx = rid // K
+                pos = current_pos[b_idx]
+                leaf_partial_last[i] = pos % ps + 1
+        node_slots = _expand_pages_to_slots(
+            tree_info, node_pages, ps, leaf_partial_last,
+        )
 
-    # ----- Batched prefill (B ragged requests in one launch) -----
-    prefill_write_list: list[int] = []
-    qo_indptr_list: list[int] = [0]
-    kv_indptr_list: list[int] = [0]
-    all_token_ids: list[int] = []
-    all_positions: list[int] = []
-    prompt_offsets: list[int] = []
-    cursor = 0
-    for b, L_p in enumerate(L_ps):
-        prompt_offsets.append(cursor)
-        prefill_write_list.extend(range(cursor, cursor + L_p))
-        cursor += L_p
-        qo_indptr_list.append(qo_indptr_list[-1] + L_p)
-        kv_indptr_list.append(kv_indptr_list[-1] + L_p)
-        all_token_ids.extend(prompt_ids_list[b])
-        all_positions.extend(range(L_p))
+        # ---- Build FastTree metadata for the kernel. ----
+        meta = _build_metadata(
+            tree_info=tree_info,
+            node_slots=node_slots,
+            batch_size=B * K,
+            num_qo_heads=num_qo_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            KV_SPLIT_SIZES=list(self.KV_SPLIT_SIZES),
+            para_threshs1=list(self.para_threshs1),
+            para_threshs2=list(self.para_threshs2),
+            params=wrappers.ft_params,
+            device=device,
+        )
 
-    prefill_wrapper.plan(
-        qo_indptr=torch.tensor(qo_indptr_list, dtype=torch.int32, device=device),
-        kv_indptr=torch.tensor(kv_indptr_list, dtype=torch.int32, device=device),
-        num_qo_heads=num_qo_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim_qk=head_dim,
-        causal=True,
-    )
-    pre_ctx = _PrefillCtx(
-        kv_cache=kv_cache,
-        write_indices=torch.tensor(prefill_write_list, dtype=torch.long, device=device),
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        num_qo_heads=num_qo_heads,
-        wrapper=prefill_wrapper,
-    )
-    input_ids = torch.tensor(all_token_ids, dtype=torch.long, device=device).unsqueeze(0)
-    positions = torch.tensor(all_positions, dtype=torch.long, device=device).unsqueeze(0)
+        # ---- Build write_slots[B*K]: where to write each beam's new K/V. ----
+        write_slots: list[int] = []
+        for b in range(B):
+            pos = current_pos[b]
+            off = pos % ps
+            pli = pos // ps
+            bp_b = beams_per_prompt[b]
+            prefix_len = len(bp_b[0].pages_prefix)
+            tail_idx = pli - prefix_len
+            for beam in bp_b:
+                page = beam.pages_tail[tail_idx]
+                write_slots.append(page * ps + off)
+        write_slots_t = torch.tensor(
+            write_slots, dtype=torch.int64, device=device,
+        )
 
-    if timings is not None:
-        torch.cuda.synchronize()
-        t_pre = time.perf_counter()
-
-    with torch.no_grad():
-        hidden = model.forward(input_ids=input_ids, positions=positions, ctx=pre_ctx)
-        last_indices = [qo_indptr_list[b + 1] - 1 for b in range(B)]
-        last_hidden = hidden[0, last_indices, :]
-        logits = model.compute_logits(last_hidden)
-        log_probs = F.log_softmax(logits, dim=-1)
-
-    if timings is not None:
-        torch.cuda.synchronize()
-        timings["prefill_ms"] = (time.perf_counter() - t_pre) * 1000.0
-
-    beams_per_prompt: list[list[Beam]] = []
-    for b in range(B):
-        topk_lp, topk_ids = select_at_prefill(log_probs[b], K)
-        prefix_path = list(range(prompt_offsets[b], prompt_offsets[b] + L_ps[b]))
-        beams_per_prompt.append([
-            Beam(
-                token_ids=[topk_ids[i].item()],
-                cum_log_prob=topk_lp[i].item(),
-                path=list(prefix_path),
+        # ---- Allocate / reuse the per-step output buffer. ----
+        if wrappers.out_buf is None or wrappers.out_buf.shape[0] < B * K:
+            wrappers.out_buf = torch.empty(
+                (B * K, num_qo_heads, head_dim),
+                dtype=dtype, device=device,
             )
-            for i in range(K)
-        ])
+        out_buf = wrappers.out_buf[: B * K]
 
-    kv_total_len = total_prefill
-    current_pos: list[int] = list(L_ps)
+        sm_scale = 1.0 / (head_dim ** 0.5)
+        ctx = FastTreeAttentionContext(
+            page_table=page_table,
+            write_slots=write_slots_t,
+            sm_scale=sm_scale,
+            meta=meta,
+            out=out_buf,
+        )
+        # FastTree doesn't reorder beams; identity beam order.
+        return StepPlan(ctx=ctx, beam_order_per_prompt=None, pick=None)
 
-    sm_scale = 1.0 / (head_dim ** 0.5)
-    out_buf = torch.empty(
-        (B * K, num_qo_heads, head_dim), dtype=dtype, device=device,
-    )
 
-    # ----- Batched decode loop -----
-    with torch.no_grad():
-        for _ in range(max_new_tokens - 1):
-            if timings is not None:
-                torch.cuda.synchronize()
-                t_step = time.perf_counter()
-
-            # 1) Allocate B*K new slots in prompt-major / beam-minor order.
-            new_slots_per_prompt: list[list[int]] = []
-            for b in range(B):
-                slots_b = list(range(kv_total_len, kv_total_len + K))
-                kv_total_len += K
-                new_slots_per_prompt.append(slots_b)
-                for k in range(K):
-                    beams_per_prompt[b][k].path.append(slots_b[k])
-
-            # 2) Build the combined radix tree (virtual root + B subtrees).
-            paths_per_prompt = [
-                [beam.path for beam in beams_per_prompt[b]] for b in range(B)
-            ]
-            tree_info, node_slots = _build_combined_radix_tree(
-                paths_per_prompt, K,
-            )
-
-            # 3) Build FastTree metadata. Force virtual root assignment to 0
-            # so it doesn't try to merge with parent=-1; its kv_len=0 means
-            # _build_metadata emits 0 kv vnodes for it (no work).
-            params = fasttree_params or FastTreeParams()
-            params.set_kv_group_num(num_qo_heads // num_kv_heads)
-            meta = _build_metadata(
-                tree_info,
-                node_slots,
-                batch_size=B * K,
-                num_qo_heads=num_qo_heads,
-                num_kv_heads=num_kv_heads,
-                head_dim=head_dim,
-                KV_SPLIT_SIZES=list(KV_SPLIT_SIZES),
-                para_threshs1=list(para_threshs1),
-                para_threshs2=list(para_threshs2),
-                params=params,
-                device=torch.device(device),
-            )
-
-            # Concatenate write slots in the same prompt-major / beam-minor
-            # order the model will emit Q rows.
-            flat_new_slots: list[int] = []
-            for b in range(B):
-                flat_new_slots.extend(new_slots_per_prompt[b])
-            ctx = FastTreeAttentionContext(
-                kv_cache=kv_cache,
-                write_indices=torch.tensor(
-                    flat_new_slots, dtype=torch.long, device=device,
-                ),
-                num_kv_heads=num_kv_heads,
-                head_dim=head_dim,
-                num_qo_heads=num_qo_heads,
-                sm_scale=sm_scale,
-                meta=meta,
-                out=out_buf,
-            )
-
-            all_input: list[list[int]] = []
-            all_pos: list[list[int]] = []
-            for b in range(B):
-                for beam in beams_per_prompt[b]:
-                    all_input.append([beam.token_ids[-1]])
-                    all_pos.append([current_pos[b]])
-            beam_input = torch.tensor(all_input, dtype=torch.long, device=device)
-            beam_positions = torch.tensor(all_pos, dtype=torch.long, device=device)
-
-            hidden = model.forward(
-                input_ids=beam_input, positions=beam_positions, ctx=ctx,
-            )
-            logits = model.compute_logits(hidden[:, -1, :])
-            log_probs = F.log_softmax(logits, dim=-1)
-            vocab_size = logits.shape[-1]
-            log_probs_bkv = log_probs.view(B, K, vocab_size)
-
-            # 4) Per-prompt top-K + fork.
-            new_beams_per_prompt: list[list[Beam]] = []
-            for b in range(B):
-                cum_probs = torch.tensor(
-                    [bm.cum_log_prob for bm in beams_per_prompt[b]],
-                    device=device, dtype=torch.float32,
-                )
-                scores = cum_probs[:, None] + log_probs_bkv[b].float()
-                parent_t, token_t, topk_scores = select_at_decode(scores, K)
-                parent_ids = parent_t.tolist()
-                new_token_ids = token_t.tolist()
-                scores_list = topk_scores.tolist()
-
-                new_beams: list[Beam] = []
-                for i in range(K):
-                    pid = parent_ids[i]
-                    new_beams.append(
-                        Beam(
-                            token_ids=beams_per_prompt[b][pid].token_ids
-                            + [new_token_ids[i]],
-                            cum_log_prob=scores_list[i],
-                            path=list(beams_per_prompt[b][pid].path),
-                        )
-                    )
-                new_beams_per_prompt.append(new_beams)
-            beams_per_prompt = new_beams_per_prompt
-            for b in range(B):
-                current_pos[b] += 1
-
-            if timings is not None:
-                torch.cuda.synchronize()
-                timings["decode_step_ms"].append(
-                    (time.perf_counter() - t_step) * 1000.0
-                )
-
-    for beams in beams_per_prompt:
-        beams.sort(key=lambda b: b.cum_log_prob, reverse=True)
-    return beams_per_prompt
+# ---------------------------------------------------------------------------
+# Public driver
+# ---------------------------------------------------------------------------
 
 
 def beam_search(
@@ -727,38 +685,42 @@ def beam_search(
     max_new_tokens: int,
     beam_width: int,
     *,
+    page_size: int = 16,
+    max_num_pages: int = 2048,
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
     return_timings: bool = False,
+    return_phase_timings: bool = False,
     fasttree_params: FastTreeParams | None = None,
     KV_SPLIT_SIZES: tuple[int, int] = (1024, 128),
-    para_threshs1: tuple[int, int] = (132, 528),
-    para_threshs2: tuple[int, int] = (132, 132),
     select_at_prefill: PrefillSelect = standard_prefill_select,
     select_at_decode: DecodeSelect = standard_decode_select,
 ):
-    """FastTree beam search. Cross-prompt batched: all B prompts share one
-    fused KV buffer and one ``fasttree_decode`` launch per decode step.
+    """Cross-prompt batched FastTree beam search on the unified page-driver.
 
-    ``select_at_prefill`` / ``select_at_decode`` plug in alternate top-K
-    strategies (see ``beam_engine.decoding``); defaults are standard top-K.
+    All B prompts feed one ``fasttree_decode`` launch per decode step. The
+    radix tree is built at PAGE level; the kernel reads K/V via the
+    flattened ``kv[0]`` / ``kv[1]`` views of the PageTable's
+    ``[2, max_pages, page_size, num_kv_heads, head_dim]`` layout.
+
+    Returns ``list[list[Beam]]`` (outer = per prompt, inner sorted by
+    cum_log_prob). With ``return_timings=True`` returns
+    ``(beams, timings)``; with ``return_phase_timings=True`` the timings
+    also include cow / plan / forward / topk / fork breakdowns.
     """
-    kwargs = dict(
-        device=device, dtype=dtype,
+    backend = FastTreeBackend(
         fasttree_params=fasttree_params,
         KV_SPLIT_SIZES=KV_SPLIT_SIZES,
-        para_threshs1=para_threshs1,
-        para_threshs2=para_threshs2,
+    )
+    return _shared_beam_search(
+        model, config, prompt_ids, max_new_tokens, beam_width,
+        backend=backend,
+        page_size=page_size,
+        max_num_pages=max_num_pages,
+        device=device,
+        dtype=dtype,
+        return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
         select_at_prefill=select_at_prefill,
         select_at_decode=select_at_decode,
-    )
-    if return_timings:
-        timings = {"prefill_ms": 0.0, "decode_step_ms": []}
-        all_beams = _beam_search_batched(
-            model, config, prompt_ids, max_new_tokens, beam_width,
-            timings=timings, **kwargs,
-        )
-        return all_beams, timings
-    return _beam_search_batched(
-        model, config, prompt_ids, max_new_tokens, beam_width, **kwargs,
     )

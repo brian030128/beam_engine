@@ -1,9 +1,21 @@
 # bs_kernel benchmark suite
 
 End-to-end and kernel-level benchmarks for the beam-search-specialized
-attention dispatcher (`src/beam_engine/methods/bs_kernel/`).
+attention dispatcher (`src/beam_engine/methods/bs_kernel/`) and its
+baselines (paged, mlca, adaptive_pool, fasttree, tree).
 
-## Quick start
+## Quick start (nano5 / SLURM)
+
+```bash
+sbatch slurm/smoke_batched_kernels.sbatch                    # cross-method correctness
+sbatch slurm/profile_fasttree_vs_bs.sbatch                   # phase-timed perf
+sbatch slurm/bench_b32_k64_lp8k.sbatch                       # canonical perf cell
+sbatch slurm/bench_dbs_single.sbatch                         # DBS variants
+```
+
+Logs land in `slurm/logs/`; results CSVs in `benchmarks/bs_kernel/results/`.
+
+## Quick start (workstation)
 
 ```bash
 nvidia-smi                       # pick a fully-idle GPU (per CLAUDE.md)
@@ -11,76 +23,71 @@ nvidia-smi                       # pick a fully-idle GPU (per CLAUDE.md)
 ./run_all.sh <gpu_id> quick      # ~3-5 min smoke run
 ```
 
-Results are written to `results/run-<gpu>-<timestamp>/`. Each step also
-emits a `.log` next to its CSV.
+## Methods covered (7 total)
 
-## What `run_all.sh` runs
+| Method            | Source                              | Role                           |
+|-------------------|-------------------------------------|--------------------------------|
+| paged             | `baselines/paged.py`                | baseline                       |
+| tree              | `baselines/tree.py`                 | baseline (single-beam reference) |
+| mlca              | `baselines/mlca.py`                 | baseline                       |
+| adaptive_pool     | `methods/adaptive_pool.py`          | first baseline we beat         |
+| fasttree          | `baselines/fasttree.py`             | baseline (post page_driver rewrite) |
+| **bs_kernel**     | `methods/bs_kernel/`                | proposed                       |
+| **bs_kernel_2L_dec / 3L_dec** | `methods/bs_kernel/` (forced strategies) | DEC_TAIL ablation forced modes |
 
-| Step | Script | What it measures |
-|------|--------|------------------|
-| 1 | `calibrate.py` | Physics coefficients (B_hbm, launch_us, sync_us, merge_us, per_tile_us, num_sms) |
-| 2 | `autotune.py` | Fits `share_extra_us` / `dual_pool_extra_us` to minimize oracle regret |
-| 3 | `tests/test_bs_kernel.py` | Correctness vs tree.py reference |
-| 4 | `sweep.py` | End-to-end Llama-3.1-8B beam search on 5 methods × workload grid |
-| 5 | `oracle_vs_model.py` | Cost-model regret distribution per grid cell |
-| 6 | `tree_shapes.py` | Kernel-level comparison across 100+ tree shapes (vs paged / tree-attention / cascade) |
-| 7 | `demo_e2e.py` | Real text generation with timing per method (showcase) |
+DBS variants are the same 7 methods with `dbs_` aliases (Hamming-diversity
+top-K). Toggle via `bench_batched.py --methods dbs_<name>`.
+
+## Key sbatch entry points
+
+| Sbatch                                       | What it measures                                                |
+|----------------------------------------------|-----------------------------------------------------------------|
+| `smoke_batched_kernels.sbatch`              | top-token equivalence across all 7 methods                      |
+| `profile_fasttree_vs_bs.sbatch`             | phase timings (cow / plan / forward / topk / fork) per method   |
+| `profile_fasttree_plan.sbatch`              | substep breakdown of fasttree plan (radix / metadata / tensors) |
+| `bench_b32_k64_lp8k.sbatch`                 | canonical cell K=64/L_p=8K/B=32/max_new=256                     |
+| `bench_b32_k64_lp8k_m256_distinct.sbatch`   | same cell with distinct prompts                                  |
+| `bench_long_decode_k64.sbatch`              | max_new=512 sweep                                                |
+| `bench_modes.sbatch` / `bench_modes_single*.sbatch` | forced-strategy ablation (per-cell)                      |
+| `bench_dbs_single.sbatch`                   | DBS variants at the canonical cell                               |
+| `bench_fasttree_check.sbatch`               | fasttree only, used to track integration optimization wins      |
+| `dump_picks_*.sbatch`                       | picker decision histograms (depth / pool / tail-kernel)         |
+| `autotune_h100.sbatch`                      | re-fit cost-model coefficients on H100                          |
 
 ## Individual scripts
 
 ```bash
 # physics calibration (per-GPU coefficients, cached)
-CUDA_VISIBLE_DEVICES=<id> uv run python -m beam_engine.methods.bs_kernel.calibrate --force
+uv run python -m beam_engine.methods.bs_kernel.calibrate --force
 
 # auto-tune (fits 2 free parameters by minimizing regret)
-CUDA_VISIBLE_DEVICES=<id> uv run python -m beam_engine.methods.bs_kernel.autotune --save
+uv run python -m beam_engine.methods.bs_kernel.autotune --save
 
 # correctness — bs_kernel beams must match tree.py
-CUDA_VISIBLE_DEVICES=<id> uv run python tests/test_bs_kernel.py
+uv run python tests/test_bs_kernel.py
 
-# end-to-end sweep (5 methods, full grid by default)
-CUDA_VISIBLE_DEVICES=<id> uv run python benchmarks/bs_kernel/sweep.py --full
+# cross-method bench (foreground)
+uv run python benchmarks/bs_kernel/bench_batched.py \
+    --K 64 --L_p 8192 --B 32 --max_new 256 \
+    --methods paged mlca adaptive_pool fasttree bs_kernel
 
-# oracle regret on the full grid
-CUDA_VISIBLE_DEVICES=<id> uv run python benchmarks/bs_kernel/oracle_vs_model.py --full
+# phase profile (which stage of each method's step is slow)
+uv run python benchmarks/bs_kernel/profile_fasttree_vs_bs.py
 
-# kernel-level tree-shape benchmark
-CUDA_VISIBLE_DEVICES=<id> uv run python benchmarks/bs_kernel/tree_shapes.py
-
-# end-to-end demo (real beam search, prints generated text)
-CUDA_VISIBLE_DEVICES=<id> uv run python benchmarks/bs_kernel/demo_e2e.py \
-    --K 64 --L_p 32768 --max_new 32
+# forced-mode ablation
+uv run python benchmarks/bs_kernel/bench_modes.py
 ```
-
-## GPU policy
-
-The host is shared. Per `CLAUDE.md`:
-
-* Run `nvidia-smi` first.
-* Pick a GPU with `~0% utilization` AND `≤2 MiB` memory used.
-* Pin every CUDA-using command via `CUDA_VISIBLE_DEVICES=<id>`.
-* `run_all.sh` takes the GPU id as its first argument and pins it.
 
 ## Workload grids
 
-* **`sweep.py` / `oracle_vs_model.py`** — `K ∈ {16, 32, 64}` × `L_p ∈ {2048, 8192, 32768, 65536}`, max_new=16.
-* **`tree_shapes.py`** — 8 shape families × 100+ shapes (long-prefix flat, uniform fork G=2/4/8, imbalanced 1+singletons, all-unique G=K, high-G small-intermediate, boundary-K, short-prefix, tiny-L_p, k=1 greedy).
-* **`autotune.py`** — same K/L_p as sweep, used only at calibration time.
-
-## What the result files mean
-
-* `01-calibrate.log` — measured device coefficients.
-* `02-autotune.log` — fitted overhead values (`share_extra_us`, `dual_pool_extra_us`) and per-cell regret.
-* `03-correctness.log` — pass/fail per (K, L_p, max_new) cell.
-* `04-sweep-<method>.csv` — `(method, K, L_p, max_new, prefill_ms, p50, p90, p99, mean, count)` per cell, one method per file.
-* `05-oracle-vs-model.csv` — `(K, L_p, model_pick, oracle_pick, regret_pct, t_<strategy>_ms ...)`.
-* `06-tree-shapes.csv` — `(category, K, L_p, G, ..., paged_us, tree_us, two_level_us, three_level_us, best_kernel, pick_kernel, regret_pct)`.
-* `07-demo-*.log` — text output + headline timing for the demo.
+- **Canonical perf cell:** K=64, L_p=8192, B=32, max_new=256.
+- **Sweep:** K ∈ {16, 32, 64} × L_p ∈ {2048, 8192, 32768, 65536}.
+- **Long decode:** max_new ∈ {128, 256, 512}.
 
 ## Calibration cache
 
 Per-GPU coefficients live at `~/.cache/beam_engine/coeffs-<gpu_name>.json`.
-Auto-tune overwrites this file with the fitted overhead values. The driver
+Auto-tune overwrites this file with fitted overhead values. The driver
 auto-loads from cache when `coefficients=None` is passed to
 `bs_kernel.beam_search` (the default).
 
@@ -88,4 +95,11 @@ To reset:
 
 ```bash
 rm ~/.cache/beam_engine/coeffs-<gpu_name>.json
+sbatch slurm/autotune_h100.sbatch
 ```
+
+## GPU policy
+
+See project root `CLAUDE.md`. On nano5 the SLURM scheduler pins
+`CUDA_VISIBLE_DEVICES`; do not pick GPUs manually. On shared-workstation
+hosts: `nvidia-smi` first, pin via `CUDA_VISIBLE_DEVICES=<id>`.

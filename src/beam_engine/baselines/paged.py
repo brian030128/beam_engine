@@ -71,6 +71,10 @@ class PagedAttentionContext(AttentionContext):
         num_heads = q.shape[-1] // head_dim
 
         kv_cache = self.page_table.kv_cache_at_layer[layer_idx]
+        # kv_cache layout: [2, max_pages, page_size, num_kv_heads, head_dim].
+        # Pass (k, v) tuple so wrappers / append_paged_kv_cache get
+        # contiguous slabs without an unbind+strided view.
+        kv_tuple = (kv_cache[0], kv_cache[1])
 
         k_3d = k.view(-1, num_kv_heads, head_dim)
         v_3d = v.view(-1, num_kv_heads, head_dim)
@@ -80,7 +84,7 @@ class PagedAttentionContext(AttentionContext):
             append_value=v_3d,
             batch_indices=batch_indices,
             positions=self.kv_page_offsets,
-            paged_kv_cache=kv_cache,
+            paged_kv_cache=kv_tuple,
             kv_indices=self.kv_page_indices,
             kv_indptr=kv_indptr,
             kv_last_page_len=self.kv_page_offsets,
@@ -89,9 +93,9 @@ class PagedAttentionContext(AttentionContext):
 
         q_3d = q.view(-1, num_heads, head_dim)
         if self.is_prefill:
-            output = self.prefill_wrapper.run(q_3d, kv_cache)
+            output = self.prefill_wrapper.run(q_3d, kv_tuple)
         else:
-            output = self.decode_wrapper.run(q_3d, kv_cache)
+            output = self.decode_wrapper.run(q_3d, kv_tuple)
         return output.reshape(*q.shape[:-1], num_heads * head_dim)
 
 
