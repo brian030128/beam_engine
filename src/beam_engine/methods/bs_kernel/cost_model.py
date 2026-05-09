@@ -43,12 +43,32 @@ class Strategy(Enum):
     SHARED_2L_2POOL = "shared_2l_2pool"
     SHARED_3L_1POOL = "shared_3l_1pool"
     SHARED_3L_2POOL = "shared_3l_2pool"
-    # Hybrid: prefill kernel for prefix (and intermediate, at 3L) +
+    SHARED_4L_1POOL = "shared_4l_1pool"
+    SHARED_4L_2POOL = "shared_4l_2pool"
+    SHARED_5L_1POOL = "shared_5l_1pool"
+    SHARED_5L_2POOL = "shared_5l_2pool"
+    SHARED_6L_1POOL = "shared_6l_1pool"
+    SHARED_6L_2POOL = "shared_6l_2pool"
+    # Hybrid: prefill kernel for prefix (and intermediate levels at 3L+) +
     # paged-decode kernel for the per-beam tail + merge_state_in_place.
     # Decode kernel is purpose-built for CTA_Q=1 so the per-beam level
     # has 0% padding (vs ~94-98% under prefill at T∈{16,64,128}).
     SHARED_2L_DEC_TAIL = "shared_2l_dec_tail"
     SHARED_3L_DEC_TAIL = "shared_3l_dec_tail"
+    SHARED_4L_DEC_TAIL = "shared_4l_dec_tail"
+    SHARED_5L_DEC_TAIL = "shared_5l_dec_tail"
+    SHARED_6L_DEC_TAIL = "shared_6l_dec_tail"
+
+
+# Helper map: (depth, family, pool_count) → Strategy enum value.
+# `family` ∈ {"shared", "dec_tail"}. For "shared", pool_count ∈ {1, 2};
+# for "dec_tail", pool_count is ignored (always uses 1-pool prefix).
+def _strategy_for(depth: int, family: str, pool_count: int) -> Strategy:
+    if family == "shared":
+        return Strategy[f"SHARED_{depth}L_{pool_count}POOL"]
+    if family == "dec_tail":
+        return Strategy[f"SHARED_{depth}L_DEC_TAIL"]
+    raise ValueError(f"unknown family: {family!r}")
 
 
 # T values the kernel JIT-compiles support for. Cost model picks among
@@ -124,6 +144,33 @@ class Coefficients:
     # essentially a kernel launch (~2 µs) per layer, no scheduling work.
     decode_launch_us: float = 2.0
 
+    # Bandwidth-efficiency floor for prefill tiles at low Q-utilization.
+    # The prefill kernel at T queries with packed=R<<T (e.g., per-beam
+    # tail at T=16, R=1) doesn't achieve peak HBM BW: per-tile launch
+    # overhead, suboptimal cache patterns, and wasted MMA all hurt.
+    # The DEC_TAIL strategy avoids this by routing the per-beam tail to
+    # the purpose-built decode kernel (CTA_Q=1 native).
+    #
+    # Per-level effective BW factor:
+    #   eff_factor = bw_efficiency_floor + (1 - bw_efficiency_floor) × util
+    #   where util = min(1.0, packed / T)
+    #   and effective BW = peak_BW × eff_factor.
+    #
+    # `bw_efficiency_floor=1.0` reproduces the legacy peak-BW model
+    # (no penalty). Lower values penalize low-utilization prefill tiles.
+    # Calibrated value on H100 (from bench_modes_single measurements at
+    # K=64/L_p=8K/B=32): roughly 0.6 — but device-specific, autotune.
+    bw_efficiency_floor: float = 1.0
+
+    # Maximum cascade depth the picker enumerates as a candidate.
+    # Default 3 reproduces legacy behavior (depth ∈ {2, 3}). Set higher
+    # (typically 6) when the bs_kernel driver supports deeper cascades
+    # AND the workloads have hierarchical sharing that depth>3 can
+    # exploit. The picker still filters per-step against the workload's
+    # actual intermediate-level count, so this is an upper bound, not
+    # a forced depth.
+    max_dispatch_depth: int = 3
+
     @classmethod
     def defaults(cls) -> "Coefficients":
         return cls()
@@ -148,14 +195,55 @@ class WorkloadShape:
 
 @dataclass
 class IntermediateShape:
-    """When the cascade can also do a 3-level decomposition.
+    """Hierarchical-sharing structure for cascades of depth ≥ 3.
 
-    ``groups`` is a list of ``(beams_in_group, inter_len_tokens)`` per
-    intermediate group — non-uniform sizes and run lengths are allowed.
-    Singleton groups (1 beam) contribute no bandwidth savings but are
-    admitted so every query stays in a group at every level.
+    ``levels`` is a list of intermediate levels; each level is a list of
+    ``(beams_in_group, inter_len_tokens)`` tuples per group. ``levels[0]``
+    is the level immediately below the shared root; ``levels[-1]`` is the
+    level immediately above the per-beam tail. A depth-N cascade
+    consumes the first (N-2) entries.
+
+    Non-uniform group sizes and run lengths are allowed. Singleton
+    groups (1 beam) contribute no bandwidth savings but are admitted so
+    every query stays in a group at every level.
+
+    For backward compatibility with the original 1-intermediate-level
+    schema, ``IntermediateShape(groups=[...])`` and the ``.groups``
+    property still work — they refer to the first (and only) intermediate
+    level.
     """
-    groups: list[tuple[int, int]]
+    levels: list[list[tuple[int, int]]] = field(default_factory=list)
+
+    @classmethod
+    def from_groups(cls, groups: list[tuple[int, int]]) -> "IntermediateShape":
+        """Construct from a single intermediate level (legacy schema)."""
+        return cls(levels=[list(groups)])
+
+    def __init__(
+        self,
+        levels: Optional[list[list[tuple[int, int]]]] = None,
+        *,
+        groups: Optional[list[tuple[int, int]]] = None,
+    ):
+        # Accept either ``levels`` (new) or ``groups`` (legacy) — never both.
+        if levels is not None and groups is not None:
+            raise ValueError("pass either 'levels' or 'groups', not both")
+        if groups is not None:
+            self.levels = [list(groups)]
+        elif levels is not None:
+            self.levels = [list(g) for g in levels]
+        else:
+            self.levels = []
+
+    @property
+    def groups(self) -> list[tuple[int, int]]:
+        """First intermediate level (legacy accessor for depth-3 callers)."""
+        return self.levels[0] if self.levels else []
+
+    @property
+    def max_depth(self) -> int:
+        """Maximum cascade depth this shape supports (root + N inter + tail)."""
+        return 2 + len(self.levels)
 
 
 # ---------------------------------------------------------------------------
@@ -202,41 +290,111 @@ def _level_tiles_and_bytes(
     return total_t_large_tiles, total_t_small_tiles, bytes_loaded
 
 
+def _level_effective_bw_us(
+    levels: list[tuple[int, int, int, int]],
+    c: Coefficients,
+    *,
+    pool_count: int,
+    t_large: int,
+) -> float:
+    """Compute total effective-BW time across cascade levels.
+
+    Each level's bandwidth time is computed at *that level's* BW
+    efficiency, where efficiency depends on Q-utilization
+    (packed / T) per the prefill kernel's behavior. Levels with
+    high utilization (root level packed=K=T_large or higher) achieve
+    near-peak BW; levels with low utilization (per-beam tail at
+    T=16/packed=1) achieve `bw_efficiency_floor` × peak.
+
+    When `c.bw_efficiency_floor == 1.0`, this reduces exactly to
+    `total_bytes / B_hbm` (the legacy peak-BW model).
+    """
+    floor = c.bw_efficiency_floor
+    if floor >= 1.0:
+        # Fast path: legacy peak-BW model. Sum bytes, single divide.
+        total_bytes = sum(
+            g_count * kv_tokens * bytes_per_kv
+            for g_count, beams_per_g, kv_tokens, bytes_per_kv in levels
+            if kv_tokens > 0
+        )
+        return total_bytes / c.B_hbm
+
+    bw_us_total = 0.0
+    for g_count, beams_per_g, kv_tokens, bytes_per_kv in levels:
+        if kv_tokens == 0:
+            continue
+        packed = beams_per_g
+        # Determine the effective tile-T this level routes through.
+        if pool_count == 1:
+            eff_T = t_large
+        else:
+            eff_T = T_SMALL if packed <= T_SMALL else t_large
+        util = min(1.0, packed / eff_T) if eff_T > 0 else 1.0
+        # Apply the BW-efficiency penalty only at "per-beam-tail-like"
+        # levels: low utilization (packed << T) AND many tiles
+        # (g_count >= 8). The root level has 1 tile per prompt with high
+        # util — no penalty there. The per-beam tail has K small tiles
+        # per prompt, each loading its own KV from HBM with no L2 sharing
+        # — penalty applies. This matches the empirical observation that
+        # DEC_TAIL's purpose-built decode kernel beats prefill@T=16/R=1
+        # on the per-beam tail, while prefill@T=64 with packed=K at root
+        # achieves near-peak BW even at moderate utilization.
+        if util < 0.5 and g_count >= 8:
+            eff_factor = floor + (1.0 - floor) * util
+        else:
+            eff_factor = 1.0
+        level_bytes = g_count * kv_tokens * bytes_per_kv
+        bw_us_total += level_bytes / (c.B_hbm * eff_factor)
+    return bw_us_total
+
+
 def _per_prompt_levels(w: WorkloadShape, depth: int) -> list[tuple[int, int, int, int]]:
     """Build the (g_count, beams_per_group, kv_tokens, bytes_per_kv) level
     tuples for one prompt's contribution to a cascade plan.
 
-    For depth=3 we emit one tuple *per intermediate group* (non-uniform
-    sizes and run lengths supported). The aggregator in
-    ``_level_tiles_and_bytes`` sums tile counts and bytes across all the
-    tuples regardless of how many groups the level contains.
+    Depth=2: emit (root, per-beam tail). All intermediate-level pages
+    fold into the per-beam tail's bandwidth term (each beam reads them
+    K times instead of being grouped).
+
+    Depth=N (N ≥ 3): emit (root, intermediate_0, ..., intermediate_{N-3},
+    per-beam tail). Uses the first (N-2) entries of
+    ``w.intermediate.levels``. Any deeper intermediate levels in the
+    workload that aren't consumed at this depth fold back into the
+    per-beam tail.
+
+    Caller is responsible for ensuring ``w.intermediate`` has at least
+    ``N-2`` levels when ``depth=N`` is requested.
 
     ``suffix_lens`` in the workload reflects the layout produced with
-    ``max_levels=3`` — i.e., per-beam tails *after* the intermediate
-    run. When pricing depth=2 against the same workload, those
-    intermediate pages would otherwise be missing from the bandwidth
-    term, so we fold them back into the average suffix length here.
+    the deepest available intermediate decomposition — i.e., per-beam
+    tails *after* the deepest intermediate run.
     """
     levels: list[tuple[int, int, int, int]] = []
     # Level 0: 1 group of K beams sharing L_p tokens.
     levels.append((1, w.K, w.L_p, w.bytes_per_kv))
     avg_suffix_post = sum(w.suffix_lens) / max(1, len(w.suffix_lens))
-    if depth == 3:
-        assert w.intermediate is not None, "depth=3 needs intermediate shape"
-        for beams_in_grp, inter_len in w.intermediate.groups:
+
+    inter_levels = w.intermediate.levels if w.intermediate is not None else []
+    n_inter_used = depth - 2
+    assert 0 <= n_inter_used <= len(inter_levels), (
+        f"depth={depth} requires {n_inter_used} intermediate levels, "
+        f"workload has {len(inter_levels)}"
+    )
+
+    # Used intermediate levels: emit one tuple per group at each used level.
+    for level_groups in inter_levels[:n_inter_used]:
+        for beams_in_grp, inter_len in level_groups:
             levels.append((1, beams_in_grp, inter_len, w.bytes_per_kv))
-        avg_suffix = avg_suffix_post
-    else:
-        # depth=2: intermediate pages collapse into per-beam tails. Add
-        # the per-beam-average intermediate length so the bandwidth term
-        # accounts for K independent reads of those pages.
-        if w.intermediate is not None:
-            extra_per_beam = sum(
-                g[0] * g[1] for g in w.intermediate.groups
-            ) / max(1, w.K)
-            avg_suffix = avg_suffix_post + extra_per_beam
-        else:
-            avg_suffix = avg_suffix_post
+
+    # Unused intermediate levels (those past the cascade's depth) fold
+    # back into the per-beam tail. Each beam reads the unused-level pages
+    # independently — the per-beam-average extra tokens equal
+    # `sum_over_unused_levels(sum(beams * inter_len for groups)) / K`.
+    extra_per_beam = 0.0
+    for level_groups in inter_levels[n_inter_used:]:
+        extra_per_beam += sum(g[0] * g[1] for g in level_groups) / max(1, w.K)
+    avg_suffix = avg_suffix_post + extra_per_beam
+
     # Last level: K groups of 1 beam each.
     levels.append((w.K, 1, int(round(avg_suffix)), w.bytes_per_kv))
     return levels
@@ -274,37 +432,46 @@ def cost_shared_batch(
     against ``num_sms`` ONCE across the batch — this is the cross-prompt
     wave-occupancy effect that B=1 reasoning misses.
 
-    depth ∈ {2, 3}. depth=3 requires every prompt's workload have an
-    intermediate (else this candidate is invalid for the batch and the
-    caller should skip it).
+    depth ≥ 2. For depth=N (N ≥ 3), every prompt's workload must have
+    at least N-2 intermediate levels (else the picker should skip this
+    candidate at the batch — the assertion in ``_per_prompt_levels``
+    surfaces a programming error rather than a workload mismatch).
 
     ``fused_merge`` is retained as an API-stable no-op kwarg; merge cost
     is no longer modeled (see module docstring).
     """
     del fused_merge  # no longer modeled
-    assert depth in (2, 3), depth
+    assert depth >= 2, depth
     assert pool_count in (1, 2), pool_count
     assert t_large in T_LARGE_CHOICES, t_large
-    if depth == 3:
+    if depth >= 3:
+        n_inter_needed = depth - 2
         for w in workloads:
-            assert w.intermediate is not None, (
-                "depth=3 batch needs intermediate on every prompt"
+            n_have = (
+                len(w.intermediate.levels) if w.intermediate is not None else 0
+            )
+            assert n_have >= n_inter_needed, (
+                f"depth={depth} batch needs {n_inter_needed} intermediate "
+                f"levels on every prompt; one prompt has {n_have}"
             )
 
-    # Aggregate tile counts and bytes across all prompts.
+    # Aggregate tile counts and (effective-BW) bandwidth time across all
+    # prompts. Note: bandwidth time is summed per level *with* per-level
+    # efficiency, so it cannot be reduced to a single bytes-aggregate
+    # divide once `bw_efficiency_floor < 1.0`. Tile counts still aggregate.
     total_large = 0
     total_small = 0
-    total_bytes = 0
+    bw_us = 0.0
     for w in workloads:
         levels = _per_prompt_levels(w, depth)
-        large, small, b = _level_tiles_and_bytes(
+        large, small, _b = _level_tiles_and_bytes(
             levels, pool_count=pool_count, t_large=t_large,
         )
         total_large += large
         total_small += small
-        total_bytes += b
-
-    bw_us = _bytes_to_us(total_bytes, c)
+        bw_us += _level_effective_bw_us(
+            levels, c, pool_count=pool_count, t_large=t_large,
+        )
     # Cross-batch wave count: critical for batched decoding — at B=1 the
     # per-beam tiles fit in 1 wave on H100; at B=8 they may need 4 waves
     # at T=64 (and fewer at T=16, which is what tips 2-pool to win).
@@ -340,9 +507,14 @@ def _per_prompt_levels_no_tail(
     """
     levels: list[tuple[int, int, int, int]] = []
     levels.append((1, w.K, w.L_p, w.bytes_per_kv))
-    if depth == 3:
-        assert w.intermediate is not None, "depth=3 needs intermediate shape"
-        for beams_in_grp, inter_len in w.intermediate.groups:
+    inter_levels = w.intermediate.levels if w.intermediate is not None else []
+    n_inter_used = depth - 2
+    assert 0 <= n_inter_used <= len(inter_levels), (
+        f"depth={depth} requires {n_inter_used} intermediate levels, "
+        f"workload has {len(inter_levels)}"
+    )
+    for level_groups in inter_levels[:n_inter_used]:
+        for beams_in_grp, inter_len in level_groups:
             levels.append((1, beams_in_grp, inter_len, w.bytes_per_kv))
     return levels
 
@@ -379,41 +551,50 @@ def cost_dec_tail_batch(
     """Hybrid: prefix (and optional intermediate) via prefill cascade +
     per-beam tail via paged decode + 1 (or 2) merges.
 
-    All prompts share one ``depth``. depth=3 requires every prompt's
-    workload to have an intermediate shape; the picker filters that.
+    All prompts share one ``depth``. depth=N (N ≥ 3) requires every
+    prompt's workload to have at least N-2 intermediate levels;
+    the picker filters that.
+
     The prefix-side cost is priced like ``cost_shared_batch`` with
     pool_count=1 and t_large=64 (the common case at K∈{16,64} for
     Llama-3.2-1B: packed_qo at the prefix level is K, not 1, so it's
     typically wide enough to use T=64). The tail-side cost is priced
     by ``cost_decode_tail_batch``.
     """
-    assert depth in (2, 3), depth
-    if depth == 3:
+    assert depth >= 2, depth
+    if depth >= 3:
+        n_inter_needed = depth - 2
         for w in workloads:
-            assert w.intermediate is not None, (
-                "depth=3 batch needs intermediate on every prompt"
+            n_have = (
+                len(w.intermediate.levels) if w.intermediate is not None else 0
+            )
+            assert n_have >= n_inter_needed, (
+                f"depth={depth} dec_tail needs {n_inter_needed} intermediate "
+                f"levels on every prompt; one prompt has {n_have}"
             )
 
     # Prefix (+ intermediate) under prefill kernel, single pool, T=64.
+    # Use per-level effective BW (matches cost_shared_batch). The tail
+    # below uses the decode kernel which keeps peak BW.
     total_large = 0
-    total_bytes = 0
+    bw_us = 0.0
     for w in workloads:
         levels = _per_prompt_levels_no_tail(w, depth)
-        large, _small, b = _level_tiles_and_bytes(
+        large, _small, _b = _level_tiles_and_bytes(
             levels, pool_count=1, t_large=64,
         )
         total_large += large
-        total_bytes += b
-    bw_us = _bytes_to_us(total_bytes, c)
+        bw_us += _level_effective_bw_us(
+            levels, c, pool_count=1, t_large=64,
+        )
     waves_large = max(1, _ceil_div(total_large, c.num_sms)) if total_large > 0 else 0
     prefix_us = bw_us + waves_large * c.per_tile_us[64] + c.share_extra_us
 
     # Tail under decode kernel.
     tail_us = cost_decode_tail_batch(workloads, c)
 
-    # Merges: 1 at depth=2 (prefix ⊕ tail), 2 at depth=3 (cascade
-    # already merges prefix+inter internally; we add tail merge).
-    n_merges = 1 if depth == 2 else 2
+    # Merges: depth-1 boundaries (prefix→inter₁→…→tail).
+    n_merges = depth - 1
     return prefix_us + tail_us + n_merges * c.merge_us
 
 
@@ -474,9 +655,10 @@ def pick_strategy_batch(
     toward the 2-pool path at large B (where the per-beam tile count
     crosses ``num_sms`` and a separate T_SMALL pool reduces wave count).
 
-    ``depth=3`` is only considered if every prompt has an intermediate
-    structure (otherwise the cascade plan can't use a 3-level layout
-    consistently — flashinfer wraps a single ``num_levels``).
+    A depth-N candidate is only considered if every prompt's workload
+    has at least N-2 intermediate levels (otherwise the cascade plan
+    can't use an N-level layout consistently — flashinfer wraps a
+    single ``num_levels`` per wrapper instance).
     """
     debug: dict[str, float] = {}
 
@@ -487,11 +669,21 @@ def pick_strategy_batch(
         (Strategy.PER_BEAM, pb_cost, 0, 1, 1),
     ]
 
-    all_have_intermediate = all(w.intermediate is not None for w in workloads)
+    # Per-batch maximum supported depth: min over workloads' intermediate
+    # depths (depth=2 always supported, depth=N requires N-2 intermediate
+    # levels on every prompt).
+    def _supported_depth(w: WorkloadShape) -> int:
+        if w.intermediate is None:
+            return 2
+        return 2 + len(w.intermediate.levels)
 
-    for depth in (2, 3):
-        if depth == 3 and not all_have_intermediate:
-            continue
+    batch_max_depth = min(
+        (_supported_depth(w) for w in workloads), default=2
+    )
+    enum_max_depth = min(c.max_dispatch_depth, batch_max_depth)
+
+    # Prefill cascade candidates.
+    for depth in range(2, enum_max_depth + 1):
         for pool_count in (1, 2):
             for t_large in T_LARGE_CHOICES:
                 cs = cost_shared_batch(
@@ -501,51 +693,54 @@ def pick_strategy_batch(
                 )
                 tag = f"shared_d{depth}_p{pool_count}_t{t_large}"
                 debug[tag] = cs
-                if depth == 2 and pool_count == 1:
-                    s = Strategy.SHARED_2L_1POOL
-                elif depth == 2 and pool_count == 2:
-                    s = Strategy.SHARED_2L_2POOL
-                elif depth == 3 and pool_count == 1:
-                    s = Strategy.SHARED_3L_1POOL
-                else:
-                    s = Strategy.SHARED_3L_2POOL
+                s = _strategy_for(depth, "shared", pool_count)
                 candidates.append((s, cs, t_large, depth, pool_count))
 
-    # DEC_TAIL candidates: prefix(/intermediate) prefill + decode tail +
+    # DEC_TAIL candidates: prefix(/intermediates) prefill + decode tail +
     # merge. T_large doesn't apply to the tail (decode kernel is CTA_Q=1);
     # we record T_large=64 for the prefix-side picker hint.
-    for depth in (2, 3):
-        if depth == 3 and not all_have_intermediate:
-            continue
+    for depth in range(2, enum_max_depth + 1):
         cs = cost_dec_tail_batch(workloads, c, depth=depth)
         tag = f"shared_d{depth}_dec_tail"
         debug[tag] = cs
-        s = (
-            Strategy.SHARED_2L_DEC_TAIL if depth == 2
-            else Strategy.SHARED_3L_DEC_TAIL
-        )
+        s = _strategy_for(depth, "dec_tail", 1)
         candidates.append((s, cs, 64, depth, 1))
 
     if available_strategies is not None:
         filtered = [cand for cand in candidates if cand[0] in available_strategies]
         if not filtered:
-            # Fallback: SHARED_3L_* forced but no intermediate group
-            # structure (typical at the first ~16 decode steps before
-            # forks settle) collapses to the depth=2 equivalent.
-            _fallback = {
-                Strategy.SHARED_3L_1POOL: Strategy.SHARED_2L_1POOL,
-                Strategy.SHARED_3L_2POOL: Strategy.SHARED_2L_2POOL,
-                Strategy.SHARED_3L_DEC_TAIL: Strategy.SHARED_2L_DEC_TAIL,
+            # Fallback: SHARED_NL_* forced but workload doesn't support
+            # depth=N (typical at the first ~16 decode steps before
+            # forks settle, or when depth>3 is requested but the
+            # workload has only one intermediate level). Collapse depth-N
+            # picks to the deepest supported depth at the same family.
+            _name_to_kind = {  # strategy → (depth, family, pool_count)
+                Strategy.PER_BEAM: (1, "per_beam", 1),
             }
+            for d in range(2, 7):
+                for pc in (1, 2):
+                    name = f"SHARED_{d}L_{pc}POOL"
+                    if hasattr(Strategy, name):
+                        _name_to_kind[Strategy[name]] = (d, "shared", pc)
+                name = f"SHARED_{d}L_DEC_TAIL"
+                if hasattr(Strategy, name):
+                    _name_to_kind[Strategy[name]] = (d, "dec_tail", 1)
+
             expanded = set(available_strategies)
-            for s in available_strategies:
-                if s in _fallback:
-                    expanded.add(_fallback[s])
+            for s in list(available_strategies):
+                kind = _name_to_kind.get(s)
+                if kind is None or kind[1] == "per_beam":
+                    continue
+                d, family, pc = kind
+                # Try shallower depths down to 2.
+                for d_try in range(d - 1, 1, -1):
+                    s_fallback = _strategy_for(d_try, family, pc)
+                    expanded.add(s_fallback)
             filtered = [cand for cand in candidates if cand[0] in expanded]
             if not filtered:
                 raise ValueError(
-                    "no strategy available after filtering (incl. depth=3 → "
-                    "depth=2 fallbacks)"
+                    "no strategy available after filtering (incl. depth-N → "
+                    "shallower-depth fallbacks)"
                 )
         candidates = filtered
 

@@ -445,12 +445,14 @@ def run_per_beam(shape, device) -> float:
 
 
 def pick_for_shape(shape: TreeShape, coeffs: Coefficients) -> Strategy:
-    intermediate = (
-        IntermediateShape(G=shape.G, group_size=shape.K // shape.G,
-                          inter_len_tokens=shape.inter_len)
-        if shape.uniform and shape.inter_len > 0 and shape.K % shape.G == 0 and 1 < shape.G < shape.K
-        else None
-    )
+    if (shape.uniform and shape.inter_len > 0
+            and shape.K % shape.G == 0 and 1 < shape.G < shape.K):
+        # Uniform G groups of K/G beams, each sharing inter_len tokens.
+        group_size = shape.K // shape.G
+        groups = [(group_size, shape.inter_len)] * shape.G
+        intermediate = IntermediateShape(groups=groups)
+    else:
+        intermediate = None
     w = WorkloadShape(
         K=shape.K,
         L_p=shape.L_p,

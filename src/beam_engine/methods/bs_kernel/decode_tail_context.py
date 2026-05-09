@@ -27,10 +27,11 @@ class DecodeTailCascadeContext(AttentionContext):
     """Hybrid prefill-cascade-prefix + decode-tail context.
 
     ``prefix_wrapper`` runs B groups of K queries against the shared
-    prefix KV. ``inter_wrapper`` (optional, 3L only) runs G groups
-    against intermediate KV. ``decode_wrapper`` runs B*K beams × 1
-    query against per-beam tail KV. All three (or two, at 2L) outputs
-    are merged via ``merge_state_in_place``.
+    prefix KV (level 0). ``inter_wrappers`` runs the optional
+    intermediate levels (one wrapper per intermediate level, length
+    ``depth - 2``). ``decode_wrapper`` runs B*K beams × 1 query against
+    per-beam tail KV. All ``depth`` outputs are merged via
+    ``merge_state_in_place``.
 
     K/V append goes to the per-beam tail page (one per beam, in the
     same cascade order as the wrappers' plans).
@@ -40,7 +41,7 @@ class DecodeTailCascadeContext(AttentionContext):
     write_po: torch.Tensor   # [B*K] int32 — offset within tail page
     prefix_wrapper: BatchPrefillWithPagedKVCacheWrapper
     decode_wrapper: BatchDecodeWithPagedKVCacheWrapper
-    inter_wrapper: BatchPrefillWithPagedKVCacheWrapper | None = None
+    inter_wrappers: list = field(default_factory=list)
     _write_helper_indptr: torch.Tensor | None = field(default=None, repr=False)
 
     def attend(self, q, k, v, layer_idx):
@@ -87,8 +88,8 @@ class DecodeTailCascadeContext(AttentionContext):
             q_3d, kv_tuple, return_lse=True,
         )
         merge_state_in_place(out_tail, lse_tail, out_pre, lse_pre)
-        if self.inter_wrapper is not None:
-            out_int, lse_int = self.inter_wrapper.run(
+        for inter_w in self.inter_wrappers:
+            out_int, lse_int = inter_w.run(
                 q_3d, kv_tuple, return_lse=True,
             )
             merge_state_in_place(out_tail, lse_tail, out_int, lse_int)

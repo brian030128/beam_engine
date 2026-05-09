@@ -52,8 +52,17 @@ MODES: dict[str, set[Strategy] | None] = {
     "SHARED_2L_2POOL":   {Strategy.SHARED_2L_2POOL},
     "SHARED_3L_1POOL":   {Strategy.SHARED_3L_1POOL},
     "SHARED_3L_2POOL":   {Strategy.SHARED_3L_2POOL},
+    "SHARED_4L_1POOL":   {Strategy.SHARED_4L_1POOL},
+    "SHARED_4L_2POOL":   {Strategy.SHARED_4L_2POOL},
+    "SHARED_5L_1POOL":   {Strategy.SHARED_5L_1POOL},
+    "SHARED_5L_2POOL":   {Strategy.SHARED_5L_2POOL},
+    "SHARED_6L_1POOL":   {Strategy.SHARED_6L_1POOL},
+    "SHARED_6L_2POOL":   {Strategy.SHARED_6L_2POOL},
     "SHARED_2L_DEC_TAIL": {Strategy.SHARED_2L_DEC_TAIL},
     "SHARED_3L_DEC_TAIL": {Strategy.SHARED_3L_DEC_TAIL},
+    "SHARED_4L_DEC_TAIL": {Strategy.SHARED_4L_DEC_TAIL},
+    "SHARED_5L_DEC_TAIL": {Strategy.SHARED_5L_DEC_TAIL},
+    "SHARED_6L_DEC_TAIL": {Strategy.SHARED_6L_DEC_TAIL},
 }
 
 
@@ -97,6 +106,8 @@ def run_one(
     max_new: int,
     *,
     use_dbs: bool = False,
+    max_dispatch_depth: int | None = None,
+    max_cascade_levels: int | None = None,
 ) -> Row | None:
     B = len(prompts)
     L_p = len(prompts[0])
@@ -115,6 +126,15 @@ def run_one(
         extra["max_num_pages"] = needed_pages
     if available is not None:
         extra["available_strategies"] = available
+    if max_cascade_levels is not None and "max_cascade_levels" in sig.parameters:
+        extra["max_cascade_levels"] = max_cascade_levels
+    if max_dispatch_depth is not None:
+        # Override coefficient's max_dispatch_depth so the picker enumerates
+        # depth>3 candidates. Load defaults then override.
+        from beam_engine.methods.bs_kernel.calibrate import load_or_defaults
+        coeff = load_or_defaults(DEVICE)
+        coeff.max_dispatch_depth = max_dispatch_depth
+        extra["coefficients"] = coeff
 
     try:
         beams, timings, picks = method_fn(
@@ -131,7 +151,13 @@ def run_one(
     # the same per-step pick (batched picker), so we read prompt 0.
     from collections import Counter
     hist = Counter()
-    _DEC_TAIL = {Strategy.SHARED_2L_DEC_TAIL, Strategy.SHARED_3L_DEC_TAIL}
+    _DEC_TAIL = {
+        Strategy.SHARED_2L_DEC_TAIL,
+        Strategy.SHARED_3L_DEC_TAIL,
+        Strategy.SHARED_4L_DEC_TAIL,
+        Strategy.SHARED_5L_DEC_TAIL,
+        Strategy.SHARED_6L_DEC_TAIL,
+    }
     for p in picks[0]:
         if p.strategy == Strategy.PER_BEAM:
             hist["per_beam"] += 1
@@ -158,6 +184,16 @@ def main():
     ap.add_argument("--modes", nargs="+", default=list(MODES.keys()))
     ap.add_argument("--dbs", action="store_true",
                     help="wrap bs_kernel with diverse beam search (G=4, λ=0.5)")
+    ap.add_argument(
+        "--max_dispatch_depth", type=int, default=None,
+        help="override coefficient's max_dispatch_depth (so picker enumerates "
+             "depth>3 candidates); auto-set if any mode has depth>3.",
+    )
+    ap.add_argument(
+        "--max_cascade_levels", type=int, default=None,
+        help="cap cascade-wrapper construction at D_max levels; auto-set "
+             "to match max_dispatch_depth.",
+    )
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -165,6 +201,23 @@ def main():
     if bad:
         print(f"unknown modes: {bad}; valid: {list(MODES.keys())}", file=sys.stderr)
         sys.exit(2)
+
+    # Auto-detect required dispatch depth from chosen modes.
+    def _mode_depth(name: str) -> int:
+        if "_4L_" in name:
+            return 4
+        if "_5L_" in name:
+            return 5
+        if "_6L_" in name:
+            return 6
+        return 3
+    auto_depth = max(_mode_depth(m) for m in args.modes)
+    if args.max_dispatch_depth is None and auto_depth > 3:
+        args.max_dispatch_depth = auto_depth
+        print(f"auto-set --max_dispatch_depth={auto_depth} (deep modes detected)")
+    if args.max_cascade_levels is None and args.max_dispatch_depth is not None:
+        args.max_cascade_levels = args.max_dispatch_depth
+        print(f"auto-set --max_cascade_levels={args.max_cascade_levels}")
 
     grid = [(K, L_p, B) for K in args.K for L_p in args.L_p for B in args.B]
     print(f"grid: {len(grid)} cells × {len(args.modes)} modes = {len(grid) * len(args.modes)} runs")
@@ -191,6 +244,8 @@ def main():
             row = run_one(
                 label, available, model, config, prompts, K, args.max_new,
                 use_dbs=args.dbs,
+                max_dispatch_depth=args.max_dispatch_depth,
+                max_cascade_levels=args.max_cascade_levels,
             )
             t1 = time.perf_counter()
             if row is not None:

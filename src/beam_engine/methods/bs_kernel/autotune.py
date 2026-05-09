@@ -43,28 +43,56 @@ from .cost_model import (
     Strategy,
     WorkloadShape,
     pick_strategy,
+    pick_strategy_batch,
 )
 
 
 # Calibration grid — covers the L_p > 1024 regime where strategy choice
-# matters. Trimmed to keep wall time reasonable (~3-5 min on RTX-class
-# GPUs).
-AUTOTUNE_GRID = [
-    (16, 2048), (16, 8192), (16, 32768), (16, 65536),
-    (32, 2048), (32, 8192), (32, 32768), (32, 65536),
-    (64, 2048), (64, 8192), (64, 32768), (64, 65536),
+# matters. Includes B>1 cells so dual-pool overhead (which scales with
+# total tile count = B × per-prompt tiles) gets fitted; pre-fix we only
+# probed B=1 and dual_pool_extra_us defaulted to 0, which produced bad
+# 3L_2POOL picks at B≥8.
+AUTOTUNE_GRID: list[tuple[int, int, int]] = [
+    # B=1 — classic single-prompt grid
+    (16, 2048, 1), (16, 8192, 1), (16, 32768, 1),
+    (32, 2048, 1), (32, 8192, 1), (32, 32768, 1),
+    (64, 2048, 1), (64, 8192, 1), (64, 32768, 1),
+    # B=8 — representative batched cells
+    (16, 8192, 8), (32, 8192, 8), (64, 8192, 8),
+    # B=32 — the cell where 3L_2POOL is mispicked when extras are 0
+    (64, 8192, 32),
 ]
 
-AUTOTUNE_STRATEGIES = [
-    Strategy.PER_BEAM,
-    Strategy.SHARED_2L_1POOL,
-    Strategy.SHARED_2L_2POOL,
-]
+# Probe modes: filter sets passed to bs_kernel.beam_search. depth=3
+# entries include the 2-level counterpart as fallback because 3-level
+# layouts only fire on decode steps where the beam tree produced an
+# intermediate group structure (early decode steps never have one).
+MODE_FILTERS: dict[str, set[Strategy]] = {
+    "per_beam": {Strategy.PER_BEAM},
+    "2l1p":     {Strategy.SHARED_2L_1POOL},
+    "2l2p":     {Strategy.SHARED_2L_2POOL},
+    "3l1p":     {Strategy.SHARED_3L_1POOL, Strategy.SHARED_2L_1POOL},
+    "3l2p":     {Strategy.SHARED_3L_2POOL, Strategy.SHARED_2L_2POOL},
+}
 
-# 2-D grid for the parameter search. Coarse on purpose — finer grids
-# don't help past calibration noise.
+# Map a picked Strategy → the mode label whose measurement is the
+# correct comparison point in _eval_regret.
+STRATEGY_TO_MODE: dict[Strategy, str] = {
+    Strategy.PER_BEAM:        "per_beam",
+    Strategy.SHARED_2L_1POOL: "2l1p",
+    Strategy.SHARED_2L_2POOL: "2l2p",
+    Strategy.SHARED_3L_1POOL: "3l1p",
+    Strategy.SHARED_3L_2POOL: "3l2p",
+}
+
+# Search grid for the two free parameters. Widened on the dual-pool
+# axis: empirically, on H100 at B=32/K=64 the 2-pool dispatch carries
+# ~50-100 µs of unmodeled per-call overhead — the previous max of 20 µs
+# was a hard ceiling that prevented the right value being fit.
 SHARE_EXTRA_GRID_US = (0.0, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0)
-DUAL_POOL_EXTRA_GRID_US = (0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0)
+DUAL_POOL_EXTRA_GRID_US = (
+    0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0,
+)
 
 
 def _make_workload(
@@ -98,14 +126,19 @@ def _measure_strategy_times(
     tokenizer,
     *,
     coefficients: Coefficients,
-    grid: list[tuple[int, int]],
+    grid: list[tuple[int, int, int]],
     max_new: int,
     device: str,
     dtype: torch.dtype,
-) -> dict[tuple[int, int], dict[str, float]]:
-    """For each cell × forced strategy, run beam_search and record the
-    median decode_step_ms. Strategies that fail (e.g. degenerate
-    1-level cascade at very short L_p) are silently skipped.
+) -> dict[tuple[int, int, int], dict[str, float]]:
+    """For each cell × probe-mode, run beam_search with the mode's
+    filter and record the median decode_step_ms. Probes that fail
+    (e.g. degenerate 1-level cascade at very short L_p) are skipped.
+
+    Cells with B>1 use B identical prompts; the cost-model picker is
+    invoked in batched form so cross-prompt wave-occupancy effects show
+    up in the measurement (the very effect that makes
+    ``dual_pool_extra_us`` matter).
     """
     from beam_engine.methods import bs_kernel
 
@@ -118,41 +151,43 @@ def _measure_strategy_times(
     ) * 200
     base_ids = tokenizer.encode(base, add_special_tokens=False)
 
-    times: dict[tuple[int, int], dict[str, float]] = defaultdict(dict)
+    times: dict[tuple[int, int, int], dict[str, float]] = defaultdict(dict)
     page_size = 16
-    for (K, L_p) in grid:
+    for cell in grid:
+        K, L_p, B = cell
         prompt_ids = base_ids[:L_p]
+        prompts = [list(prompt_ids) for _ in range(B)]
         needed_pages = (
-            (L_p + page_size - 1) // page_size
-            + K * ((max_new + page_size) // page_size)
+            B * ((L_p + page_size - 1) // page_size)
+            + B * K * ((max_new + page_size) // page_size + 2)
             + 256
         )
-        for s in AUTOTUNE_STRATEGIES:
+        for mode, filt in MODE_FILTERS.items():
             try:
                 _, timings = bs_kernel.beam_search(
-                    model, config, [prompt_ids], max_new, K,
+                    model, config, prompts, max_new, K,
                     return_timings=True,
                     coefficients=coefficients,
-                    available_strategies={s},
+                    available_strategies=filt,
                     device=device,
                     dtype=dtype,
                     max_num_pages=needed_pages,
                 )
             except Exception as e:
-                print(f"  [autotune] K={K} L_p={L_p} {s.value} FAILED: "
+                print(f"  [autotune] K={K} L_p={L_p} B={B} {mode} FAILED: "
                       f"{type(e).__name__}: {e}")
                 continue
             decode_ms = timings.get("decode_step_ms", [])
             if not decode_ms:
-                print(f"  [autotune] K={K} L_p={L_p} {s.value} no decode_step_ms")
+                print(f"  [autotune] K={K} L_p={L_p} B={B} {mode} no decode_step_ms")
                 continue
-            times[(K, L_p)][s.value] = statistics.median(decode_ms)
+            times[cell][mode] = statistics.median(decode_ms)
     return dict(times)
 
 
 def _eval_regret(
     coeff: Coefficients,
-    times: dict[tuple[int, int], dict[str, float]],
+    times: dict[tuple[int, int, int], dict[str, float]],
     *,
     num_kv_heads: int,
     head_dim: int,
@@ -161,20 +196,26 @@ def _eval_regret(
 ) -> tuple[float, float, int]:
     """Sum-of-regrets and worst-cell regret for a candidate Coefficients
     against the measured grid. Cells where the model picks a strategy
-    that wasn't measured (or no strategies were measured) are skipped.
+    whose mode wasn't measured (or no modes were measured) are skipped.
+
+    For each (K, L_p, B) cell we duplicate the workload B times and call
+    ``pick_strategy_batch`` so the picker sees the same cross-prompt
+    tile-sum it would at runtime. The picked Strategy is mapped to the
+    matching probe-mode label via ``STRATEGY_TO_MODE``.
     """
     total = 0.0
     worst = 0.0
     counted = 0
-    for (K, L_p), cell in times.items():
+    for (K, L_p, B), cell in times.items():
         if not cell:
             continue
         w = _make_workload(K, L_p, suffix_len, num_kv_heads, head_dim, dtype_bytes)
-        pick = pick_strategy(w, coeff)
-        if pick.strategy.value not in cell:
+        pick = pick_strategy_batch([w] * B, coeff)
+        mode = STRATEGY_TO_MODE.get(pick.strategy)
+        if mode is None or mode not in cell:
             # Modeled pick not measured (rare); skip.
             continue
-        model_t = cell[pick.strategy.value]
+        model_t = cell[mode]
         oracle_t = min(cell.values())
         regret = (model_t / oracle_t) - 1.0
         total += regret
@@ -189,7 +230,7 @@ def autotune(
     *,
     coefficients: Coefficients,
     tokenizer,
-    grid: list[tuple[int, int]] = AUTOTUNE_GRID,
+    grid: list[tuple[int, int, int]] = AUTOTUNE_GRID,
     max_new: int = 16,
     device: str = "cuda",
     dtype: torch.dtype = torch.float16,
@@ -222,7 +263,7 @@ def autotune(
 
     if verbose:
         print(f"[autotune] using defaults for per_tile_us={coefficients.per_tile_us}")
-        print(f"[autotune] running {len(grid)} cells × {len(AUTOTUNE_STRATEGIES)} strategies")
+        print(f"[autotune] running {len(grid)} cells × {len(MODE_FILTERS)} probe modes")
 
     times = _measure_strategy_times(
         model, config, tokenizer,
@@ -234,15 +275,16 @@ def autotune(
     )
     if verbose:
         n_pairs = sum(len(c) for c in times.values())
-        print(f"[autotune] measured {n_pairs} (cell, strategy) pairs:")
-        for (K, L_p) in grid:
-            cell = times.get((K, L_p), {})
+        print(f"[autotune] measured {n_pairs} (cell, mode) pairs:")
+        for cell_key in grid:
+            K, L_p, B = cell_key
+            cell = times.get(cell_key, {})
             if not cell:
-                print(f"  K={K:>3d} L_p={L_p:>5d}  (no data)")
+                print(f"  K={K:>3d} L_p={L_p:>5d} B={B:>3d}  (no data)")
                 continue
             best_s = min(cell, key=lambda k: cell[k])
             row = "  ".join(f"{s}={cell[s]:6.2f}" for s in sorted(cell))
-            print(f"  K={K:>3d} L_p={L_p:>5d}  {row}  oracle={best_s}")
+            print(f"  K={K:>3d} L_p={L_p:>5d} B={B:>3d}  {row}  oracle={best_s}")
 
     num_kv_heads = config.num_key_value_heads
     head_dim = config.head_dim

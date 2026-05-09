@@ -11,8 +11,8 @@ one launch):
 - **tree** (`baselines/tree.py`, arXiv:2502.00085) — fused-sequence
   layout, single FlashAttention call with a tree-shaped mask.
 - **mlca** (`baselines/mlca.py`) — FlashInfer
-  `MultiLevelCascadeAttentionWrapper` (1 launch, 2 levels: shared
-  prefix + per-beam tail).
+  `MultiLevelCascadeAttentionWrapper` (one prefill launch *per level*
+  + a separate `merge_states` bridge; not single-kernel).
 - **fasttree** (`baselines/fasttree.py`, MLSys'25) — Triton
   two-stage radix-tree decode kernel; rewritten on top of
   `page_driver` with page-level radix + LCA-prefix-skip + numpy-bridged

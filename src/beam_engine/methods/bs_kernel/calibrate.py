@@ -74,6 +74,8 @@ def _to_payload(c: Coefficients) -> dict:
         "dual_pool_extra_us": c.dual_pool_extra_us,
         "decode_us_per_beam_kv_token": c.decode_us_per_beam_kv_token,
         "decode_launch_us": c.decode_launch_us,
+        "bw_efficiency_floor": c.bw_efficiency_floor,
+        "max_dispatch_depth": c.max_dispatch_depth,
     }
 
 
@@ -90,6 +92,15 @@ def _from_payload(d: dict) -> Coefficients:
         dual_pool_extra_us=d.get("dual_pool_extra_us", 0.0),
         decode_us_per_beam_kv_token=d.get("decode_us_per_beam_kv_token", 0.0008),
         decode_launch_us=d.get("decode_launch_us", 6.0),
+        # H100 fit from bench_dispatch_grid measurements: floor=0.5 gives
+        # 81% picker-vs-measurement match across K∈{16,64} × L_p∈{2K,8K,32K}
+        # × B∈{1,8,32}. Cached coefficients files written before this
+        # field existed default to the empirically-fit value.
+        bw_efficiency_floor=d.get("bw_efficiency_floor", 0.5),
+        # Default 3 reproduces legacy enumeration. Set higher (typically
+        # 6) once the bs_kernel driver supports deeper cascades AND
+        # workloads exercise hierarchical sharing depth>3.
+        max_dispatch_depth=d.get("max_dispatch_depth", 3),
     )
 
 

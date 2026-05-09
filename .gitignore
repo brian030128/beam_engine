@@ -36,6 +36,10 @@ dist/
 
 # Per-run benchmark outputs (not tracked; use run_all.sh and inspect results dirs locally)
 benchmarks/bs_kernel/results/run-*/
+benchmarks/bs_kernel/results/*/
+
+# Out-of-tree third-party clones (sglang etc.)
+3rdparty/sglang/
 
 # Local SLURM job logs
 slurm/logs/

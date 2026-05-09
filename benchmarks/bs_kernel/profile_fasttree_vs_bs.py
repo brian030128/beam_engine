@@ -20,7 +20,8 @@ from beam_engine.methods.bs_kernel import beam_search as bs_kernel_search
 from beam_engine.models.modeling_llama import LlamaForCausalLM
 
 
-MODEL_NAME = "meta-llama/Llama-3.2-1B"
+import os as _os
+MODEL_NAME = _os.environ.get("BE_MODEL", "meta-llama/Llama-3.2-1B")
 DEVICE = "cuda"
 DTYPE = torch.float16
 

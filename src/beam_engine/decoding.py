@@ -42,6 +42,22 @@ def standard_decode_select(scores: torch.Tensor, K: int):
     return parents, tokens, top_scores
 
 
+def standard_decode_select_batched(scores: torch.Tensor, K: int):
+    """Batched form of ``standard_decode_select``.
+
+    ``scores`` is shaped ``(B, K_beams, V)``. Returns three ``(B, K)``
+    tensors. Drivers that loop per-prompt with the standard top-K should
+    detect ``select_at_decode is standard_decode_select`` and call this
+    instead — collapses 3*B device-to-host ``.tolist()`` syncs to 3.
+    """
+    B, _, V = scores.shape
+    flat = scores.reshape(B, -1)
+    top_scores, top_flat = flat.topk(K, dim=-1)
+    parents = top_flat // V
+    tokens = top_flat % V
+    return parents, tokens, top_scores
+
+
 def dbs_strategy(num_groups: int, diversity_strength: float):
     """Hamming-diversity Diverse Beam Search (Vijayakumar et al. 2016).
 

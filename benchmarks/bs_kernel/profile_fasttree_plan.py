@@ -27,7 +27,8 @@ from beam_engine.baselines.fasttree import (
 from beam_engine.models.modeling_llama import LlamaForCausalLM
 
 
-MODEL_NAME = "meta-llama/Llama-3.2-1B"
+import os as _os
+MODEL_NAME = _os.environ.get("BE_MODEL", "meta-llama/Llama-3.2-1B")
 
 
 def _make_prompt(tok, target_len: int) -> list[int]:

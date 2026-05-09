@@ -60,39 +60,64 @@ from .decode_tail_context import DecodeTailCascadeContext
 # ---------------------------------------------------------------------------
 
 
-def _collapse_d3_to_d2(levels: list) -> list:
-    """Collapse a depth=3 cascade layout to depth=2 in O(K), without redoing
-    the LCA scan.
+def _collapse_levels(levels: list, target_depth: int) -> list:
+    """Collapse a deeper cascade layout to ``target_depth`` in O(K).
 
-    `_adaptive_levels(max_levels=3)` may emit:
-      [L0_shared, L1_intermediate, L2_per_beam]   — len 3
-      [L0_shared, L2_per_beam]                    — len 2 (no intermediate)
-      [L1_intermediate, L2_per_beam]              — len 2 (no shared)
-      [L2_per_beam]                               — len 1
+    ``_adaptive_levels(max_levels=D_max)`` may emit any number of levels
+    in ``[1..D_max]``. The picker chooses ``pick.depth ∈ {2..D_max}``;
+    when the natural depth exceeds ``target_depth`` we merge the
+    *deepest* intermediate levels into the per-beam tail (preserving
+    the shallowest intermediates, which are closer to the LCA and thus
+    have larger group sizes and bigger sharing benefit).
 
-    Only the len==3 case is collapsed: each group's intermediate pages are
-    prepended to its member beams' tails, producing
-    [L0_shared, L2_with_intermediate_prepended]. Beam order from the d=3
-    layout (group order) is preserved by callers — the dispatch already
-    permutes query rows via beam_order_per_prompt.
+    Specifically: keep ``levels[0..target_depth-2]`` (root + the
+    shallowest ``target_depth-2`` intermediates), and merge
+    ``levels[target_depth-1..N-2]`` (deeper intermediates) into
+    ``levels[N-1]`` (per-beam tail) by prepending their pages onto each
+    beam's tail in group order.
 
-    Cost-model equivalence: ``_per_prompt_levels(w, depth=2)`` folds
-    intermediate pages back into each beam's suffix length, which is
-    exactly what this function does at the page-list level.
+    Cost-model equivalence: ``_per_prompt_levels(w, depth=target)``
+    folds the dropped intermediate pages back into each beam's suffix
+    length, which is exactly what this function does at the page-list
+    level.
     """
-    if len(levels) != 3:
+    if len(levels) <= target_depth:
         return levels
-    L0_shared, L1_inter, L2_per_beam = levels
-    sizes_per_group, inter_pages_per_group, _ = L1_inter
-    l2_sizes, per_beam_tail, per_beam_lpl = L2_per_beam
-    merged_tail: list[list[int]] = []
-    idx = 0
-    for gi, gsize in enumerate(sizes_per_group):
-        inter_pages = inter_pages_per_group[gi]
-        for _ in range(gsize):
-            merged_tail.append(inter_pages + per_beam_tail[idx])
-            idx += 1
-    return [L0_shared, (l2_sizes, merged_tail, per_beam_lpl)]
+    if target_depth < 2:
+        raise ValueError(f"target_depth must be >= 2, got {target_depth}")
+
+    # Levels we keep verbatim: root + shallowest (target_depth - 2)
+    # intermediates.
+    kept = levels[: target_depth - 1]
+    # Levels we merge into the per-beam tail.
+    to_merge = levels[target_depth - 1 : -1]
+    per_beam = levels[-1]
+    pb_sizes, pb_pages, pb_lpl = per_beam
+
+    # For each beam, the merged tail = concat of (its pages from each
+    # to_merge level, in shallowest→deepest order) + its original
+    # per-beam tail. Each to_merge level is structured as
+    # (group_sizes, group_pages, group_lpl) and the per-beam mapping
+    # follows group expansion order, which matches the per-beam tail
+    # ordering downstream.
+    K = len(pb_pages)
+    prepend_per_beam: list[list[int]] = [[] for _ in range(K)]
+    for sizes, group_pages, _lpl in to_merge:
+        beam_idx = 0
+        for gi, gsize in enumerate(sizes):
+            grp_pages = group_pages[gi]
+            for _ in range(gsize):
+                prepend_per_beam[beam_idx].extend(grp_pages)
+                beam_idx += 1
+        # Sanity: every level in to_merge must produce the same K beams
+        # in the same order (true by construction in _adaptive_levels).
+    merged_tail = [prepend_per_beam[i] + pb_pages[i] for i in range(K)]
+    return kept + [(pb_sizes, merged_tail, pb_lpl)]
+
+
+def _collapse_d3_to_d2(levels: list) -> list:
+    """Backwards-compat shim — see :func:`_collapse_levels`."""
+    return _collapse_levels(levels, 2)
 
 
 def _workload_from_levels(
@@ -103,7 +128,14 @@ def _workload_from_levels(
     head_dim: int,
     dtype_bytes: int,
 ) -> WorkloadShape:
-    """Derive the cost model's WorkloadShape from `_adaptive_levels`'s output."""
+    """Derive the cost model's WorkloadShape from `_adaptive_levels`'s
+    output. Generalized to support N levels (root + N-2 intermediates +
+    per-beam) for ``N >= 2``.
+
+    The returned ``IntermediateShape.levels`` has one entry per
+    intermediate cascade level, each entry a list of
+    ``(group_size, group_kv_tokens)`` tuples in group order.
+    """
     has_shared = len(levels) >= 2
     if has_shared:
         _sizes_0, pages_0, _lpl_0 = levels[0]
@@ -126,13 +158,19 @@ def _workload_from_levels(
             suffix_lens.append(0)
 
     intermediate: IntermediateShape | None = None
-    if len(levels) == 3:
-        sizes_mid, pages_mid, _ = levels[1]
-        groups = [
-            (sizes_mid[gi], len(pages_mid[gi]) * page_size)
-            for gi in range(len(sizes_mid))
-        ]
-        intermediate = IntermediateShape(groups=groups)
+    if len(levels) >= 3:
+        # All levels except the root and the per-beam tail are
+        # intermediates. Each contributes a list of (group_size,
+        # group_kv_tokens) tuples to IntermediateShape.levels.
+        intermediate_levels: list[list[tuple[int, int]]] = []
+        for li in range(1, len(levels) - 1):
+            sizes_mid, pages_mid, _ = levels[li]
+            groups = [
+                (sizes_mid[gi], len(pages_mid[gi]) * page_size)
+                for gi in range(len(sizes_mid))
+            ]
+            intermediate_levels.append(groups)
+        intermediate = IntermediateShape(levels=intermediate_levels)
 
     bytes_per_kv = 2 * num_kv_heads * head_dim * dtype_bytes
     return WorkloadShape(
@@ -153,11 +191,11 @@ def _pack_batched_cascade_arrays_any_depth(
     *,
     n_levels: int,
 ):
-    """Generalized batched-cascade-array packer for ``n_levels ∈ {2, 3}``.
+    """Generalized batched-cascade-array packer for any ``n_levels >= 2``.
 
-    Every prompt is expected to contribute exactly ``n_levels`` levels; the
-    picker only emits depth=3 when every prompt has an intermediate
-    layout, so this invariant holds at the call site.
+    Every prompt is expected to contribute exactly ``n_levels`` levels;
+    the picker only emits depth=N when every prompt's adaptive layout
+    can support N levels, so this invariant holds at the call site.
     """
     qo_arr_per_level: list[list[int]] = [[0] for _ in range(n_levels)]
     kvp_arr_per_level: list[list[int]] = [[0] for _ in range(n_levels)]
@@ -207,18 +245,24 @@ class _BsKernelWrappers(WrapperBundle):
     """Wrapper bundle for bs_kernel. Wrappers cached at startup; the
     picker chooses one per step.
 
-    For DEC_TAIL strategies the prefix and (optional) intermediate
-    levels go through ``prefix_prefill`` / ``inter_prefill`` and the
-    tail goes through ``decode_wrapper`` (shared with PER_BEAM).
+    Cascade wrappers are indexed by depth: ``cascade_wrappers[d]`` is a
+    ``FusedMultiLevelCascadeAttentionWrapper`` configured for ``d``
+    levels. All share the same ``max_levels`` template parameter at JIT
+    time, so they share a single compiled kernel binary. Same pattern
+    for the non-fused MLCA path (``cascade_dual_wrappers[d]``).
+
+    For DEC_TAIL strategies the prefix + (optional) intermediate levels
+    go through the per-level entries in ``dec_tail_prefill_wrappers``
+    (length ``D_max - 1``: index 0 = prefix, index >=1 = intermediate
+    level), and the tail goes through ``decode_wrapper`` (shared with
+    PER_BEAM).
     """
     __slots__ = (
         "decode_wrapper",
-        "cascade_2l",
-        "cascade_3l",
-        "cascade_dual_2l",
-        "cascade_dual_3l",
-        "prefix_prefill",
-        "inter_prefill",
+        "cascade_wrappers",
+        "cascade_dual_wrappers",
+        "dec_tail_prefill_wrappers",
+        "max_depth",
     )
 
 
@@ -273,42 +317,37 @@ class BsKernelBackend:
         wb.decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
             workspace_buffer, kv_layout="NHD", use_tensor_cores=True,
         )
-        # Two fused wrappers (depth=2 and depth=3) so we don't reconstruct
-        # per step when the picker flips depth.
-        wb.cascade_2l = FusedMultiLevelCascadeAttentionWrapper(
-            num_levels=2,
-            float_workspace_buffer=workspace_buffer,
-            kv_layout="NHD",
-            device=device,
-            max_levels=max_cascade_levels,
-        )
-        wb.cascade_3l = FusedMultiLevelCascadeAttentionWrapper(
-            num_levels=3,
-            float_workspace_buffer=workspace_buffer,
-            kv_layout="NHD",
-            device=device,
-            max_levels=max_cascade_levels,
-        )
-        # Non-fused MLCA wrappers for pool_count=2 picks.
-        wb.cascade_dual_2l = MultiLevelCascadeAttentionWrapper(
-            num_levels=2,
-            float_workspace_buffer=workspace_buffer,
-            kv_layout="NHD",
-        )
-        wb.cascade_dual_3l = MultiLevelCascadeAttentionWrapper(
-            num_levels=3,
-            float_workspace_buffer=workspace_buffer,
-            kv_layout="NHD",
-        )
-        # Single-level prefill wrappers for the front half of DEC_TAIL.
-        # Re-planned per step against (prefix-only) or (intermediate-only)
-        # KV layouts.
-        wb.prefix_prefill = BatchPrefillWithPagedKVCacheWrapper(
-            workspace_buffer, kv_layout="NHD",
-        )
-        wb.inter_prefill = BatchPrefillWithPagedKVCacheWrapper(
-            workspace_buffer, kv_layout="NHD",
-        )
+        # One fused wrapper per depth ∈ {2..max_cascade_levels}. All
+        # share the same ``max_levels`` template parameter, so they
+        # share a single JIT-compiled kernel binary; only the runtime
+        # ``num_levels`` field on the param struct differs. This lets
+        # the picker flip depth between steps with no rebuild cost.
+        wb.cascade_wrappers = {}
+        wb.cascade_dual_wrappers = {}
+        for d in range(2, max_cascade_levels + 1):
+            wb.cascade_wrappers[d] = FusedMultiLevelCascadeAttentionWrapper(
+                num_levels=d,
+                float_workspace_buffer=workspace_buffer,
+                kv_layout="NHD",
+                device=device,
+                max_levels=max_cascade_levels,
+            )
+            wb.cascade_dual_wrappers[d] = MultiLevelCascadeAttentionWrapper(
+                num_levels=d,
+                float_workspace_buffer=workspace_buffer,
+                kv_layout="NHD",
+            )
+        wb.max_depth = max_cascade_levels
+        # Per-level prefill wrappers for the front half of DEC_TAIL.
+        # Index 0 = prefix (root) prefill; indices 1..max-2 are
+        # intermediate-level prefills. Re-planned per step against the
+        # appropriate level's (qo, kv) arrays.
+        wb.dec_tail_prefill_wrappers = [
+            BatchPrefillWithPagedKVCacheWrapper(
+                workspace_buffer, kv_layout="NHD",
+            )
+            for _ in range(max_cascade_levels - 1)
+        ]
         return wb
 
     def plan_decode_step(
@@ -330,10 +369,11 @@ class BsKernelBackend:
     ) -> StepPlan:
         ps = page_size
         dtype_bytes = torch.tensor([], dtype=dtype).element_size()
+        max_depth = wrappers.max_depth
 
-        # ---- Per-prompt: compute up-to-3-level decomposition + workload. ----
-        levels_d3_per_prompt: list[list] = []
-        beam_order_d3_per_prompt: list[list[int]] = []
+        # ---- Per-prompt: compute up-to-D_max-level decomposition + workload. ----
+        levels_full_per_prompt: list[list] = []
+        beam_order_full_per_prompt: list[list[int]] = []
         workloads: list[WorkloadShape] = []
         for b in range(B):
             pos = current_pos[b]
@@ -344,12 +384,12 @@ class BsKernelBackend:
             lpl_per_beam = [off + 1] * K
             levels, beam_order, lca_b = _adaptive_levels(
                 pages_prefix, pages_tails, lpl_per_beam, K,
-                max_levels=3,
+                max_levels=max_depth,
                 start_lca=last_lca_per_prompt[b],
             )
             last_lca_per_prompt[b] = lca_b
-            levels_d3_per_prompt.append(levels)
-            beam_order_d3_per_prompt.append(beam_order)
+            levels_full_per_prompt.append(levels)
+            beam_order_full_per_prompt.append(beam_order)
             w = _workload_from_levels(
                 levels, K, ps, num_kv_heads, head_dim, dtype_bytes,
             )
@@ -364,15 +404,11 @@ class BsKernelBackend:
 
         # ---- Choose dispatch depth + collapse layouts if needed. ----
         dispatch_depth = pick.depth if pick.share else 2
-        if dispatch_depth == 3:
-            levels_per_prompt = levels_d3_per_prompt
-            beam_order_per_prompt = beam_order_d3_per_prompt
-        else:
-            levels_per_prompt = [
-                _collapse_d3_to_d2(levels_d3_per_prompt[b])
-                for b in range(B)
-            ]
-            beam_order_per_prompt = beam_order_d3_per_prompt
+        levels_per_prompt = [
+            _collapse_levels(levels_full_per_prompt[b], dispatch_depth)
+            for b in range(B)
+        ]
+        beam_order_per_prompt = beam_order_full_per_prompt
 
         # ---- Dispatch. ----
         if pick.strategy == Strategy.PER_BEAM:
@@ -420,49 +456,49 @@ class BsKernelBackend:
             # PER_BEAM uses natural order — no permute needed.
             return StepPlan(ctx=ctx, beam_order_per_prompt=None, pick=pick)
 
-        # DEC_TAIL — prefix(/intermediate) prefill + per-beam decode + merge.
-        if pick.strategy in (
-            Strategy.SHARED_2L_DEC_TAIL, Strategy.SHARED_3L_DEC_TAIL,
-        ):
-            # ---- Plan prefix prefill (cache across steps when LCA stable). ----
-            # The prefix layout is determined entirely by per-prompt LCA
-            # depth (the prefix pages themselves are immutable). When
-            # last_lca_per_prompt is unchanged from the previous DEC_TAIL
-            # step, the prefix wrapper's plan is still valid — skip the
-            # re-plan and the qo/kv array build for the prefix level.
+        # DEC_TAIL — prefix + (N-2) intermediate prefills + per-beam decode + merge.
+        _DEC_TAIL_STRATEGIES = {
+            Strategy.SHARED_2L_DEC_TAIL,
+            Strategy.SHARED_3L_DEC_TAIL,
+            Strategy.SHARED_4L_DEC_TAIL,
+            Strategy.SHARED_5L_DEC_TAIL,
+            Strategy.SHARED_6L_DEC_TAIL,
+        }
+        if pick.strategy in _DEC_TAIL_STRATEGIES:
+            # ---- Plan prefix + intermediate prefills. ----
+            # The prefix (level 0) layout is determined entirely by
+            # per-prompt LCA depth (the prefix pages themselves are
+            # immutable), so when last_lca_per_prompt is unchanged AND
+            # we have no intermediates (depth=2), the prefix wrapper's
+            # plan from the previous step is still valid — skip the
+            # re-plan and the qo/kv array build.
+            #
+            # At depth>=3 the intermediate levels' layouts depend on
+            # per-step group structure, so we always re-plan all
+            # levels.
             cur_lcas = list(last_lca_per_prompt)
-            need_prefix_replan = (
+            n_prefill_levels = dispatch_depth - 1  # all levels except per-beam
+            need_replan = (
                 self._planned_prefix_lca is None
                 or self._planned_prefix_lca != cur_lcas
-                or dispatch_depth == 3   # 3L plans both prefix + inter together
+                or dispatch_depth >= 3
             )
-            if need_prefix_replan:
+            inter_wrappers: list = []  # filled with one wrapper per inter level
+            if need_replan:
                 qo_arr, kvp_arr, kvi_arr, kvl_arr = (
                     _pack_batched_cascade_arrays_any_depth(
                         levels_per_prompt, ps, device,
                         n_levels=dispatch_depth,
                     )
                 )
-                wrappers.prefix_prefill.plan(
-                    qo_indptr=qo_arr[0],
-                    paged_kv_indptr=kvp_arr[0],
-                    paged_kv_indices=kvi_arr[0],
-                    paged_kv_last_page_len=kvl_arr[0],
-                    num_qo_heads=num_qo_heads,
-                    num_kv_heads=num_kv_heads,
-                    head_dim_qk=head_dim,
-                    page_size=ps,
-                    causal=False,
-                    q_data_type=dtype,
-                    kv_data_type=dtype,
-                )
-                inter_w = None
-                if dispatch_depth == 3:
-                    wrappers.inter_prefill.plan(
-                        qo_indptr=qo_arr[1],
-                        paged_kv_indptr=kvp_arr[1],
-                        paged_kv_indices=kvi_arr[1],
-                        paged_kv_last_page_len=kvl_arr[1],
+                # Plan all prefill levels [0 .. dispatch_depth-2].
+                for li in range(n_prefill_levels):
+                    pw = wrappers.dec_tail_prefill_wrappers[li]
+                    pw.plan(
+                        qo_indptr=qo_arr[li],
+                        paged_kv_indptr=kvp_arr[li],
+                        paged_kv_indices=kvi_arr[li],
+                        paged_kv_last_page_len=kvl_arr[li],
                         num_qo_heads=num_qo_heads,
                         num_kv_heads=num_kv_heads,
                         head_dim_qk=head_dim,
@@ -471,13 +507,16 @@ class BsKernelBackend:
                         q_data_type=dtype,
                         kv_data_type=dtype,
                     )
-                    inter_w = wrappers.inter_prefill
+                # Levels 1..n_prefill_levels-1 are the intermediate
+                # wrappers passed to the merge context.
+                inter_wrappers = [
+                    wrappers.dec_tail_prefill_wrappers[li]
+                    for li in range(1, n_prefill_levels)
+                ]
                 self._planned_prefix_lca = cur_lcas
             else:
-                # Reuse last step's plan. inter_w is None at depth=2;
-                # depth=3 forces replan above so this branch only handles
-                # the depth=2 cache hit.
-                inter_w = None
+                # Cache-hit (depth=2 only): no intermediates.
+                inter_wrappers = []
 
             # ---- Build decode wrapper plan via numpy (single H2D each). ----
             BK = B * K
@@ -576,9 +615,9 @@ class BsKernelBackend:
                 page_table=page_table,
                 write_pi=write_pi_t,
                 write_po=write_po_t,
-                prefix_wrapper=wrappers.prefix_prefill,
+                prefix_wrapper=wrappers.dec_tail_prefill_wrappers[0],
                 decode_wrapper=wrappers.decode_wrapper,
-                inter_wrapper=inter_w,
+                inter_wrappers=inter_wrappers,
             )
             return StepPlan(
                 ctx=ctx,
@@ -594,10 +633,7 @@ class BsKernelBackend:
             )
         )
         if pick.pool_count == 2:
-            active_wrapper = (
-                wrappers.cascade_dual_3l if dispatch_depth == 3
-                else wrappers.cascade_dual_2l
-            )
+            active_wrapper = wrappers.cascade_dual_wrappers[dispatch_depth]
             active_wrapper.plan(
                 qo_indptr_arr=qo_arr,
                 paged_kv_indptr_arr=kvp_arr,
@@ -612,10 +648,7 @@ class BsKernelBackend:
                 kv_data_type=dtype,
             )
         else:
-            active_wrapper = (
-                wrappers.cascade_3l if dispatch_depth == 3
-                else wrappers.cascade_2l
-            )
+            active_wrapper = wrappers.cascade_wrappers[dispatch_depth]
             # pool=1 forces a single CTA tile size (the picker's chosen
             # T_large); pool=2 (handled in the if-branch above) routes
             # through the dual non-fused path.

@@ -1,9 +1,13 @@
 """Cross-kernel batched-decode benchmark.
 
-For each method × (K, L_p, B), run beam search on B identical prompts and
-report total decode wall time per (prompt, token). bs_kernel and paged are
-natively batched (one launch per step covers all B prompts); tree, fasttree,
-mlca, adaptive_pool sequentialize per prompt internally.
+For each method × (K, L_p, B), run beam search on B prompts (use
+``--distinct`` for pairwise-distinct prompts; default repeats one prompt
+B times) and report total decode wall time per (prompt, token). All
+methods (paged, tree, fasttree, mlca, adaptive_pool, bs_kernel) are
+batched: one decode-loop iteration covers all B prompts, with a single
+attention kernel launch per layer covering B·K query rows. The
+per-prompt Python loop only builds the layout arrays before they're
+concatenated into the batched dispatch.
 
 Output CSV columns:
     method, K, L_p, B, max_new, prefill_ms, decode_total_ms,
@@ -30,23 +34,48 @@ from typing import Callable
 import torch
 from transformers import AutoTokenizer
 
-from beam_engine.baselines import fasttree, mlca, paged, tree
+from beam_engine.baselines import dbs, fasttree, mlca, paged, tree
 from beam_engine.methods import adaptive_pool, bs_kernel
+from beam_engine.methods.bs_kernel.cost_model import Strategy
 from beam_engine.models.modeling_llama import LlamaForCausalLM
 
 
-MODEL_NAME = "meta-llama/Llama-3.1-8B"
+import os as _os
+MODEL_NAME = _os.environ.get("BE_MODEL", "meta-llama/Llama-3.2-1B")
 DEVICE = "cuda"
 DTYPE = torch.float16
 
 
+def _bs_kernel_force_2l1p(
+    model, config, prompts, max_new_tokens, beam_width,
+    *, return_timings: bool = False, max_num_pages: int = 2048,
+):
+    """bs_kernel pinned to SHARED_2L_1POOL — adaptive_pool's strategy
+    dispatched through bs_kernel's driver path."""
+    return bs_kernel.beam_search(
+        model, config, prompts, max_new_tokens, beam_width,
+        return_timings=return_timings,
+        max_num_pages=max_num_pages,
+        available_strategies={Strategy.SHARED_2L_1POOL},
+    )
+
+
 METHODS: dict[str, Callable] = {
-    "paged":         paged.beam_search,
-    "tree":          tree.beam_search,
-    "fasttree":      fasttree.beam_search,
-    "mlca":          mlca.beam_search,
-    "adaptive_pool": adaptive_pool.beam_search,
-    "bs_kernel":     bs_kernel.beam_search,
+    "paged":            paged.beam_search,
+    "tree":             tree.beam_search,
+    "fasttree":         fasttree.beam_search,
+    "mlca":             mlca.beam_search,
+    "adaptive_pool":    adaptive_pool.beam_search,
+    "bs_kernel":        bs_kernel.beam_search,
+    "bs_kernel_2l1p":   _bs_kernel_force_2l1p,
+    # DBS variants — same kernel, diversity-penalized top-K
+    # (num_groups=4, λ=0.5 default).
+    "dbs_paged":         dbs.dbs_paged,
+    "dbs_tree":          dbs.dbs_tree,
+    "dbs_fasttree":      dbs.dbs_fasttree,
+    "dbs_mlca":          dbs.dbs_mlca,
+    "dbs_adaptive_pool": dbs.dbs_adaptive_pool,
+    "dbs_bs_kernel":     dbs.dbs_bs_kernel,
 }
 
 
@@ -80,6 +109,64 @@ def _make_prompt(tokenizer, target_len: int) -> list[int]:
     return ids[:target_len]
 
 
+# Distinct seed openings — keep B prompts pairwise prefix-disjoint so
+# paged-style methods cannot share prefix pages across prompts.
+_DISTINCT_SEEDS = [
+    "Once upon a time, in a kingdom far away, there lived a curious scholar who studied the stars. ",
+    "The bustling marketplace of Constantinople was filled with merchants from every corner of the known world. ",
+    "Deep in the Amazon rainforest, biologists discovered a new species of luminescent frog. ",
+    "On the dusty plains of the American Midwest, a young farmer dreamed of becoming a railroad engineer. ",
+    "In Edo-period Japan, a master swordsmith forged blades that were said to sing when drawn. ",
+    "The Antarctic research station crackled with radio static as the long polar night began. ",
+    "Aboard the steamship bound for Liverpool, the elderly diplomat reread the encrypted message. ",
+    "High in the Andes, a llama herder noticed strange patterns carved into the volcanic rock. ",
+    "The detective lit her pipe and stared at the rain streaking down the office window. ",
+    "Long before the first cities rose along the Tigris, hunter-gatherers followed seasonal herds. ",
+    "When the great library of Alexandria still stood, scholars argued about the shape of the heavens. ",
+    "The Viking longship cut through the cold North Sea waters under a sky heavy with gulls. ",
+    "In a sleepy New England fishing village, the lighthouse keeper recorded the day's tide. ",
+    "Beneath the towering canopy of redwoods, a paleobotanist sifted through compressed peat. ",
+    "The neon-lit streets of Shibuya pulsed with commuters hurrying through the spring drizzle. ",
+    "Aboard the International Space Station, the flight engineer floated past the Cupola windows. ",
+    "In the dim lamplight of the medieval scriptorium, the monk dipped his quill once more. ",
+    "The desert caravan paused at the oasis as the sun began its descent toward the dunes. ",
+    "On a quiet research vessel in the Pacific, the marine biologist tagged her hundredth manta ray. ",
+    "Through the crowded bazaar of old Damascus, the spice merchant called out his prices. ",
+    "The astronaut adjusted her helmet visor and stepped onto the regolith of the lunar far side. ",
+    "Inside the cathedral, the organist practiced a fugue while the masons repaired the buttress. ",
+    "The Mongolian steppes stretched endlessly under a sky so wide it felt like another ocean. ",
+    "Far below the surface of Europa, autonomous probes mapped the hydrothermal vents. ",
+    "The Parisian café hummed with conversation about the latest exhibition at the Salon. ",
+    "On a rocky coast of Cornwall, the lighthouse keeper recounted tales of shipwrecks past. ",
+    "The Silk Road merchant unloaded his bolts of silk at the gates of Samarkand. ",
+    "In the Brazilian favela, a young girl practiced her violin on the rooftop each evening. ",
+    "The cartographer unrolled his maps and pointed to a coastline no European had yet seen. ",
+    "Deep in the Carpathian mountains, the wolf packs moved silently through the winter snow. ",
+    "Beneath the Antarctic ice shelf, the autonomous submarine recorded a never-before-heard call. ",
+    "The royal astronomer of the Mughal court adjusted his sextant and watched Jupiter rise. ",
+]
+
+
+def _make_distinct_prompts(tokenizer, target_len: int, B: int) -> list[list[int]]:
+    """Build B prompts that are pairwise prefix-disjoint.
+
+    Each prompt starts with a unique opening sentence + an index tag, then
+    grows to ``target_len`` tokens by repeating its own seed. Different
+    prompts therefore diverge from token 0.
+    """
+    prompts: list[list[int]] = []
+    for i in range(B):
+        seed = f"Document {i:03d}. " + _DISTINCT_SEEDS[i % len(_DISTINCT_SEEDS)]
+        repeats = max(8, target_len // 50)
+        while True:
+            ids = tokenizer.encode(seed * repeats, add_special_tokens=False)
+            if len(ids) >= target_len:
+                break
+            repeats *= 2
+        prompts.append(ids[:target_len])
+    return prompts
+
+
 def run_one(
     method_name: str,
     method_fn: Callable,
@@ -108,20 +195,18 @@ def run_one(
             return_timings=True, **extra_kwargs,
         )
     except Exception as e:
+        # OOM ends up here too; aggressive empty_cache to release any partial
+        # buffers the failed driver allocated before the exception bubbled up.
         print(f"  [{method_name}] FAILED: {type(e).__name__}: {e}")
+        torch.cuda.empty_cache()
         return None
 
     decode_steps = timings["decode_step_ms"]
     decode_total = sum(decode_steps)
     n_steps = len(decode_steps)
-    # Tokens decoded across the whole call: each method runs (max_new-1)
-    # decode steps on the post-prefill state, producing 1 new token per
-    # (prompt, beam_step). Per-step semantics differ:
-    #   * batched methods (paged, bs_kernel): n_steps == max_new - 1
-    #   * sequential methods (tree, fasttree, mlca, adaptive_pool):
-    #     n_steps == B * (max_new - 1) — each prompt accumulates separately.
-    # The "per-token" metric normalizes by total tokens decoded (B*(max_new-1))
-    # so it's apples-to-apples regardless of internal batching.
+    # All methods are batched now: n_steps == max_new - 1 regardless of B.
+    # Per-(prompt,token) latency normalizes by total tokens decoded
+    # (B * (max_new - 1)).
     total_tokens = B * (max_new - 1)
     per_token = decode_total / max(1, total_tokens)
     return Row(
@@ -142,6 +227,9 @@ def main():
     ap.add_argument("--max_new", type=int, default=16)
     ap.add_argument("--methods", nargs="+", default=list(METHODS.keys()))
     ap.add_argument("--out", default=None)
+    ap.add_argument("--distinct", action="store_true",
+                    help="use B pairwise-distinct prompts instead of B copies "
+                         "of one prompt (disables cross-prompt page sharing)")
     args = ap.parse_args()
 
     methods = {k: METHODS[k] for k in args.methods if k in METHODS}
@@ -162,8 +250,11 @@ def main():
 
     rows: list[Row] = []
     for (K, L_p, B) in grid:
-        base = _make_prompt(tok, L_p)
-        prompts = [list(base) for _ in range(B)]
+        if args.distinct:
+            prompts = _make_distinct_prompts(tok, L_p, B)
+        else:
+            base = _make_prompt(tok, L_p)
+            prompts = [list(base) for _ in range(B)]
         for name, fn in methods.items():
             print(f"  {name:<14} K={K:<3d} L_p={L_p:<6d} B={B:<2d}", end=" ", flush=True)
             t0 = time.perf_counter()

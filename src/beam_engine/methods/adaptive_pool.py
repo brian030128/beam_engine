@@ -238,38 +238,31 @@ def _adaptive_levels(
     level, top-down with L0 = shared root), ``beam_order`` is a length-K
     permutation aligning per-beam tails to their position within the
     cascade dispatch, and ``lca`` is the discovered shared-prefix depth
-    in pages (measured against the unified ``prefix + tail`` ordering).
+    in pages.
 
-    The optional ``start_lca`` lets callers seed the LCA scan from a
-    cached value (the LCA is provably monotone non-decreasing across
-    consecutive decode steps — pages in the shared prefix are immutable
-    and beam forks inherit page lists verbatim). Default 0 preserves the
-    original "scan from scratch" behavior.
-
-    Layout rule:
+    Layout rule (generalized for ``max_levels >= 2``):
       * Level 0 (shared) — longest common page-prefix across all K beams.
-        When ``lca == len(pages_prefix)`` (the typical case after
-        prefill since per-beam decode pages diverge immediately) the
-        L0 ``shared_pages`` is *the same Python list object* as
-        ``pages_prefix`` — no copy.
-      * Last level — per-beam unique tail (one group per beam, with that
-        beam's true last_page_len).
-      * Optional intermediate level — when the beams partition into G
-        groups (G > 1, K % G == 0) that all share a non-trivial run of
-        pages past the LCA. Detected by hashing each beam's page list at
-        depth lca_depth and checking the partition is uniform; we extend
-        the intermediate run as far as members of each group continue to
-        agree.
+      * Levels 1..N-2 (intermediate) — successive sub-group decompositions
+        detected by recursive first-divergent-page splits within each
+        group. ``max_levels`` caps the depth; we stop earlier if no
+        group at the current depth can split further.
+      * Level N-1 (per-beam tail) — one group per beam.
+
+    Singletons (groups that reach size 1 mid-decomposition) emit
+    placeholder entries at subsequent intermediate levels so the row
+    layout stays consistent across all levels. Their pages-so-far list
+    is propagated unchanged at deeper levels.
+
+    The ``start_lca`` parameter lets callers seed the LCA scan from a
+    cached value (LCA is monotone non-decreasing across decode steps).
     """
     pl = len(pages_prefix)
-    # 1) LCA depth — start from max(start_lca, pl): the shared prefix is
-    # by construction common to all beams, so the LCA is always at
-    # least its length.
+    # 1) LCA depth — start from max(start_lca, pl).
     lca = max(start_lca, pl)
     min_tail_len = min(len(t) for t in pages_tails)
     min_len = pl + min_tail_len
     while lca < min_len:
-        idx = lca - pl  # always >= 0 since lca >= pl
+        idx = lca - pl
         first = pages_tails[0][idx]
         if all(t[idx] == first for t in pages_tails):
             lca += 1
@@ -277,110 +270,148 @@ def _adaptive_levels(
             break
 
     # shared_pages: prefix + the (typically empty) common tail prefix.
-    # When lca == pl, this is just `pages_prefix` by reference — no
-    # copy. When lca > pl (rare; happens when all K beams happened to
-    # produce the same first decoded page), we materialize the
-    # prefix+tail concat once.
     if lca == pl:
         shared_pages = pages_prefix
     else:
         shared_pages = pages_prefix + pages_tails[0][:lca - pl]
-    page_size = -1  # filled by caller; placeholder used in lpl computation
+    page_size = -1  # placeholder; filled by caller
 
     levels: list[tuple[list[int], list[list[int]], list[int]]] = []
 
     def _page_at(beam_i: int, d: int) -> int:
-        # d is a depth index against the unified prefix+tail ordering.
         if d < pl:
             return pages_prefix[d]
         return pages_tails[beam_i][d - pl]
 
-    # 2) Detect intermediate (depth=3) layout — non-uniform groups allowed.
-    # Each group is the beams sharing the same first-divergent page at
-    # depth lca. Each group has its own run length: how far that group's
-    # beams continue to agree past the LCA. Singletons are admitted as
-    # 1-beam groups with run_len=1 (their first-div page sits at L1 as
-    # a private 1-page group; bandwidth-equivalent to putting it in the
-    # tail, but keeps every query in a group at every level).
-    #
-    # We use depth=3 whenever there is at least one *viable* group
-    # (size ≥ 2): without that the layout collapses to depth=2 with no
-    # bandwidth savings.
-    intermediate: tuple[
-        list[list[int]], list[list[int]], list[int],
-    ] | None = None
-    if max_levels >= 3 and lca < min_len:
-        first_div: dict[int, list[int]] = defaultdict(list)
-        for i in range(K):
-            first_div[_page_at(i, lca)].append(i)
-        # Sort groups by smallest member index for deterministic ordering.
-        group_lists = sorted(first_div.values(), key=lambda g: g[0])
-        any_viable = any(len(grp) >= 2 for grp in group_lists)
-        # depth=3 only meaningful when (a) at least one viable group and
-        # (b) more than one group exists (else it's just LCA extension).
-        if any_viable and 1 < len(group_lists) <= K:
-            per_group_run: list[int] = []
-            for grp in group_lists:
-                if len(grp) == 1:
-                    # Singleton: trivial run of 1 page (its first-div page).
-                    per_group_run.append(1)
-                    continue
-                run_len = 1
-                while True:
-                    d = lca + run_len
-                    if d >= pl + min(len(pages_tails[b]) for b in grp):
-                        break
-                    pivot = _page_at(grp[0], d)
-                    if any(_page_at(b, d) != pivot for b in grp):
-                        break
-                    run_len += 1
-                per_group_run.append(run_len)
-            # Inter pages: slice from the group's first member's tail.
-            # Since lca >= pl, the slice is entirely within the tail.
-            inter_pages_per_group = [
-                pages_tails[grp[0]][lca - pl : lca - pl + per_group_run[gi]]
-                for gi, grp in enumerate(group_lists)
-            ]
-            intermediate = (group_lists, inter_pages_per_group, per_group_run)
+    # Tail length in pages for each beam (clamps depth probes).
+    beam_tail_end = [pl + len(pages_tails[i]) for i in range(K)]
 
     # Build the levels.
     # Level 0: 1 group of K beams sharing `shared_pages`.
     if shared_pages:
-        levels.append(([K], [shared_pages], [page_size]))  # lpl=page_size sentinel
+        levels.append(([K], [shared_pages], [page_size]))
 
-    if intermediate is not None:
-        group_lists, inter_pages_per_group, per_group_run = intermediate
-        sizes_per_group = [len(grp) for grp in group_lists]
-        # Intermediate pages are fully-populated past pages (beams continue
-        # past them), so lpl = page_size sentinel.
-        levels.append((
-            sizes_per_group,
-            inter_pages_per_group,
-            [page_size] * len(group_lists),
-        ))
-        # Per-beam tails — emit beams in group order so the row layout
-        # lines up across L1 and L2. Each beam's tail starts at
-        # lca + that group's run_len.
-        beam_order: list[int] = []
-        per_beam_tail: list[list[int]] = []
-        per_beam_lpl: list[int] = []
-        for gi, grp in enumerate(group_lists):
-            tail_start = lca + per_group_run[gi]
-            tail_start_in_tail = tail_start - pl  # >= 0 since tail_start >= lca >= pl
-            for b in grp:
-                beam_order.append(b)
-                per_beam_tail.append(pages_tails[b][tail_start_in_tail:])
-                per_beam_lpl.append(last_page_len_per_beam[b])
-        levels.append(([1] * K, per_beam_tail, per_beam_lpl))
-        return levels, beam_order, lca
+    # Iterative sub-grouping for levels 1..max_levels-2. Each "group state"
+    # tracks the beams it contains and the page offset where the per-beam
+    # divergence resumes. depth=2 → no intermediate levels emitted; depth=N
+    # → up to N-2 intermediate levels emitted (fewer if no further splits
+    # are detectable).
+    @dataclass
+    class _GroupState:
+        beams: list[int]    # beams in this group, in original index order
+        start: int          # absolute page index where this group's tail begins
 
-    # Final level: per-beam unique tail past LCA. lca >= pl so tail
-    # starts at (lca - pl) within each beam's tail.
-    tail_start_in_tail = lca - pl
-    per_beam_tail = [pages_tails[i][tail_start_in_tail:] for i in range(K)]
-    per_beam_lpl = list(last_page_len_per_beam)
+    current: list[_GroupState] = [
+        _GroupState(beams=list(range(K)), start=lca),
+    ]
+
+    n_intermediate_target = max(0, max_levels - 2)
+    for depth in range(n_intermediate_target):
+        if not current:
+            break
+        # Detect first-divergent partitions per group; compute run_len.
+        # If no group splits, stop emitting intermediate levels.
+        next_groups: list[_GroupState] = []
+        new_sizes: list[int] = []
+        new_pages: list[list[int]] = []
+        new_lpls: list[int] = []
+        any_split = False
+        for grp in current:
+            if len(grp.beams) <= 1 or grp.start >= min(
+                beam_tail_end[b] for b in grp.beams
+            ):
+                # Singleton or out-of-pages: keep as-is, emit a 0-page
+                # placeholder at this level. This preserves the
+                # row layout across levels.
+                next_groups.append(grp)
+                new_sizes.append(len(grp.beams))
+                new_pages.append([])  # 0-page contribution at this level
+                new_lpls.append(page_size)
+                continue
+
+            # Partition by first-divergent page at grp.start.
+            first_div: dict[int, list[int]] = defaultdict(list)
+            for b in grp.beams:
+                first_div[_page_at(b, grp.start)].append(b)
+            sub_groups = sorted(first_div.values(), key=lambda g: g[0])
+
+            if len(sub_groups) == 1:
+                # All agree at grp.start → run extends; not a real split
+                # but we still need to emit something at this level. Treat
+                # as one sub-group, find its run_len. (The benefit of
+                # extending is captured by sharing a longer page run.)
+                sg = sub_groups[0]
+                run_len = 1
+                while True:
+                    d = grp.start + run_len
+                    if d >= min(beam_tail_end[b] for b in sg):
+                        break
+                    pivot = _page_at(sg[0], d)
+                    if any(_page_at(b, d) != pivot for b in sg):
+                        break
+                    run_len += 1
+                sub_pages = pages_tails[sg[0]][grp.start - pl : grp.start - pl + run_len]
+                new_sizes.append(len(sg))
+                new_pages.append(sub_pages)
+                new_lpls.append(page_size)
+                next_groups.append(_GroupState(
+                    beams=sg, start=grp.start + run_len,
+                ))
+                continue
+
+            # True split: multiple sub-groups.
+            any_split = True
+            for sg in sub_groups:
+                if len(sg) == 1:
+                    run_len = 1
+                else:
+                    run_len = 1
+                    while True:
+                        d = grp.start + run_len
+                        if d >= min(beam_tail_end[b] for b in sg):
+                            break
+                        pivot = _page_at(sg[0], d)
+                        if any(_page_at(b, d) != pivot for b in sg):
+                            break
+                        run_len += 1
+                sub_pages = pages_tails[sg[0]][grp.start - pl : grp.start - pl + run_len]
+                new_sizes.append(len(sg))
+                new_pages.append(sub_pages)
+                new_lpls.append(page_size)
+                next_groups.append(_GroupState(
+                    beams=sg, start=grp.start + run_len,
+                ))
+
+        if not any_split:
+            # No group split at this depth — adding the level would only
+            # serialize what was already a single per-group LCA extension.
+            # Stop emitting intermediates here; current `current` becomes
+            # the input to the per-beam-tail level.
+            break
+
+        # Sanity: only commit this level if it provides bandwidth savings.
+        # (We require at least one sub-group to be non-singleton AND the
+        # total group count to exceed the previous level's group count.)
+        any_viable_sub = any(s >= 2 for s in new_sizes)
+        if not any_viable_sub:
+            # All sub-groups are singletons — equivalent to going straight
+            # to per-beam tail. Don't emit this level.
+            break
+
+        levels.append((new_sizes, new_pages, new_lpls))
+        current = next_groups
+
+    # Final level: per-beam unique tails past each group's `start`.
+    beam_order: list[int] = []
+    per_beam_tail: list[list[int]] = []
+    per_beam_lpl: list[int] = []
+    for grp in current:
+        for b in grp.beams:
+            tail_start_in_tail = grp.start - pl
+            beam_order.append(b)
+            per_beam_tail.append(pages_tails[b][tail_start_in_tail:])
+            per_beam_lpl.append(last_page_len_per_beam[b])
     levels.append(([1] * K, per_beam_tail, per_beam_lpl))
-    beam_order = list(range(K))
     return levels, beam_order, lca
 
 
