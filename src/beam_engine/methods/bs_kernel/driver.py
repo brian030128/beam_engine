@@ -732,6 +732,9 @@ class BsKernelBackend:
                 n_levels=dispatch_depth,
             )
         )
+        if trace_on:
+            torch.cuda.synchronize()
+            _t_shared_pack = time.perf_counter()
         if pick.pool_count == 2:
             active_wrapper = wrappers.cascade_dual_wrappers[dispatch_depth]
             active_wrapper.plan(
@@ -767,6 +770,9 @@ class BsKernelBackend:
                 kv_data_type=dtype,
                 force_cta_tile_q=force_t,
             )
+        if trace_on:
+            torch.cuda.synchronize()
+            _t_shared_plan = time.perf_counter()
 
         # write_pi/write_po follow cascade order: for prompt b, the i-th
         # cascade row corresponds to beam at natural index
@@ -793,6 +799,18 @@ class BsKernelBackend:
                 write_po_list, dtype=torch.int32, device=device),
             wrapper=active_wrapper,
         )
+        if trace_on:
+            torch.cuda.synchronize()
+            _t_shared_write = time.perf_counter()
+            self._plan_trace.append({
+                "strategy": pick.strategy.name,
+                "depth": pick.depth,
+                "decomp_ms":       (_t_decomp       - _t_start)     * 1000.0,
+                "pick_ms":         (_t_pick         - _t_decomp)    * 1000.0,
+                "shared_pack_ms":  (_t_shared_pack  - _t_pick)      * 1000.0,
+                "shared_plan_ms":  (_t_shared_plan  - _t_shared_pack) * 1000.0,
+                "shared_write_ms": (_t_shared_write - _t_shared_plan) * 1000.0,
+            })
         return StepPlan(
             ctx=ctx,
             beam_order_per_prompt=beam_order_per_prompt,
@@ -909,11 +927,16 @@ def _dump_plan_trace(trace: list) -> None:
             )
         return out
 
+    def _is_dec_tail(r):
+        return "DEC_TAIL" in r.get("strategy", "")
+
     pb = [r for r in trace if r.get("strategy") == "PER_BEAM"]
-    dt = [r for r in trace if r.get("strategy") != "PER_BEAM"]
+    dt = [r for r in trace if _is_dec_tail(r)]
+    sh = [r for r in trace if r.get("strategy", "").startswith("SHARED_")
+          and not _is_dec_tail(r)]
 
     print(f"\n[bs_kernel plan-trace] {len(trace)} steps "
-          f"(PER_BEAM: {len(pb)}, DEC_TAIL: {len(dt)})")
+          f"(PER_BEAM: {len(pb)}, DEC_TAIL: {len(dt)}, SHARED: {len(sh)})")
 
     if dt:
         n = len(dt)
@@ -936,5 +959,17 @@ def _dump_plan_trace(trace: list) -> None:
         for line in _fmt_rows(pb, (
             "decomp_ms", "pick_ms",
             "per_beam_build_ms", "per_beam_h2d_ms", "per_beam_plan_ms",
+        ), n):
+            print(line)
+
+    if sh:
+        n = len(sh)
+        from collections import Counter
+        strat_counts = Counter(r["strategy"] for r in sh)
+        print(f"\n  -- SHARED path ({n} steps) --")
+        print(f"  strategy mix: {dict(strat_counts)}")
+        for line in _fmt_rows(sh, (
+            "decomp_ms", "pick_ms",
+            "shared_pack_ms", "shared_plan_ms", "shared_write_ms",
         ), n):
             print(line)
