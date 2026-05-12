@@ -311,9 +311,19 @@ def autotune(
     num_kv_heads = config.num_key_value_heads
     head_dim = config.head_dim
     dtype_bytes = torch.tensor([], dtype=dtype).element_size()
-    # suffix_len at mid-decode is small (a few tokens at most by max_new).
-    # The cost expressions are dominated by L_p so this isn't sensitive.
-    suffix_len = 1
+    # The empirical decode_step_ms is averaged over ``max_new`` decode
+    # steps where the per-beam tail grows from 0 to ~max_new tokens.
+    # The picker, however, is queried once per fit candidate with a
+    # single WorkloadShape, so suffix_len needs to be the *median* of
+    # the empirical distribution — ~max_new/2 — not 1.
+    #
+    # The earlier ``suffix_len=1`` made the autotune predict 1POOL-vs-
+    # DEC_TAIL based on a workload where 1POOL is structurally cheaper
+    # (no per-beam tail cost), even though at the realistic suffix=128
+    # the cost model flips to DEC_TAIL. With suffix=1 the fit converges
+    # to a tiny dec_tail_extra_us that has no effect at runtime — see
+    # 2026-05-12 verification (picks 165/255 DEC_TAIL at K=16/B=16).
+    suffix_len = max(1, max_new // 2)
 
     best_total = float("inf")
     best_share = 0.0

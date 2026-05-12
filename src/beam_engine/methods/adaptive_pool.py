@@ -40,12 +40,18 @@ baseline so the allocator behavior is identical.
 
 from __future__ import annotations
 
+import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
 import flashinfer.page
 import torch
+
+# Module-level trace list, gated by BS_KERNEL_TRACE_CASCADE_KERNELS=1.
+# Symmetric with decode_tail_context.DEC_TAIL_KERNEL_TRACE for the
+# sub-kernel comparison benchmark.
+CASCADE_KERNEL_TRACE: list[dict] = []
 import torch.nn.functional as F
 from flashinfer import (
     BatchPrefillWithPagedKVCacheWrapper,
@@ -143,6 +149,17 @@ class AdaptivePoolContext(AttentionContext):
             )
         batch_idx = self._write_helper_indptr[:nnz]
         kv_indptr = self._write_helper_indptr[: nnz + 1]
+
+        # CUDA-event tracing for the cascade kernel, gated by env var.
+        # Used by sub-kernel profiling benchmarks to compare 1POOL fused
+        # cascade against DEC_TAIL's multi-kernel split (see
+        # decode_tail_context.DEC_TAIL_KERNEL_TRACE).
+        trace = bool(int(os.environ.get("BS_KERNEL_TRACE_CASCADE_KERNELS", "0")))
+        if trace:
+            ev = lambda: torch.cuda.Event(enable_timing=True)
+            e0, e_append, e_run = ev(), ev(), ev()
+            e0.record()
+
         flashinfer.page.append_paged_kv_cache(
             append_key=k_3d,
             append_value=v_3d,
@@ -154,9 +171,19 @@ class AdaptivePoolContext(AttentionContext):
             kv_last_page_len=self.write_po,
             kv_layout="NHD",
         )
+        if trace:
+            e_append.record()
 
         q_3d = q.view(-1, num_heads, head_dim)
         out = self.wrapper.run(q_3d, (kv_cache[0], kv_cache[1]))
+        if trace:
+            e_run.record()
+            torch.cuda.synchronize()
+            CASCADE_KERNEL_TRACE.append({
+                "layer_idx": int(layer_idx),
+                "append_ms": e0.elapsed_time(e_append),
+                "cascade_ms": e_append.elapsed_time(e_run),
+            })
         return out.reshape(*q.shape[:-1], num_heads * head_dim)
 
 

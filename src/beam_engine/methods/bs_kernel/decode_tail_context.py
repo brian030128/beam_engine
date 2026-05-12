@@ -8,6 +8,7 @@ for CTA_Q=1, so the per-beam level has 0% padding.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 import flashinfer.page
@@ -20,6 +21,11 @@ from flashinfer import (
 
 from ...models.attention import AttentionContext
 from ...page_table import PageTable
+
+# Module-level: when BS_KERNEL_TRACE_DEC_TAIL_KERNELS=1, attend() times
+# each sub-kernel (KV append, prefix, tail decode, merge) via CUDA
+# events and appends ms-readings to this list. Read by benchmarks.
+DEC_TAIL_KERNEL_TRACE: list[dict] = []
 
 
 @dataclass
@@ -64,6 +70,13 @@ class DecodeTailCascadeContext(AttentionContext):
             )
         batch_idx = self._write_helper_indptr[:nnz]
         kv_indptr = self._write_helper_indptr[: nnz + 1]
+
+        trace = bool(int(os.environ.get("BS_KERNEL_TRACE_DEC_TAIL_KERNELS", "0")))
+        if trace:
+            ev = lambda: torch.cuda.Event(enable_timing=True)
+            e0, e_append, e_tail, e_prefix, e_merge = ev(), ev(), ev(), ev(), ev()
+            e0.record()
+
         flashinfer.page.append_paged_kv_cache(
             append_key=k_3d,
             append_value=v_3d,
@@ -75,6 +88,8 @@ class DecodeTailCascadeContext(AttentionContext):
             kv_last_page_len=self.write_po,
             kv_layout="NHD",
         )
+        if trace:
+            e_append.record()
 
         q_3d = q.view(-1, num_heads, head_dim)
 
@@ -84,14 +99,30 @@ class DecodeTailCascadeContext(AttentionContext):
         out_tail, lse_tail = self.decode_wrapper.run(
             q_3d, kv_tuple, return_lse=True,
         )
+        if trace:
+            e_tail.record()
+
         out_pre, lse_pre = self.prefix_wrapper.run(
             q_3d, kv_tuple, return_lse=True,
         )
+        if trace:
+            e_prefix.record()
+
         merge_state_in_place(out_tail, lse_tail, out_pre, lse_pre)
         for inter_w in self.inter_wrappers:
             out_int, lse_int = inter_w.run(
                 q_3d, kv_tuple, return_lse=True,
             )
             merge_state_in_place(out_tail, lse_tail, out_int, lse_int)
+        if trace:
+            e_merge.record()
+            torch.cuda.synchronize()
+            DEC_TAIL_KERNEL_TRACE.append({
+                "layer_idx": int(layer_idx),
+                "append_ms": e0.elapsed_time(e_append),
+                "tail_ms":   e_append.elapsed_time(e_tail),
+                "prefix_ms": e_tail.elapsed_time(e_prefix),
+                "merge_ms":  e_prefix.elapsed_time(e_merge),
+            })
 
         return out_tail.reshape(*q.shape[:-1], num_heads * head_dim)

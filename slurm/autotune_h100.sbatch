@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:H100:1
-#SBATCH --time=00:35:00
+#SBATCH --time=00:55:00
 #SBATCH --output=slurm/logs/autotune_h100_%j.out
 #SBATCH --error=slurm/logs/autotune_h100_%j.err
 
@@ -32,11 +32,15 @@ cat ~/.cache/beam_engine/coeffs-NVIDIA_H100_80GB_HBM3.json
 echo
 
 # Use Llama-3.2-1B (matches diagnose_cell.py and bench_full_cell — the
-# same model that exhibits the mispick at B=32). max-new=64 so 3L
-# strategies fire on enough decode steps to be measured.
+# same model that exhibits the mispick at B=32). max-new=256 matches
+# the paper sweep so the suffix_len distribution used in the picker
+# (= max_new/2 = 128, the empirical median) reflects the realistic
+# mid-decode state — the earlier max-new=64 fit at suffix=1 produced
+# dec_tail_extra_us=1.0, which couldn't flip the runtime picker at
+# K=16 cells where DEC_TAIL is mispicked.
 uv run python -m beam_engine.methods.bs_kernel.autotune \
     --model meta-llama/Llama-3.2-1B \
-    --max-new 64 \
+    --max-new 256 \
     --save
 
 echo

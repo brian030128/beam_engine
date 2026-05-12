@@ -68,7 +68,7 @@ def _phase_mean(timings, key):
 
 
 def _run(name, fn, model, config, prompts, K, B, L_p, needed_pages,
-         available_strategies):
+         available_strategies, want_picks=False):
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
     t0 = time.perf_counter()
@@ -79,31 +79,44 @@ def _run(name, fn, model, config, prompts, K, B, L_p, needed_pages,
     )
     if available_strategies is not None:
         kwargs["available_strategies"] = available_strategies
+    if want_picks and name == "bs_kernel":
+        kwargs["return_picks"] = True
     try:
         out = fn(model, config, prompts, MAX_NEW, K, **kwargs)
     except torch.OutOfMemoryError:
         torch.cuda.empty_cache()
         return {"status": "OOM", "decode_per_token_ms": 0.0,
                 "forward_mean_ms": 0.0, "plan_mean_ms": 0.0,
-                "wall_s": time.perf_counter() - t0}
+                "wall_s": time.perf_counter() - t0, "picks_str": ""}
     except Exception as e:
         torch.cuda.empty_cache()
         return {"status": f"FAIL_{type(e).__name__}",
                 "decode_per_token_ms": 0.0, "forward_mean_ms": 0.0,
                 "plan_mean_ms": 0.0,
-                "wall_s": time.perf_counter() - t0,
+                "wall_s": time.perf_counter() - t0, "picks_str": "",
                 "err": f"{type(e).__name__}: {e}"}
     torch.cuda.synchronize()
     wall = time.perf_counter() - t0
     timings = out[1]
     steps = timings["decode_step_ms"]
     n = max(1, len(steps))
+    picks_str = ""
+    if want_picks and len(out) >= 3 and out[2] and out[2][0]:
+        from collections import Counter
+        cnt: Counter = Counter()
+        for p in out[2][0]:
+            if p.strategy.name == "PER_BEAM":
+                cnt["PER_BEAM"] += 1
+            else:
+                cnt[f"{p.strategy.name}(d{p.depth})"] += 1
+        picks_str = "  ".join(f"{k}={v}" for k, v in cnt.most_common(3))
     return {
         "status": "OK",
         "decode_per_token_ms": sum(steps) / n,
         "forward_mean_ms":     _phase_mean(timings, "forward_ms"),
         "plan_mean_ms":        _phase_mean(timings, "plan_ms"),
         "wall_s": wall,
+        "picks_str": picks_str,
     }
 
 
@@ -158,16 +171,24 @@ def main():
             ft_fwd = r["forward_mean_ms"]
 
             for label, strats in STRATEGY_OPTIONS:
-                r = _run("bs_kernel", bs_kernel.beam_search, model, config,
-                         prompts, K, B, L_p, needed_pages, strats)
+                # Only the picker's default mode produces a meaningful
+                # picks histogram (forced modes always pick the forced
+                # strategy).
+                r = _run(
+                    "bs_kernel", bs_kernel.beam_search, model, config,
+                    prompts, K, B, L_p, needed_pages, strats,
+                    want_picks=(label == "default"),
+                )
                 if r["status"] == "OK":
                     delta = r["forward_mean_ms"] - ft_fwd
+                    picks_suffix = f"  picks={r['picks_str']}" if r.get('picks_str') else ""
                     line = (
                         f"  bs_kernel [{label:12s}]  "
                         f"fwd={r['forward_mean_ms']:6.2f}  "
                         f"Δft={delta:+6.2f}  "
                         f"step={r['decode_per_token_ms']:6.2f} ms  "
                         f"wall={r['wall_s']:5.1f}s  [{r['status']}]"
+                        f"{picks_suffix}"
                     )
                 else:
                     line = (

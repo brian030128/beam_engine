@@ -238,7 +238,11 @@ def _pack_batched_cascade_arrays_any_depth(
     kvp_arr = [_maybe(i, kvp_arr_per_level[i]) for i in range(n_levels)]
     kvi_arr = [_maybe(i, kvi_arr_per_level[i]) for i in range(n_levels)]
     kvl_arr = [_maybe(i, kvl_arr_per_level[i]) for i in range(n_levels)]
-    return qo_arr, kvp_arr, kvi_arr, kvl_arr
+    # Also return the host-side cumsum lists used to build qo_arr / kvp_arr.
+    # The cascade plan-state cache uses these as a signature: schedule is
+    # purely a function of per-level qo_indptr_h + kv_indptr_h, so two
+    # steps with identical lists share an identical schedule.
+    return qo_arr, kvp_arr, kvi_arr, kvl_arr, qo_arr_per_level, kvp_arr_per_level
 
 
 # ---------------------------------------------------------------------------
@@ -318,15 +322,27 @@ class BsKernelBackend:
     _shared_l0_cache_tensors: tuple | None = field(
         default=None, init=False, repr=False,
     )
+    # Host-side level-0 cumsums (qo_h, kvp_h) — needed by the plan-state
+    # cache signature when level-0 is fetched from the L0 tensor cache
+    # (which skips the per-level CPU list build for level 0).
+    _shared_l0_cache_h: tuple | None = field(
+        default=None, init=False, repr=False,
+    )
 
-    # SHARED-branch cascade plan_info cache. Same idea as the DEC_TAIL
-    # _decode_plan_info_cached cache: FlashInfer's cascade plan() does
-    # two .cpu() roundtrips + a Python scheduler over qo/kv groups +
-    # GPU tensor materialization for _pool_*_bufs. Skip it when (LCA,
-    # max_kv-doubling-bucket) is stable for the current (depth,
-    # pool_count, t_large) wrapper — the schedule is reusable, we
-    # just swap the content buffers on the wrapper.
-    # Key: (depth, pool_count, t_large) -> (lca_tuple, max_kv_at_plan).
+    # SHARED-branch cascade plan-state cache. FlashInfer's cascade
+    # ``wrapper.plan()`` does two ``.cpu()`` roundtrips + a Python
+    # scheduler over qo/kv groups + GPU tensor materialization for
+    # ``_pool_*_bufs``. Schedule is a pure function of per-level
+    # ``qo_indptr_h`` + ``kv_indptr_h``. On steps where these are
+    # byte-identical to the previous plan of the same wrapper, the
+    # schedule is fully reusable — we only need to overwrite the 4
+    # input buffers (concatenated qo_indptr / kv_indptr / kv_indices /
+    # last_page_len) on the wrapper and skip plan() entirely.
+    # Key: ``id(wrapper)``  →  ``(plan_key, plan_sig)``
+    #   plan_key = (depth, pool_count, t_large)
+    #   plan_sig = (qo_cumsum_per_level_tuple, kvp_cumsum_per_level_tuple)
+    # Hit when both match the current step's values. Miss → full
+    # re-plan and overwrite the entry.
     _shared_plan_cache: dict = field(default_factory=dict, init=False, repr=False)
 
     # Sub-phase trace for plan_decode_step. Enabled by env var
@@ -582,7 +598,7 @@ class BsKernelBackend:
             )
             inter_wrappers: list = []  # filled with one wrapper per inter level
             if need_replan:
-                qo_arr, kvp_arr, kvi_arr, kvl_arr = (
+                qo_arr, kvp_arr, kvi_arr, kvl_arr, _, _ = (
                     _pack_batched_cascade_arrays_any_depth(
                         levels_per_prompt, ps, device,
                         n_levels=dispatch_depth,
@@ -753,25 +769,21 @@ class BsKernelBackend:
 
         # SHARED — fused or non-fused cascade depending on pool_count.
         #
-        # Two-tier cache mirroring DEC_TAIL:
+        # Two-tier cache:
         #
-        # 1. Level-0 pack cache (qo[0], kvp[0], kvi[0], kvl[0] GPU tensors)
-        #    keyed by (lca_tuple, dispatch_depth). Level-0 content is
-        #    determined entirely by the per-prompt LCA prefix pages
-        #    (immutable while LCA is unchanged), and at long L_p the
-        #    level-0 build dominates pack time (~15k int32 entries in
-        #    kvi_arr[0] at L_p=30000/B=8).
+        # 1. Level-0 pack cache (qo[0], kvp[0], kvi[0], kvl[0] GPU tensors
+        #    + their host-side cumsum lists) keyed by (lca_tuple,
+        #    dispatch_depth). Level-0 content is determined entirely by
+        #    the per-prompt LCA prefix pages (immutable while LCA is
+        #    unchanged), and at long L_p the level-0 build dominates
+        #    pack time (~15k int32 entries in kvi_arr[0] at K=16/B=8/
+        #    L_p=30000).
         #
-        # 2. Cascade plan_info cache keyed by (depth, pool_count, t_large)
-        #    with a (lca_tuple, max_kv_at_plan) value. On cache hit we
-        #    skip wrapper.plan() entirely (which does 2 host roundtrips
-        #    + a Python scheduler + GPU pool_*_bufs materialization) and
-        #    instead replace just the kernel-input buffers on the
-        #    wrapper — the schedule is reusable while LCA is unchanged
-        #    and max_kv hasn't roughly doubled.
+        # 2. Plan-state cache (handled below at wrapper.plan dispatch).
+        #    Skips wrapper.plan() when the per-level qo_indptr_h +
+        #    kv_indptr_h are byte-identical to the wrapper's last plan
+        #    — schedule is a pure function of those.
         lca_tuple = tuple(last_lca_per_prompt)
-        cur_max_kv = max(current_pos)
-        plan_key = (dispatch_depth, pick.pool_count, pick.t_large)
 
         l0_hit = (
             self._shared_l0_cache_key is not None
@@ -779,7 +791,7 @@ class BsKernelBackend:
         )
         if l0_hit:
             qo0_t, kvp0_t, kvi0_t, kvl0_t = self._shared_l0_cache_tensors
-            qo_arr, kvp_arr, kvi_arr, kvl_arr = (
+            qo_arr, kvp_arr, kvi_arr, kvl_arr, qo_arr_h, kvp_arr_h = (
                 _pack_batched_cascade_arrays_any_depth(
                     levels_per_prompt, ps, device,
                     n_levels=dispatch_depth,
@@ -790,8 +802,11 @@ class BsKernelBackend:
             kvp_arr[0] = kvp0_t
             kvi_arr[0] = kvi0_t
             kvl_arr[0] = kvl0_t
+            # level-0 cumsums were skipped (skip_levels=(0,)); fill from cache.
+            qo_arr_h[0] = self._shared_l0_cache_h[0]
+            kvp_arr_h[0] = self._shared_l0_cache_h[1]
         else:
-            qo_arr, kvp_arr, kvi_arr, kvl_arr = (
+            qo_arr, kvp_arr, kvi_arr, kvl_arr, qo_arr_h, kvp_arr_h = (
                 _pack_batched_cascade_arrays_any_depth(
                     levels_per_prompt, ps, device,
                     n_levels=dispatch_depth,
@@ -801,18 +816,28 @@ class BsKernelBackend:
             self._shared_l0_cache_tensors = (
                 qo_arr[0], kvp_arr[0], kvi_arr[0], kvl_arr[0],
             )
+            self._shared_l0_cache_h = (qo_arr_h[0], kvp_arr_h[0])
         if trace_on:
             torch.cuda.synchronize()
             _t_shared_pack = time.perf_counter()
 
-        # Cascade plan_info buffer-swap cache was attempted but hangs the
-        # kernel at K=16/L_p=30000/B=8 — the FusedMultiLevelCascadeAttention
-        # wrapper's pool_*_bufs reference fine-grained per-CTA scheduler
-        # output that is harder to verify reusable than the simpler
-        # decode wrapper's plan_info. Reverted; only the level-0 pack
-        # cache above is active. The wrapper.plan() call is unchanged.
-        plan_hit = False  # always re-plan for now; revisit safely later
+        # Plan-state cache: schedule is a function of (depth, pool_count,
+        # t_large, per-level qo_indptr_h, per-level kv_indptr_h). When all
+        # match the wrapper's last plan, skip .plan() and just rebuild the
+        # 4 input buffers on the wrapper via torch.cat (the wrapper's
+        # ``run`` reads ``self._qo_indptr_buf`` etc. and is otherwise
+        # state-driven from pool_*_bufs which the cached schedule fixed).
+        # Hit rate target: ~85-93% in steady state (misses on off==0 page
+        # appends and fork-driven sub-grouping changes).
+        plan_key = (dispatch_depth, pick.pool_count, pick.t_large)
+        plan_sig = (
+            tuple(tuple(q) for q in qo_arr_h),
+            tuple(tuple(k) for k in kvp_arr_h),
+        )
+        plan_hit = False
         if pick.pool_count == 2:
+            # MLCA (non-fused) wrapper not yet plan-state-cached. Full
+            # re-plan every step.
             active_wrapper = wrappers.cascade_dual_wrappers[dispatch_depth]
             active_wrapper.plan(
                 qo_indptr_arr=qo_arr,
@@ -829,24 +854,39 @@ class BsKernelBackend:
             )
         else:
             active_wrapper = wrappers.cascade_wrappers[dispatch_depth]
-            # pool=1 forces a single CTA tile size (the picker's chosen
-            # T_large); pool=2 (handled in the if-branch above) routes
-            # through the dual non-fused path.
-            force_t = pick.t_large if pick.pool_count == 1 else None
-            active_wrapper.plan(
-                qo_indptr_arr=qo_arr,
-                paged_kv_indptr_arr=kvp_arr,
-                paged_kv_indices_arr=kvi_arr,
-                paged_kv_last_page_len=kvl_arr,
-                num_qo_heads=num_qo_heads,
-                num_kv_heads=num_kv_heads,
-                head_dim=head_dim,
-                page_size=ps,
-                causal=False,
-                q_data_type=dtype,
-                kv_data_type=dtype,
-                force_cta_tile_q=force_t,
-            )
+            cur = self._shared_plan_cache.get(id(active_wrapper))
+            plan_hit = cur is not None and cur == (plan_key, plan_sig)
+            if plan_hit:
+                # Reuse cached schedule. Overwrite only the 4 input buffers;
+                # pool_*_bufs / o_indptr_buf / partial_o / partial_lse /
+                # num_chunks_per_level on the wrapper are reusable as-is.
+                active_wrapper._qo_indptr_buf = torch.cat(qo_arr, dim=0)
+                active_wrapper._paged_kv_indptr_buf = torch.cat(kvp_arr, dim=0)
+                active_wrapper._paged_kv_indices_buf = torch.cat(kvi_arr, dim=0)
+                active_wrapper._paged_kv_last_page_len_buf = torch.cat(
+                    kvl_arr, dim=0)
+            else:
+                # pool=1 forces a single CTA tile size (the picker's chosen
+                # T_large); pool=2 (handled in the if-branch above) routes
+                # through the dual non-fused path.
+                force_t = pick.t_large if pick.pool_count == 1 else None
+                active_wrapper.plan(
+                    qo_indptr_arr=qo_arr,
+                    paged_kv_indptr_arr=kvp_arr,
+                    paged_kv_indices_arr=kvi_arr,
+                    paged_kv_last_page_len=kvl_arr,
+                    num_qo_heads=num_qo_heads,
+                    num_kv_heads=num_kv_heads,
+                    head_dim=head_dim,
+                    page_size=ps,
+                    causal=False,
+                    q_data_type=dtype,
+                    kv_data_type=dtype,
+                    force_cta_tile_q=force_t,
+                )
+                self._shared_plan_cache[id(active_wrapper)] = (
+                    plan_key, plan_sig,
+                )
         if trace_on:
             torch.cuda.synchronize()
             _t_shared_plan = time.perf_counter()
