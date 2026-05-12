@@ -378,6 +378,15 @@ class BsKernelBackend:
         dtype_bytes = torch.tensor([], dtype=dtype).element_size()
         max_depth = wrappers.max_depth
         trace_on = bool(int(os.environ.get("BS_KERNEL_TRACE_PLAN", "0")))
+        # Override fixed_split_size for the DEC_TAIL prefix wrapper plan.
+        # Default (empty) leaves FlashInfer's H100 default — which caps
+        # padded_batch_size at ~33 with 8 kv-heads, so at K=16/B≥4 the
+        # prefix prefill only splits each group into ≤2 kv-chunks. Forcing
+        # a smaller kv chunk (= more splits → more CTAs) is the lever we
+        # use to investigate the K=16 forward gap vs fasttree's two-stage
+        # decode (see medium-K analysis 2026-05-12).
+        _split_env = os.environ.get("BS_KERNEL_DEC_TAIL_PREFIX_SPLIT_PAGES", "").strip()
+        prefix_fixed_split: int | None = int(_split_env) if _split_env else None
         if trace_on:
             torch.cuda.synchronize()
             _t_start = time.perf_counter()
@@ -554,9 +563,13 @@ class BsKernelBackend:
                     )
                 )
                 # Plan all prefill levels [0 .. dispatch_depth-2].
+                # The shared-prefix (level 0) optionally takes a forced
+                # fixed_split_size from env (see prefix_fixed_split above)
+                # to push padded_batch_size above FlashInfer's H100 default
+                # at K=16/B≥4 shapes.
                 for li in range(n_prefill_levels):
                     pw = wrappers.dec_tail_prefill_wrappers[li]
-                    pw.plan(
+                    plan_kwargs = dict(
                         qo_indptr=qo_arr[li],
                         paged_kv_indptr=kvp_arr[li],
                         paged_kv_indices=kvi_arr[li],
@@ -569,6 +582,9 @@ class BsKernelBackend:
                         q_data_type=dtype,
                         kv_data_type=dtype,
                     )
+                    if li == 0 and prefix_fixed_split is not None:
+                        plan_kwargs["fixed_split_size"] = prefix_fixed_split
+                    pw.plan(**plan_kwargs)
                 # Levels 1..n_prefill_levels-1 are the intermediate
                 # wrappers passed to the merge context.
                 inter_wrappers = [

@@ -72,6 +72,7 @@ def _to_payload(c: Coefficients) -> dict:
         "num_sms": c.num_sms,
         "share_extra_us": c.share_extra_us,
         "dual_pool_extra_us": c.dual_pool_extra_us,
+        "dec_tail_extra_us": c.dec_tail_extra_us,
         "decode_us_per_beam_kv_token": c.decode_us_per_beam_kv_token,
         "decode_launch_us": c.decode_launch_us,
         "bw_efficiency_floor": c.bw_efficiency_floor,
@@ -90,6 +91,7 @@ def _from_payload(d: dict) -> Coefficients:
         num_sms=d.get("num_sms", 84),
         share_extra_us=d.get("share_extra_us", 0.0),
         dual_pool_extra_us=d.get("dual_pool_extra_us", 0.0),
+        dec_tail_extra_us=d.get("dec_tail_extra_us", 0.0),
         decode_us_per_beam_kv_token=d.get("decode_us_per_beam_kv_token", 0.0008),
         decode_launch_us=d.get("decode_launch_us", 6.0),
         # H100 fit from bench_dispatch_grid measurements: floor=0.5 gives

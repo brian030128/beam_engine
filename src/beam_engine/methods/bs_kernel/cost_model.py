@@ -145,6 +145,16 @@ class Coefficients:
     # Both default to 0; pass `autotune=True` to calibrate to fit them.
     share_extra_us: float = 0.0
     dual_pool_extra_us: float = 0.0
+    #   * `dec_tail_extra_us`  - per-workload (i.e. per-batched-prompt)
+    #     overhead added to T_dec_tail. The empirical DEC_TAIL gap at
+    #     mid-K (K=16) is dominated by per-prompt prefix-prefill work
+    #     that scales linearly with B — the FA2 prefill kernel re-reads
+    #     each prompt's shared prefix KV group-by-group, and at
+    #     packed_qo≈64 it doesn't reach the arithmetic intensity that
+    #     hides this. Multiplied by ``len(workloads)`` (=B at the call
+    #     site) inside ``cost_dec_tail_batch`` so the penalty scales
+    #     with batch size, not K. Default 0; tuned by autotune.py.
+    dec_tail_extra_us: float = 0.0
 
     # Decode-kernel per-(beam, kv-token) cost for the DEC_TAIL strategies.
     # Decode kernel is purpose-built for CTA_Q=1 and is bandwidth-bound
@@ -608,7 +618,11 @@ def cost_dec_tail_batch(
 
     # Merges: depth-1 boundaries (prefix→inter₁→…→tail).
     n_merges = depth - 1
-    return prefix_us + tail_us + n_merges * c.merge_us
+    # Per-batch-element penalty for unmodeled DEC_TAIL overhead
+    # (autotuned). Scales with B because the prefix-prefill cost grows
+    # group-by-group at mid-K shapes — see Coefficients.dec_tail_extra_us.
+    extra_us = len(workloads) * c.dec_tail_extra_us
+    return prefix_us + tail_us + n_merges * c.merge_us + extra_us
 
 
 def cost_per_beam(w: WorkloadShape, c: Coefficients) -> float:

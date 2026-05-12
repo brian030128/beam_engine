@@ -61,6 +61,13 @@ AUTOTUNE_GRID: list[tuple[int, int, int]] = [
     (16, 8192, 8), (32, 8192, 8), (64, 8192, 8),
     # B=32 — the cell where 3L_2POOL is mispicked when extras are 0
     (64, 8192, 32),
+    # Mid-K large-B cells where DEC_TAIL was empirically mispicked on
+    # H100 (sweep_paper_merged-20260512-1759, strategy_force-20260512-
+    # 201006). Without these in the autotune grid, dec_tail_extra_us
+    # has no signal to fit against and the picker keeps choosing
+    # DEC_TAIL where 1POOL is 2× faster in fwd.
+    (16,  8192, 16), (16,  8192, 32),
+    (16, 32768,  8), (16, 32768, 16),
 ]
 
 # Probe modes: filter sets passed to bs_kernel.beam_search. depth=3
@@ -73,16 +80,23 @@ MODE_FILTERS: dict[str, set[Strategy]] = {
     "2l2p":     {Strategy.SHARED_2L_2POOL},
     "3l1p":     {Strategy.SHARED_3L_1POOL, Strategy.SHARED_2L_1POOL},
     "3l2p":     {Strategy.SHARED_3L_2POOL, Strategy.SHARED_2L_2POOL},
+    # DEC_TAIL probes — depth=3 falls back to depth=2 on early decode
+    # steps that lack an intermediate group structure, same pattern as
+    # the 3l1p/3l2p fallbacks above.
+    "2ldt":     {Strategy.SHARED_2L_DEC_TAIL},
+    "3ldt":     {Strategy.SHARED_3L_DEC_TAIL, Strategy.SHARED_2L_DEC_TAIL},
 }
 
 # Map a picked Strategy → the mode label whose measurement is the
 # correct comparison point in _eval_regret.
 STRATEGY_TO_MODE: dict[Strategy, str] = {
-    Strategy.PER_BEAM:        "per_beam",
-    Strategy.SHARED_2L_1POOL: "2l1p",
-    Strategy.SHARED_2L_2POOL: "2l2p",
-    Strategy.SHARED_3L_1POOL: "3l1p",
-    Strategy.SHARED_3L_2POOL: "3l2p",
+    Strategy.PER_BEAM:           "per_beam",
+    Strategy.SHARED_2L_1POOL:    "2l1p",
+    Strategy.SHARED_2L_2POOL:    "2l2p",
+    Strategy.SHARED_3L_1POOL:    "3l1p",
+    Strategy.SHARED_3L_2POOL:    "3l2p",
+    Strategy.SHARED_2L_DEC_TAIL: "2ldt",
+    Strategy.SHARED_3L_DEC_TAIL: "3ldt",
 }
 
 # Search grid for the two free parameters. Widened on the dual-pool
@@ -92,6 +106,14 @@ STRATEGY_TO_MODE: dict[Strategy, str] = {
 SHARE_EXTRA_GRID_US = (0.0, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0)
 DUAL_POOL_EXTRA_GRID_US = (
     0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0,
+)
+# dec_tail_extra_us is multiplied by B (len(workloads)) at the call
+# site, so the per-step penalty at B=16 is 16× the value picked here.
+# Empirical gap at K=16/B=16 on H100 is ~5 ms/step ≈ 312 µs/layer ≈ a
+# few hundred µs · per-prompt at the picker's per-step cost scale —
+# grid spans up to 500 µs/prompt to cover that and beyond.
+DEC_TAIL_EXTRA_GRID_US = (
+    0.0, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0,
 )
 
 
@@ -296,40 +318,45 @@ def autotune(
     best_total = float("inf")
     best_share = 0.0
     best_dual = 0.0
+    best_dec_tail = 0.0
     best_worst = float("inf")
     best_n = 0
 
     for share_extra in SHARE_EXTRA_GRID_US:
         for dual_pool_extra in DUAL_POOL_EXTRA_GRID_US:
-            cand = replace(
-                coefficients,
-                share_extra_us=share_extra,
-                dual_pool_extra_us=dual_pool_extra,
-            )
-            total, worst, n = _eval_regret(
-                cand, times,
-                num_kv_heads=num_kv_heads,
-                head_dim=head_dim,
-                dtype_bytes=dtype_bytes,
-                suffix_len=suffix_len,
-            )
-            if n == 0:
-                continue
-            # Tie-break on worst-case regret to prefer smoother predictors.
-            if (total < best_total) or (
-                total == best_total and worst < best_worst
-            ):
-                best_total = total
-                best_worst = worst
-                best_share = share_extra
-                best_dual = dual_pool_extra
-                best_n = n
+            for dec_tail_extra in DEC_TAIL_EXTRA_GRID_US:
+                cand = replace(
+                    coefficients,
+                    share_extra_us=share_extra,
+                    dual_pool_extra_us=dual_pool_extra,
+                    dec_tail_extra_us=dec_tail_extra,
+                )
+                total, worst, n = _eval_regret(
+                    cand, times,
+                    num_kv_heads=num_kv_heads,
+                    head_dim=head_dim,
+                    dtype_bytes=dtype_bytes,
+                    suffix_len=suffix_len,
+                )
+                if n == 0:
+                    continue
+                # Tie-break on worst-case regret to prefer smoother predictors.
+                if (total < best_total) or (
+                    total == best_total and worst < best_worst
+                ):
+                    best_total = total
+                    best_worst = worst
+                    best_share = share_extra
+                    best_dual = dual_pool_extra
+                    best_dec_tail = dec_tail_extra
+                    best_n = n
 
     if verbose:
         avg = best_total / max(best_n, 1)
         print(
             f"[autotune] best share_extra_us={best_share} "
-            f"dual_pool_extra_us={best_dual}  "
+            f"dual_pool_extra_us={best_dual} "
+            f"dec_tail_extra_us={best_dec_tail}  "
             f"avg regret={avg*100:+.2f}%  worst={best_worst*100:+.2f}% "
             f"({best_n} cells)"
         )
@@ -338,6 +365,7 @@ def autotune(
         coefficients,
         share_extra_us=best_share,
         dual_pool_extra_us=best_dual,
+        dec_tail_extra_us=best_dec_tail,
     )
 
 
