@@ -60,6 +60,19 @@ class Strategy(Enum):
     SHARED_6L_DEC_TAIL = "shared_6l_dec_tail"
 
 
+# Default candidate set the production picker considers. Restricted to
+# four strategies after the K×B×L_p sweep (results/sweep_paper-*) showed
+# every winning pick fell into this set. The 2POOL and {4,5,6}L variants
+# are retained in the ``Strategy`` enum so autotune / ablation studies
+# can still address them by passing ``available_strategies`` explicitly.
+DEFAULT_STRATEGIES: frozenset[Strategy] = frozenset({
+    Strategy.PER_BEAM,
+    Strategy.SHARED_2L_1POOL,
+    Strategy.SHARED_3L_1POOL,
+    Strategy.SHARED_2L_DEC_TAIL,
+})
+
+
 # Helper map: (depth, family, pool_count) → Strategy enum value.
 # `family` ∈ {"shared", "dec_tail"}. For "shared", pool_count ∈ {1, 2};
 # for "dec_tail", pool_count is ignored (always uses 1-pool prefix).
@@ -659,7 +672,13 @@ def pick_strategy_batch(
     has at least N-2 intermediate levels (otherwise the cascade plan
     can't use an N-level layout consistently — flashinfer wraps a
     single ``num_levels`` per wrapper instance).
+
+    When ``available_strategies is None`` the picker defaults to
+    ``DEFAULT_STRATEGIES`` (PER_BEAM, SHARED_2L_1POOL, SHARED_3L_1POOL,
+    SHARED_2L_DEC_TAIL). Pass an explicit set to widen / override.
     """
+    if available_strategies is None:
+        available_strategies = DEFAULT_STRATEGIES
     debug: dict[str, float] = {}
 
     # Per-beam baseline.
@@ -682,9 +701,15 @@ def pick_strategy_batch(
     )
     enum_max_depth = min(c.max_dispatch_depth, batch_max_depth)
 
-    # Prefill cascade candidates.
+    # Prefill cascade candidates. Skip whole (depth, pool_count) combos
+    # whose Strategy isn't in ``available_strategies`` — avoids the
+    # ``cost_shared_batch`` call entirely (was ~5-10 µs each × 20 combos
+    # = significant for tiny workloads).
     for depth in range(2, enum_max_depth + 1):
         for pool_count in (1, 2):
+            s = _strategy_for(depth, "shared", pool_count)
+            if s not in available_strategies:
+                continue
             for t_large in T_LARGE_CHOICES:
                 cs = cost_shared_batch(
                     workloads, c,
@@ -693,17 +718,18 @@ def pick_strategy_batch(
                 )
                 tag = f"shared_d{depth}_p{pool_count}_t{t_large}"
                 debug[tag] = cs
-                s = _strategy_for(depth, "shared", pool_count)
                 candidates.append((s, cs, t_large, depth, pool_count))
 
     # DEC_TAIL candidates: prefix(/intermediates) prefill + decode tail +
     # merge. T_large doesn't apply to the tail (decode kernel is CTA_Q=1);
     # we record T_large=64 for the prefix-side picker hint.
     for depth in range(2, enum_max_depth + 1):
+        s = _strategy_for(depth, "dec_tail", 1)
+        if s not in available_strategies:
+            continue
         cs = cost_dec_tail_batch(workloads, c, depth=depth)
         tag = f"shared_d{depth}_dec_tail"
         debug[tag] = cs
-        s = _strategy_for(depth, "dec_tail", 1)
         candidates.append((s, cs, 64, depth, 1))
 
     if available_strategies is not None:
@@ -714,6 +740,10 @@ def pick_strategy_batch(
             # forks settle, or when depth>3 is requested but the
             # workload has only one intermediate level). Collapse depth-N
             # picks to the deepest supported depth at the same family.
+            #
+            # Because the upfront filter above skipped cost evaluation
+            # for non-allowed strategies, we have to re-evaluate costs
+            # for the expanded set here.
             _name_to_kind = {  # strategy → (depth, family, pool_count)
                 Strategy.PER_BEAM: (1, "per_beam", 1),
             }
@@ -736,6 +766,26 @@ def pick_strategy_batch(
                 for d_try in range(d - 1, 1, -1):
                     s_fallback = _strategy_for(d_try, family, pc)
                     expanded.add(s_fallback)
+            # Re-evaluate costs for any strategy in ``expanded`` that
+            # wasn't already in ``available_strategies`` (the upfront
+            # filter skipped them).
+            new_keys = expanded - set(available_strategies)
+            for depth in range(2, enum_max_depth + 1):
+                for pool_count in (1, 2):
+                    s = _strategy_for(depth, "shared", pool_count)
+                    if s in new_keys:
+                        for t_large in T_LARGE_CHOICES:
+                            cs = cost_shared_batch(
+                                workloads, c,
+                                depth=depth, pool_count=pool_count,
+                                t_large=t_large, fused_merge=fused_merge,
+                            )
+                            candidates.append((s, cs, t_large, depth, pool_count))
+            for depth in range(2, enum_max_depth + 1):
+                s = _strategy_for(depth, "dec_tail", 1)
+                if s in new_keys:
+                    cs = cost_dec_tail_batch(workloads, c, depth=depth)
+                    candidates.append((s, cs, 64, depth, 1))
             filtered = [cand for cand in candidates if cand[0] in expanded]
             if not filtered:
                 raise ValueError(

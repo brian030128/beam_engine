@@ -33,7 +33,7 @@ from ..decoding import (
     standard_decode_select,
     standard_prefill_select,
 )
-from ..methods.adaptive_pool import _pack_batched_cascade_arrays
+from ..methods.adaptive_pool import _adaptive_levels, _pack_batched_cascade_arrays
 from ..models.attention import AttentionContext
 from ..page_table import PageTable
 
@@ -322,16 +322,18 @@ class MlcaBackend:
             pos = current_pos[b]
             off = pos % ps
             bp_b = beams_per_prompt[b]
-            # _two_level_layout takes the unified pages list, but split-form
-            # beams have prefix + tail. Build the unified list lazily here;
-            # the LCA scan resumes from start_lca so the cost is bounded by
-            # the small per-beam tail rather than the full prefix.
-            pages_per_beam = [
-                bm.pages_prefix + bm.pages_tail for bm in bp_b
-            ]
+            # Split form (alias pages_prefix, only K tail references per
+            # prompt) avoids the O(K * L_p) concatenation of the original
+            # ``[bm.pages_prefix + bm.pages_tail for bm in bp_b]`` build.
+            # At max_levels=2, _adaptive_levels takes the fast path
+            # unconditionally and produces the same 2-level output as
+            # the now-retired _two_level_layout helper.
+            pages_prefix = bp_b[0].pages_prefix
+            pages_tails = [beam.pages_tail for beam in bp_b]
             lpl_per_beam = [off + 1] * K
-            levels, lca_b = _two_level_layout(
-                pages_per_beam, lpl_per_beam, K,
+            levels, _beam_order, lca_b = _adaptive_levels(
+                pages_prefix, pages_tails, lpl_per_beam, K,
+                max_levels=2,
                 start_lca=last_lca_per_prompt[b],
             )
             last_lca_per_prompt[b] = lca_b
@@ -394,6 +396,7 @@ def beam_search(
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
     return_timings: bool = False,
+    return_phase_timings: bool = False,
     select_at_prefill: PrefillSelect = standard_prefill_select,
     select_at_decode: DecodeSelect = standard_decode_select,
 ):
@@ -420,6 +423,7 @@ def beam_search(
         device=device,
         dtype=dtype,
         return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
         select_at_prefill=select_at_prefill,
         select_at_decode=select_at_decode,
     )

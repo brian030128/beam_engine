@@ -16,6 +16,8 @@ decode steps.
 
 from __future__ import annotations
 
+import os
+import time
 import numpy as np
 import torch
 from dataclasses import dataclass, field
@@ -301,6 +303,11 @@ class BsKernelBackend:
         default=0, init=False, repr=False,
     )
 
+    # Sub-phase trace for plan_decode_step. Enabled by env var
+    # BS_KERNEL_TRACE_PLAN=1. Each entry is a dict of per-phase ms +
+    # cache-hit flags for one step.
+    _plan_trace: list = field(default_factory=list, init=False, repr=False)
+
     def init_wrappers(
         self,
         *,
@@ -370,6 +377,10 @@ class BsKernelBackend:
         ps = page_size
         dtype_bytes = torch.tensor([], dtype=dtype).element_size()
         max_depth = wrappers.max_depth
+        trace_on = bool(int(os.environ.get("BS_KERNEL_TRACE_PLAN", "0")))
+        if trace_on:
+            torch.cuda.synchronize()
+            _t_start = time.perf_counter()
 
         # ---- Per-prompt: compute up-to-D_max-level decomposition + workload. ----
         levels_full_per_prompt: list[list] = []
@@ -395,12 +406,17 @@ class BsKernelBackend:
             )
             workloads.append(w)
 
+        if trace_on:
+            _t_decomp = time.perf_counter()
+
         # ---- Cost-model pick across the whole batch. ----
         pick = pick_strategy_batch(
             workloads, self.coefficients,
             fused_merge=self.fused_merge,
             available_strategies=self.available_strategies,
         )
+        if trace_on:
+            _t_pick = time.perf_counter()
 
         # ---- Choose dispatch depth + collapse layouts if needed. ----
         dispatch_depth = pick.depth if pick.share else 2
@@ -413,11 +429,18 @@ class BsKernelBackend:
         # ---- Dispatch. ----
         if pick.strategy == Strategy.PER_BEAM:
             # B*K independent paged-decode sequences in one launch.
-            flat_indptr = [0]
-            flat_indices: list[int] = []
-            flat_lpl: list[int] = []
-            write_pi_list: list[int] = []
-            write_po_list: list[int] = []
+            # Numpy-bridge build (mirrors paged.plan_decode_step): two
+            # passes to size the buffer and slice-fill, then one
+            # ``torch.from_numpy().to(device, non_blocking=True)`` per
+            # tensor — ~30x faster than ``torch.tensor(list, int32)`` on
+            # the multi-thousand-entry flat-indices list at high (B*K).
+            n_seqs = B * K
+            indptr_np = np.empty(n_seqs + 1, dtype=np.int32)
+            indptr_np[0] = 0
+            lpl_np = np.empty(n_seqs, dtype=np.int32)
+            write_pi_np = np.empty(n_seqs, dtype=np.int32)
+            write_po_np = np.empty(n_seqs, dtype=np.int32)
+            row = 0
             for b in range(B):
                 pos = current_pos[b]
                 off = pos % ps
@@ -426,31 +449,70 @@ class BsKernelBackend:
                 prefix_len = len(bp_b[0].pages_prefix)
                 tail_idx = pli - prefix_len
                 for beam in bp_b:
-                    flat_indices.extend(beam.pages_prefix)
-                    flat_indices.extend(beam.pages_tail)
-                    flat_indptr.append(len(flat_indices))
-                    flat_lpl.append(off + 1)
-                    write_pi_list.append(beam.pages_tail[tail_idx])
-                    write_po_list.append(off)
+                    indptr_np[row + 1] = (
+                        indptr_np[row]
+                        + len(beam.pages_prefix)
+                        + len(beam.pages_tail)
+                    )
+                    lpl_np[row] = off + 1
+                    write_pi_np[row] = beam.pages_tail[tail_idx]
+                    write_po_np[row] = off
+                    row += 1
+            total = int(indptr_np[n_seqs])
+            indices_np = np.empty(total, dtype=np.int32)
+            row = 0
+            for b in range(B):
+                for beam in beams_per_prompt[b]:
+                    start = indptr_np[row]
+                    pl = len(beam.pages_prefix)
+                    indices_np[start : start + pl] = beam.pages_prefix
+                    indices_np[start + pl : indptr_np[row + 1]] = beam.pages_tail
+                    row += 1
+
+            if trace_on:
+                _t_per_beam_build = time.perf_counter()
+
+            indptr_t = torch.from_numpy(indptr_np).to(device, non_blocking=True)
+            indices_t = torch.from_numpy(indices_np).to(device, non_blocking=True)
+            lpl_t = torch.from_numpy(lpl_np).to(device, non_blocking=True)
+            write_pi_t = torch.from_numpy(write_pi_np).to(device, non_blocking=True)
+            write_po_t = torch.from_numpy(write_po_np).to(device, non_blocking=True)
+            if trace_on:
+                torch.cuda.synchronize()
+                _t_per_beam_h2d = time.perf_counter()
+
             wrappers.decode_wrapper.plan(
-                indptr=torch.tensor(
-                    flat_indptr, dtype=torch.int32, device=device),
-                indices=torch.tensor(
-                    flat_indices, dtype=torch.int32, device=device),
-                last_page_len=torch.tensor(
-                    flat_lpl, dtype=torch.int32, device=device),
+                indptr=indptr_t,
+                indices=indices_t,
+                last_page_len=lpl_t,
                 num_qo_heads=num_qo_heads,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
                 page_size=ps,
             )
+            if trace_on:
+                torch.cuda.synchronize()
+                _t_per_beam_plan = time.perf_counter()
+                self._plan_trace.append({
+                    "strategy": "PER_BEAM",
+                    "depth": 1,
+                    "decomp_ms":         (_t_decomp        - _t_start) * 1000.0,
+                    "pick_ms":           (_t_pick          - _t_decomp) * 1000.0,
+                    "per_beam_build_ms": (_t_per_beam_build- _t_pick) * 1000.0,
+                    "per_beam_h2d_ms":   (_t_per_beam_h2d  - _t_per_beam_build) * 1000.0,
+                    "per_beam_plan_ms":  (_t_per_beam_plan - _t_per_beam_h2d) * 1000.0,
+                    # DEC_TAIL-specific fields zeroed for schema consistency.
+                    "prefix_plan_ms": 0.0,
+                    "decode_build_ms": 0.0,
+                    "decode_plan_ms": 0.0,
+                    "prefix_replan": False,
+                    "decode_full_plan": False,
+                })
             ctx = PagedAttentionContext(
                 is_prefill=False,
                 page_table=page_table,
-                kv_page_indices=torch.tensor(
-                    write_pi_list, dtype=torch.int32, device=device),
-                kv_page_offsets=torch.tensor(
-                    write_po_list, dtype=torch.int32, device=device),
+                kv_page_indices=write_pi_t,
+                kv_page_offsets=write_po_t,
                 decode_wrapper=wrappers.decode_wrapper,
             )
             # PER_BEAM uses natural order — no permute needed.
@@ -517,6 +579,10 @@ class BsKernelBackend:
             else:
                 # Cache-hit (depth=2 only): no intermediates.
                 inter_wrappers = []
+            if trace_on:
+                torch.cuda.synchronize()
+                _t_prefix_plan = time.perf_counter()
+                _prefix_replan = need_replan
 
             # ---- Build decode wrapper plan via numpy (single H2D each). ----
             BK = B * K
@@ -580,6 +646,9 @@ class BsKernelBackend:
             write_po_t = torch.from_numpy(write_po_np).to(
                 device, non_blocking=True,
             )
+            if trace_on:
+                torch.cuda.synchronize()
+                _t_decode_build = time.perf_counter()
 
             # Estimate current max per-beam kv_len cheaply (off + (last
             # page index) * page_size). Using current_pos[0] as a proxy
@@ -611,6 +680,9 @@ class BsKernelBackend:
                 wrappers.decode_wrapper._plan_info = (
                     self._decode_plan_info_cached
                 )
+            if trace_on:
+                torch.cuda.synchronize()
+                _t_decode_plan = time.perf_counter()
             ctx = DecodeTailCascadeContext(
                 page_table=page_table,
                 write_pi=write_pi_t,
@@ -619,6 +691,18 @@ class BsKernelBackend:
                 decode_wrapper=wrappers.decode_wrapper,
                 inter_wrappers=inter_wrappers,
             )
+            if trace_on:
+                self._plan_trace.append({
+                    "strategy": pick.strategy.name,
+                    "depth": pick.depth,
+                    "decomp_ms": (_t_decomp - _t_start) * 1000.0,
+                    "pick_ms": (_t_pick - _t_decomp) * 1000.0,
+                    "prefix_plan_ms": (_t_prefix_plan - _t_pick) * 1000.0,
+                    "decode_build_ms": (_t_decode_build - _t_prefix_plan) * 1000.0,
+                    "decode_plan_ms": (_t_decode_plan - _t_decode_build) * 1000.0,
+                    "prefix_replan": _prefix_replan,
+                    "decode_full_plan": need_decode_full_plan,
+                })
             return StepPlan(
                 ctx=ctx,
                 beam_order_per_prompt=beam_order_per_prompt,
@@ -714,7 +798,13 @@ def beam_search(
     *,
     page_size: int = 16,
     max_num_pages: int = 2048,
-    max_cascade_levels: int = 4,
+    # Default to 3: matches the deepest strategy in ``DEFAULT_STRATEGIES``
+    # (``SHARED_3L_1POOL``) and the picker's ``max_dispatch_depth=3``
+    # cap. Going deeper costs ``_adaptive_levels`` an extra intermediate-
+    # split iteration and ``_workload_from_levels`` an extra level
+    # entry, neither of which the picker can use. Override if widening
+    # ``available_strategies`` to include SHARED_4L+.
+    max_cascade_levels: int = 3,
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
     return_timings: bool = False,
@@ -751,7 +841,7 @@ def beam_search(
         fused_merge=fused_merge,
         available_strategies=available_strategies,
     )
-    return _shared_beam_search(
+    result = _shared_beam_search(
         model, config, prompt_ids, max_new_tokens, beam_width,
         backend=backend,
         page_size=page_size,
@@ -765,3 +855,70 @@ def beam_search(
         select_at_prefill=select_at_prefill,
         select_at_decode=select_at_decode,
     )
+    if int(os.environ.get("BS_KERNEL_TRACE_PLAN", "0")):
+        _dump_plan_trace(backend._plan_trace)
+    return result
+
+
+def _dump_plan_trace(trace: list) -> None:
+    """Print sub-phase summary of bs_kernel plan_decode_step.
+
+    Splits the trace into DEC_TAIL-path and PER_BEAM-path subsets and
+    prints each separately (PER_BEAM has different sub-phases from
+    DEC_TAIL).
+    """
+    import statistics
+    if not trace:
+        print("[bs_kernel plan-trace] no entries")
+        return
+
+    def _fmt_rows(subset, fields, n_total):
+        out = []
+        n = len(subset)
+        out.append(
+            f"  {'phase':<22} {'mean':>10} {'median':>10} "
+            f"{'p90':>10} {'p99':>10} {'total':>12}"
+        )
+        for f in fields:
+            xs = [r[f] for r in subset]
+            xs_sorted = sorted(xs)
+            mean = sum(xs) / n
+            med = statistics.median(xs)
+            p90 = xs_sorted[int(0.9 * (n - 1))]
+            p99 = xs_sorted[int(0.99 * (n - 1))]
+            total = sum(xs)
+            out.append(
+                f"  {f:<22} {mean:>10.3f} {med:>10.3f} "
+                f"{p90:>10.3f} {p99:>10.3f} {total:>12.2f}"
+            )
+        return out
+
+    pb = [r for r in trace if r.get("strategy") == "PER_BEAM"]
+    dt = [r for r in trace if r.get("strategy") != "PER_BEAM"]
+
+    print(f"\n[bs_kernel plan-trace] {len(trace)} steps "
+          f"(PER_BEAM: {len(pb)}, DEC_TAIL: {len(dt)})")
+
+    if dt:
+        n = len(dt)
+        n_prefix = sum(1 for r in dt if r["prefix_replan"])
+        n_decode = sum(1 for r in dt if r["decode_full_plan"])
+        print(f"\n  -- DEC_TAIL path ({n} steps) --")
+        print(
+            f"  prefix re-plans: {n_prefix}/{n} ({100.0*n_prefix/n:.1f}%)   "
+            f"decode full re-plans: {n_decode}/{n} ({100.0*n_decode/n:.1f}%)"
+        )
+        for line in _fmt_rows(dt, (
+            "decomp_ms", "pick_ms", "prefix_plan_ms",
+            "decode_build_ms", "decode_plan_ms",
+        ), n):
+            print(line)
+
+    if pb:
+        n = len(pb)
+        print(f"\n  -- PER_BEAM path ({n} steps) --")
+        for line in _fmt_rows(pb, (
+            "decomp_ms", "pick_ms",
+            "per_beam_build_ms", "per_beam_h2d_ms", "per_beam_plan_ms",
+        ), n):
+            print(line)

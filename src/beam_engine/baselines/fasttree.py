@@ -91,6 +91,44 @@ def _build_radix_tree_pages_single(
     nodes: list[KVTreeNode] = []
     node_pages: list[list[int]] = []
 
+    # Fast path: at high K, beams typically diverge on different tokens
+    # past the LCA, so the recursive walk emits exactly ``1 root + K
+    # leaves`` with no further branching. Build that flat shape directly
+    # to skip K+1 recursion frames and the per-node ``groups`` dict.
+    # Mirrors the bs_kernel ``_adaptive_levels`` fast-path for the
+    # analogous case. Disable via ``BE_FT_FASTPATH_RADIX=0`` for A/B.
+    import os as _os
+    _fast_enabled = _os.environ.get("BE_FT_FASTPATH_RADIX", "1") != "0"
+    if _fast_enabled and K >= 2 and all(tails) and all(len(t) > 0 for t in tails):
+        seen: set[int] = set()
+        all_distinct = True
+        for i in range(K):
+            seen.add(tails[i][0])
+            if len(seen) < i + 1:
+                all_distinct = False
+                break
+        if all_distinct:
+            # Root node (parent=-1), aliases shared_prefix, K children.
+            root = KVTreeNode()
+            root.parent = -1
+            root.id = 0
+            root.seqlen = len(shared_prefix)
+            root.num_children = K
+            root.requests = list(range(K))
+            nodes.append(root)
+            node_pages.append(shared_prefix)
+            # K leaf nodes (one per beam), each with run = full tail.
+            for i in range(K):
+                leaf = KVTreeNode()
+                leaf.parent = 0
+                leaf.id = i + 1
+                leaf.seqlen = len(tails[i])
+                leaf.num_children = 0
+                leaf.requests = [i]
+                nodes.append(leaf)
+                node_pages.append(tails[i])
+            return nodes, node_pages
+
     def walk(beams: list[int], tail_d: int, parent_id: int) -> None:
         tail_len = len(tails[beams[0]])
         if parent_id == -1:
@@ -551,6 +589,10 @@ class FastTreeBackend:
     para_threshs1: tuple[int, int] = (132, 528)
     para_threshs2: tuple[int, int] = (132, 132)
 
+    # Sub-phase trace for plan_decode_step (gated by FT_TRACE_PLAN=1).
+    # Each entry is a dict of per-phase ms timings for one step.
+    _plan_trace: list = field(default_factory=list, init=False, repr=False)
+
     def init_wrappers(
         self,
         *,
@@ -588,7 +630,13 @@ class FastTreeBackend:
         device: torch.device,
         last_lca_per_prompt: list[int],
     ) -> StepPlan:
+        import os as _os
+        import time as _time
         ps = page_size
+        trace_on = bool(int(_os.environ.get("FT_TRACE_PLAN", "0")))
+        if trace_on:
+            torch.cuda.synchronize()
+            _t0 = _time.perf_counter()
 
         # ---- Gather per-prompt prefixes + per-beam tails (by reference). ----
         # Aliasing is safe within one plan_decode_step: pages_prefix /
@@ -600,6 +648,8 @@ class FastTreeBackend:
             bp_b = beams_per_prompt[b]
             shared_prefix_per_prompt.append(bp_b[0].pages_prefix)
             tails_per_beam_per_prompt.append([beam.pages_tail for beam in bp_b])
+        if trace_on:
+            _t_gather = _time.perf_counter()
 
         # ---- Build the combined page-level radix tree. ----
         # All K beams of a prompt share ``pages_prefix`` by construction
@@ -609,6 +659,8 @@ class FastTreeBackend:
         tree_info, node_pages = _build_combined_radix_tree_pages(
             shared_prefix_per_prompt, tails_per_beam_per_prompt, K,
         )
+        if trace_on:
+            _t_radix = _time.perf_counter()
 
         # ---- Determine each leaf's partial-last-page count + expand to slots.
         leaf_partial_last: dict[int, int] = {}
@@ -618,9 +670,13 @@ class FastTreeBackend:
                 b_idx = rid // K
                 pos = current_pos[b_idx]
                 leaf_partial_last[i] = pos % ps + 1
+        if trace_on:
+            _t_partial = _time.perf_counter()
         node_slots = _expand_pages_to_slots(
             tree_info, node_pages, ps, leaf_partial_last,
         )
+        if trace_on:
+            _t_slots = _time.perf_counter()
 
         # ---- Build FastTree metadata for the kernel. ----
         meta = _build_metadata(
@@ -636,6 +692,9 @@ class FastTreeBackend:
             params=wrappers.ft_params,
             device=device,
         )
+        if trace_on:
+            torch.cuda.synchronize()
+            _t_meta = _time.perf_counter()
 
         # ---- Build write_slots[B*K]: where to write each beam's new K/V. ----
         write_slots: list[int] = []
@@ -652,6 +711,9 @@ class FastTreeBackend:
         write_slots_t = torch.tensor(
             write_slots, dtype=torch.int64, device=device,
         )
+        if trace_on:
+            torch.cuda.synchronize()
+            _t_write = _time.perf_counter()
 
         # ---- Allocate / reuse the per-step output buffer. ----
         if wrappers.out_buf is None or wrappers.out_buf.shape[0] < B * K:
@@ -669,6 +731,16 @@ class FastTreeBackend:
             meta=meta,
             out=out_buf,
         )
+        if trace_on:
+            self._plan_trace.append({
+                "gather_ms":  (_t_gather  - _t0) * 1000.0,
+                "radix_ms":   (_t_radix   - _t_gather) * 1000.0,
+                "partial_ms": (_t_partial - _t_radix) * 1000.0,
+                "slots_ms":   (_t_slots   - _t_partial) * 1000.0,
+                "meta_ms":    (_t_meta    - _t_slots) * 1000.0,
+                "write_ms":   (_t_write   - _t_meta) * 1000.0,
+                "n_nodes":    len(tree_info),
+            })
         # FastTree doesn't reorder beams; identity beam order.
         return StepPlan(ctx=ctx, beam_order_per_prompt=None, pick=None)
 
@@ -712,7 +784,7 @@ def beam_search(
         fasttree_params=fasttree_params,
         KV_SPLIT_SIZES=KV_SPLIT_SIZES,
     )
-    return _shared_beam_search(
+    result = _shared_beam_search(
         model, config, prompt_ids, max_new_tokens, beam_width,
         backend=backend,
         page_size=page_size,
@@ -724,3 +796,39 @@ def beam_search(
         select_at_prefill=select_at_prefill,
         select_at_decode=select_at_decode,
     )
+    import os as _os
+    if int(_os.environ.get("FT_TRACE_PLAN", "0")):
+        _dump_ft_plan_trace(backend._plan_trace)
+    return result
+
+
+def _dump_ft_plan_trace(trace: list) -> None:
+    """Print sub-phase summary of fasttree plan_decode_step."""
+    import statistics
+    if not trace:
+        print("[fasttree plan-trace] no entries")
+        return
+    n = len(trace)
+    fields = (
+        "gather_ms", "radix_ms", "partial_ms",
+        "slots_ms", "meta_ms", "write_ms",
+    )
+    print(f"\n[fasttree plan-trace] {n} steps")
+    n_nodes = [r["n_nodes"] for r in trace]
+    print(
+        f"  tree nodes per step: mean={sum(n_nodes)/n:.1f} "
+        f"min={min(n_nodes)} max={max(n_nodes)}"
+    )
+    print(f"  {'phase':<14} {'mean':>10} {'median':>10} {'p90':>10} {'p99':>10} {'total':>12}")
+    for f in fields:
+        xs = [r[f] for r in trace]
+        xs_sorted = sorted(xs)
+        mean = sum(xs) / n
+        med = statistics.median(xs)
+        p90 = xs_sorted[int(0.9 * (n - 1))]
+        p99 = xs_sorted[int(0.99 * (n - 1))]
+        total = sum(xs)
+        print(
+            f"  {f:<14} {mean:>10.3f} {med:>10.3f} "
+            f"{p90:>10.3f} {p99:>10.3f} {total:>12.2f}"
+        )

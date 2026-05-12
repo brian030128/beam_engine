@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass, field
 
 import flashinfer.page
+import numpy as np
 import torch
 import torch.nn.functional as F
 from flashinfer import (
@@ -140,6 +141,11 @@ class PagedBackend:
     name: str = "paged"
     use_split_pages: bool = False  # paged doesn't model "shared prefix" the way cascade does
 
+    # Sub-phase trace for plan_decode_step. Enabled by env var
+    # PAGED_TRACE_PLAN=1. Each entry is a dict of per-phase ms timings
+    # for one step.
+    _plan_trace: list = field(default_factory=list, init=False, repr=False)
+
     def init_wrappers(
         self,
         *,
@@ -177,39 +183,90 @@ class PagedBackend:
     ):
         from ..page_driver import StepPlan
 
+        import os as _os
+        import time as _time
+        trace_on = bool(int(_os.environ.get("PAGED_TRACE_PLAN", "0")))
+        if trace_on:
+            torch.cuda.synchronize()
+            _t0 = _time.perf_counter()
         ps = page_size
         # B*K independent paged-decode sequences in one launch.
-        flat_indptr = [0]
-        flat_indices: list[int] = []
-        flat_lpl: list[int] = []
-        write_pi_list: list[int] = []
-        write_po_list: list[int] = []
+        #
+        # Two-pass numpy build instead of the legacy
+        # ``torch.tensor(python_list, dtype=int32)`` path:
+        #   pass 1 — compute per-beam pages-length to size the indices
+        #            buffer + fill the scalar arrays (indptr, lpl,
+        #            write_pi, write_po)
+        #   pass 2 — slice-assign each beam's pages list into the
+        #            pre-allocated numpy buffer (numpy converts PyObject
+        #            ints in C, ~30x faster than torch.tensor on a
+        #            multi-million-entry Python list).
+        # Then a single ``torch.from_numpy().to(device, non_blocking=True)``
+        # per tensor lets the 5 small H2D copies overlap. Mirrors the
+        # numpy-bridge pattern bs_kernel uses for its decode-wrapper plan.
+        n_beams = B * K
+        indptr_np = np.empty(n_beams + 1, dtype=np.int32)
+        indptr_np[0] = 0
+        lpl_np = np.empty(n_beams, dtype=np.int32)
+        write_pi_np = np.empty(n_beams, dtype=np.int32)
+        write_po_np = np.empty(n_beams, dtype=np.int32)
+        row = 0
         for b in range(B):
             pos = current_pos[b]
             off = pos % ps
             pli = pos // ps
             for beam in beams_per_prompt[b]:
-                flat_indices.extend(beam.pages)
-                flat_indptr.append(len(flat_indices))
-                flat_lpl.append(off + 1)
-                write_pi_list.append(beam.pages[pli])
-                write_po_list.append(off)
+                indptr_np[row + 1] = indptr_np[row] + len(beam.pages)
+                lpl_np[row] = off + 1
+                write_pi_np[row] = beam.pages[pli]
+                write_po_np[row] = off
+                row += 1
+        if trace_on:
+            _t_pass1 = _time.perf_counter()
+        total = int(indptr_np[n_beams])
+        indices_np = np.empty(total, dtype=np.int32)
+        row = 0
+        for b in range(B):
+            for beam in beams_per_prompt[b]:
+                start = indptr_np[row]
+                end = indptr_np[row + 1]
+                indices_np[start:end] = beam.pages
+                row += 1
+        if trace_on:
+            _t_pass2 = _time.perf_counter()
+
+        indptr_t = torch.from_numpy(indptr_np).to(device, non_blocking=True)
+        indices_t = torch.from_numpy(indices_np).to(device, non_blocking=True)
+        lpl_t = torch.from_numpy(lpl_np).to(device, non_blocking=True)
+        write_pi_t = torch.from_numpy(write_pi_np).to(device, non_blocking=True)
+        write_po_t = torch.from_numpy(write_po_np).to(device, non_blocking=True)
+        if trace_on:
+            torch.cuda.synchronize()
+            _t_h2d = _time.perf_counter()
+
         wrappers.decode_wrapper.plan(
-            indptr=torch.tensor(flat_indptr, dtype=torch.int32, device=device),
-            indices=torch.tensor(flat_indices, dtype=torch.int32, device=device),
-            last_page_len=torch.tensor(flat_lpl, dtype=torch.int32, device=device),
+            indptr=indptr_t,
+            indices=indices_t,
+            last_page_len=lpl_t,
             num_qo_heads=num_qo_heads,
             num_kv_heads=num_kv_heads,
             head_dim=head_dim,
             page_size=ps,
         )
+        if trace_on:
+            torch.cuda.synchronize()
+            _t_plan = _time.perf_counter()
+            self._plan_trace.append({
+                "pass1_ms":     (_t_pass1 - _t0) * 1000.0,
+                "pass2_ms":     (_t_pass2 - _t_pass1) * 1000.0,
+                "h2d_ms":       (_t_h2d   - _t_pass2) * 1000.0,
+                "plan_call_ms": (_t_plan  - _t_h2d) * 1000.0,
+            })
         ctx = PagedAttentionContext(
             is_prefill=False,
             page_table=page_table,
-            kv_page_indices=torch.tensor(
-                write_pi_list, dtype=torch.int32, device=device),
-            kv_page_offsets=torch.tensor(
-                write_po_list, dtype=torch.int32, device=device),
+            kv_page_indices=write_pi_t,
+            kv_page_offsets=write_po_t,
             decode_wrapper=wrappers.decode_wrapper,
         )
         return StepPlan(ctx=ctx, beam_order_per_prompt=None, pick=None)
@@ -232,6 +289,7 @@ def beam_search(
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
     return_timings: bool = False,
+    return_phase_timings: bool = False,
     select_at_prefill: PrefillSelect = standard_prefill_select,
     select_at_decode: DecodeSelect = standard_decode_select,
 ):
@@ -246,16 +304,46 @@ def beam_search(
     """
     from ..page_driver import beam_search as _shared_beam_search
 
-    return _shared_beam_search(
+    backend = PagedBackend()
+    result = _shared_beam_search(
         model, config, prompt_ids, max_new_tokens, beam_width,
-        backend=PagedBackend(),
+        backend=backend,
         page_size=page_size,
         max_num_pages=max_num_pages,
         device=device,
         dtype=dtype,
         return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
         select_at_prefill=select_at_prefill,
         select_at_decode=select_at_decode,
     )
+    import os as _os
+    if int(_os.environ.get("PAGED_TRACE_PLAN", "0")):
+        _dump_paged_plan_trace(backend._plan_trace)
+    return result
+
+
+def _dump_paged_plan_trace(trace: list) -> None:
+    """Print sub-phase summary of paged plan_decode_step."""
+    import statistics
+    if not trace:
+        print("[paged plan-trace] no entries")
+        return
+    n = len(trace)
+    fields = ("pass1_ms", "pass2_ms", "h2d_ms", "plan_call_ms")
+    print(f"\n[paged plan-trace] {n} steps")
+    print(f"  {'phase':<14} {'mean':>10} {'median':>10} {'p90':>10} {'p99':>10} {'total':>12}")
+    for f in fields:
+        xs = [r[f] for r in trace]
+        xs_sorted = sorted(xs)
+        mean = sum(xs) / n
+        med = statistics.median(xs)
+        p90 = xs_sorted[int(0.9 * (n - 1))]
+        p99 = xs_sorted[int(0.99 * (n - 1))]
+        total = sum(xs)
+        print(
+            f"  {f:<14} {mean:>10.3f} {med:>10.3f} "
+            f"{p90:>10.3f} {p99:>10.3f} {total:>12.2f}"
+        )
 
 
