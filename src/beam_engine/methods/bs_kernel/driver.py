@@ -192,12 +192,20 @@ def _pack_batched_cascade_arrays_any_depth(
     device: torch.device,
     *,
     n_levels: int,
+    skip_levels: tuple = (),
 ):
     """Generalized batched-cascade-array packer for any ``n_levels >= 2``.
 
     Every prompt is expected to contribute exactly ``n_levels`` levels;
     the picker only emits depth=N when every prompt's adaptive layout
     can support N levels, so this invariant holds at the call site.
+
+    ``skip_levels`` — set of level indices to omit from the build (used
+    when the caller has cached GPU tensors for those levels from a
+    previous step and wants to skip the Python list extends + H2D copy
+    at the dominant level. The returned per-level lists have ``None`` at
+    skipped indices; the caller is responsible for substituting the
+    cached tensors back in.
     """
     qo_arr_per_level: list[list[int]] = [[0] for _ in range(n_levels)]
     kvp_arr_per_level: list[list[int]] = [[0] for _ in range(n_levels)]
@@ -210,6 +218,8 @@ def _pack_batched_cascade_arrays_any_depth(
             f"{len(levels)} levels, expected {n_levels}"
         )
         for li, (sizes, group_pages, group_lpl) in enumerate(levels):
+            if li in skip_levels:
+                continue
             for s in sizes:
                 qo_arr_per_level[li].append(qo_arr_per_level[li][-1] + s)
             for pages, lpl in zip(group_pages, group_lpl):
@@ -219,22 +229,15 @@ def _pack_batched_cascade_arrays_any_depth(
                 kvl_arr_per_level[li].append(
                     page_size if lpl == -1 else lpl)
 
-    qo_arr = [
-        torch.tensor(qo_arr_per_level[i], dtype=torch.int32, device=device)
-        for i in range(n_levels)
-    ]
-    kvp_arr = [
-        torch.tensor(kvp_arr_per_level[i], dtype=torch.int32, device=device)
-        for i in range(n_levels)
-    ]
-    kvi_arr = [
-        torch.tensor(kvi_arr_per_level[i], dtype=torch.int32, device=device)
-        for i in range(n_levels)
-    ]
-    kvl_arr = [
-        torch.tensor(kvl_arr_per_level[i], dtype=torch.int32, device=device)
-        for i in range(n_levels)
-    ]
+    def _maybe(i, lst):
+        if i in skip_levels:
+            return None
+        return torch.tensor(lst, dtype=torch.int32, device=device)
+
+    qo_arr = [_maybe(i, qo_arr_per_level[i]) for i in range(n_levels)]
+    kvp_arr = [_maybe(i, kvp_arr_per_level[i]) for i in range(n_levels)]
+    kvi_arr = [_maybe(i, kvi_arr_per_level[i]) for i in range(n_levels)]
+    kvl_arr = [_maybe(i, kvl_arr_per_level[i]) for i in range(n_levels)]
     return qo_arr, kvp_arr, kvi_arr, kvl_arr
 
 
@@ -302,6 +305,29 @@ class BsKernelBackend:
     _decode_max_kv_at_plan: int = field(
         default=0, init=False, repr=False,
     )
+
+    # SHARED-branch level-0 pack cache: at long L_p the level-0 (prefix)
+    # entry in kvi_arr is ~B * lca_pages int32 entries (~15k at K=16/B=8/
+    # L_p=30000), and building+H2D dominates shared_pack_ms. Level-0
+    # content is determined purely by the LCA prefix pages — invariant
+    # while last_lca_per_prompt is unchanged. Cache the 4 packed GPU
+    # tensors for level 0 keyed by (LCA tuple, dispatch_depth).
+    _shared_l0_cache_key: tuple | None = field(
+        default=None, init=False, repr=False,
+    )
+    _shared_l0_cache_tensors: tuple | None = field(
+        default=None, init=False, repr=False,
+    )
+
+    # SHARED-branch cascade plan_info cache. Same idea as the DEC_TAIL
+    # _decode_plan_info_cached cache: FlashInfer's cascade plan() does
+    # two .cpu() roundtrips + a Python scheduler over qo/kv groups +
+    # GPU tensor materialization for _pool_*_bufs. Skip it when (LCA,
+    # max_kv-doubling-bucket) is stable for the current (depth,
+    # pool_count, t_large) wrapper — the schedule is reusable, we
+    # just swap the content buffers on the wrapper.
+    # Key: (depth, pool_count, t_large) -> (lca_tuple, max_kv_at_plan).
+    _shared_plan_cache: dict = field(default_factory=dict, init=False, repr=False)
 
     # Sub-phase trace for plan_decode_step. Enabled by env var
     # BS_KERNEL_TRACE_PLAN=1. Each entry is a dict of per-phase ms +
@@ -726,15 +752,66 @@ class BsKernelBackend:
             )
 
         # SHARED — fused or non-fused cascade depending on pool_count.
-        qo_arr, kvp_arr, kvi_arr, kvl_arr = (
-            _pack_batched_cascade_arrays_any_depth(
-                levels_per_prompt, ps, device,
-                n_levels=dispatch_depth,
-            )
+        #
+        # Two-tier cache mirroring DEC_TAIL:
+        #
+        # 1. Level-0 pack cache (qo[0], kvp[0], kvi[0], kvl[0] GPU tensors)
+        #    keyed by (lca_tuple, dispatch_depth). Level-0 content is
+        #    determined entirely by the per-prompt LCA prefix pages
+        #    (immutable while LCA is unchanged), and at long L_p the
+        #    level-0 build dominates pack time (~15k int32 entries in
+        #    kvi_arr[0] at L_p=30000/B=8).
+        #
+        # 2. Cascade plan_info cache keyed by (depth, pool_count, t_large)
+        #    with a (lca_tuple, max_kv_at_plan) value. On cache hit we
+        #    skip wrapper.plan() entirely (which does 2 host roundtrips
+        #    + a Python scheduler + GPU pool_*_bufs materialization) and
+        #    instead replace just the kernel-input buffers on the
+        #    wrapper — the schedule is reusable while LCA is unchanged
+        #    and max_kv hasn't roughly doubled.
+        lca_tuple = tuple(last_lca_per_prompt)
+        cur_max_kv = max(current_pos)
+        plan_key = (dispatch_depth, pick.pool_count, pick.t_large)
+
+        l0_hit = (
+            self._shared_l0_cache_key is not None
+            and self._shared_l0_cache_key == (lca_tuple, dispatch_depth)
         )
+        if l0_hit:
+            qo0_t, kvp0_t, kvi0_t, kvl0_t = self._shared_l0_cache_tensors
+            qo_arr, kvp_arr, kvi_arr, kvl_arr = (
+                _pack_batched_cascade_arrays_any_depth(
+                    levels_per_prompt, ps, device,
+                    n_levels=dispatch_depth,
+                    skip_levels=(0,),
+                )
+            )
+            qo_arr[0] = qo0_t
+            kvp_arr[0] = kvp0_t
+            kvi_arr[0] = kvi0_t
+            kvl_arr[0] = kvl0_t
+        else:
+            qo_arr, kvp_arr, kvi_arr, kvl_arr = (
+                _pack_batched_cascade_arrays_any_depth(
+                    levels_per_prompt, ps, device,
+                    n_levels=dispatch_depth,
+                )
+            )
+            self._shared_l0_cache_key = (lca_tuple, dispatch_depth)
+            self._shared_l0_cache_tensors = (
+                qo_arr[0], kvp_arr[0], kvi_arr[0], kvl_arr[0],
+            )
         if trace_on:
             torch.cuda.synchronize()
             _t_shared_pack = time.perf_counter()
+
+        # Cascade plan_info buffer-swap cache was attempted but hangs the
+        # kernel at K=16/L_p=30000/B=8 — the FusedMultiLevelCascadeAttention
+        # wrapper's pool_*_bufs reference fine-grained per-CTA scheduler
+        # output that is harder to verify reusable than the simpler
+        # decode wrapper's plan_info. Reverted; only the level-0 pack
+        # cache above is active. The wrapper.plan() call is unchanged.
+        plan_hit = False  # always re-plan for now; revisit safely later
         if pick.pool_count == 2:
             active_wrapper = wrappers.cascade_dual_wrappers[dispatch_depth]
             active_wrapper.plan(
@@ -810,6 +887,8 @@ class BsKernelBackend:
                 "shared_pack_ms":  (_t_shared_pack  - _t_pick)      * 1000.0,
                 "shared_plan_ms":  (_t_shared_plan  - _t_shared_pack) * 1000.0,
                 "shared_write_ms": (_t_shared_write - _t_shared_plan) * 1000.0,
+                "shared_l0_hit":   bool(l0_hit),
+                "shared_plan_hit": bool(plan_hit),
             })
         return StepPlan(
             ctx=ctx,
@@ -966,8 +1045,16 @@ def _dump_plan_trace(trace: list) -> None:
         n = len(sh)
         from collections import Counter
         strat_counts = Counter(r["strategy"] for r in sh)
+        l0_hits = sum(1 for r in sh if r.get("shared_l0_hit"))
+        plan_hits = sum(1 for r in sh if r.get("shared_plan_hit"))
         print(f"\n  -- SHARED path ({n} steps) --")
         print(f"  strategy mix: {dict(strat_counts)}")
+        print(
+            f"  level-0 pack cache hits: {l0_hits}/{n} "
+            f"({100.0*l0_hits/n:.1f}%)   "
+            f"plan_info cache hits: {plan_hits}/{n} "
+            f"({100.0*plan_hits/n:.1f}%)"
+        )
         for line in _fmt_rows(sh, (
             "decomp_ms", "pick_ms",
             "shared_pack_ms", "shared_plan_ms", "shared_write_ms",

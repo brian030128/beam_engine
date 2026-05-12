@@ -37,7 +37,8 @@ from beam_engine.methods.bs_kernel.cost_model import Strategy
 from beam_engine.models.modeling_llama import LlamaForCausalLM
 
 
-MODEL_NAME = "meta-llama/Llama-3.1-8B"
+import os
+MODEL_NAME = os.environ.get("BE_TEST_MODEL", "meta-llama/Llama-3.1-8B")
 DEVICE = "cuda"
 DTYPE = torch.float16
 
