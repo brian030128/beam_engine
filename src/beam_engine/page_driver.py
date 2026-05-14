@@ -717,6 +717,23 @@ def beam_search(
     for beams in beams_per_prompt:
         beams.sort(key=lambda b: b.cum_log_prob, reverse=True)
 
+    # Explicit GPU-memory release before return — the per-layer KV
+    # slabs (hundreds of MB to GBs at long L_p / large max_pages) would
+    # otherwise linger in PyTorch's allocator cache after function-scope
+    # GC, defeating back-to-back benchmark runs that allocate fresh
+    # slabs in the same Python process (e.g. --warmup runs each method
+    # twice). Mirrors tree_driver.tree_batch_decode's tear-down.
+    for i in range(len(page_table.kv_cache_at_layer)):
+        page_table.kv_cache_at_layer[i] = None  # type: ignore[assignment]
+    page_table.kv_cache_at_layer.clear()
+    page_table._unified_kv = None  # type: ignore[assignment]
+    del page_table
+    del wrappers
+    del workspace_buffer
+    import gc as _gc
+    _gc.collect()
+    torch.cuda.empty_cache()
+
     if return_timings and return_picks:
         return beams_per_prompt, timings, picks_per_prompt
     if return_timings:

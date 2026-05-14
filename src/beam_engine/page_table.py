@@ -49,13 +49,28 @@ class PageTable:
         self.free_pages: list[int] = list(range(max_num_pages))
         self.allocated_pages: set[int] = set()
 
+        # One contiguous CUDA allocation for all layers, sliced into
+        # per-layer views. This avoids ``layer_num`` separate
+        # multi-GB-class allocations interleaved with model weights and
+        # activations — the prior pattern fragmented the allocator enough
+        # to push 8B / B=32 / K=32 / L_p=4 K / max_new=256 cells over the
+        # 80 GB H100 budget even when the analytical KV+model+activation
+        # total fit comfortably.
+        #
+        # Per-layer ``kv_cache_at_layer[i]`` is ``unified[i]`` — a
+        # zero-copy contiguous view of shape ``[2, max_pages, page_size,
+        # head_num, head_dim]``, identical to what callers used to
+        # receive when each layer had its own tensor. The flat
+        # slot-indexed view used by FastTree/DeFT (``kv[0].view(...)``)
+        # also still works because ``kv[0]`` is itself contiguous within
+        # the parent.
+        self._unified_kv = torch.zeros(
+            (layer_num, 2, max_num_pages, page_size, head_num, head_dim),
+            dtype=store_dtype,
+            device=self.device,
+        )
         self.kv_cache_at_layer: List[torch.Tensor] = [
-            torch.zeros(
-                (2, max_num_pages, page_size, head_num, head_dim),
-                dtype=store_dtype,
-                device=self.device,
-            )
-            for _ in range(layer_num)
+            self._unified_kv[i] for i in range(layer_num)
         ]
 
     def reset(self) -> None:

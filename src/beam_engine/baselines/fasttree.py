@@ -347,40 +347,82 @@ def _build_metadata(
     para_threshs2: list[int],
     params: FastTreeParams,
     device: torch.device,
+    wrappers: "_FastTreeWrappers | None" = None,
+    cache_key: tuple | None = None,
 ) -> _FTMeta:
-    Q_TILE_SIZE_PER_PHASE = list(params.TSQs)
-    KV_SPLIT_SIZE_PER_PHASE = [KV_SPLIT_SIZES[0], KV_SPLIT_SIZES[0]]
+    # Heuristic-loop cache. ``_tree_heuristic`` + ``_compute_parallelism`` is
+    # 0.5-1ms/step at B=4 K=32 multi_level_system shape, and re-runs 2-3
+    # iterations to converge each step. The decisions depend on tree
+    # structure (stable while no page boundary is crossed) and seqlens
+    # (root constant, leaves grow by ≤1 token/step within a page). For our
+    # workloads the decision is rock-stable between page boundaries, so we
+    # key the cache on (n_nodes, total_pages) — that invalidates exactly at
+    # page boundaries and on any structural change.
+    #
+    # Disable via BE_FT_PLAN_CACHE=0 for A/B.
+    import os as _os
+    _cache_enabled = (
+        wrappers is not None
+        and cache_key is not None
+        and _os.environ.get("BE_FT_PLAN_CACHE", "1") != "0"
+    )
+    cache_hit = (
+        _cache_enabled
+        and wrappers._heur_key == cache_key
+        and wrappers._heur_assignments is not None
+    )
+    if cache_hit:
+        node_assignments = wrappers._heur_assignments
+        Q_TILE_SIZE_PER_PHASE = list(wrappers._heur_q_tile)
+        KV_SPLIT_SIZE_PER_PHASE = list(wrappers._heur_kv_split)
+        node_to_reqs = wrappers._heur_node_to_reqs
+        # Heuristic mutated ``params`` (set_q_tile_sizes / set_kv_tile_sizes)
+        # on the original computation; restore so downstream uses see the
+        # converged values.
+        params.set_q_tile_sizes(list(wrappers._heur_q_tile))
+        params.set_kv_tile_sizes(list(wrappers._heur_kv_tsk))
+    else:
+        Q_TILE_SIZE_PER_PHASE = list(params.TSQs)
+        KV_SPLIT_SIZE_PER_PHASE = [KV_SPLIT_SIZES[0], KV_SPLIT_SIZES[0]]
 
-    node_assignments: list[int] = []
-    node_to_reqs: list[list[int]] = []
-    for it in range(3):
-        node_assignments = _tree_heuristic(tree_info, params)
-        parallelisms, node_to_reqs = _compute_parallelism(
-            tree_info,
-            node_assignments,
-            Q_TILE_SIZE_PER_PHASE,
-            KV_SPLIT_SIZE_PER_PHASE,
-            num_kv_heads,
-        )
-        if it == 0:
-            done = True
-            for phase in range(2):
-                if 0 < parallelisms[phase] < para_threshs1[phase]:
-                    KV_SPLIT_SIZE_PER_PHASE[phase] = KV_SPLIT_SIZES[1]
-                    done = False
-            if done:
-                break
-        elif it == 1:
-            if 0 < parallelisms[0] < para_threshs2[0]:
-                Q_TILE_SIZE_PER_PHASE = [Q_TILE_SIZE_PER_PHASE[1]] * 2
-                params.set_q_tile_sizes(Q_TILE_SIZE_PER_PHASE)
-                params.set_kv_tile_sizes([params.TSKs[1]] * 2)
-            elif 0 < parallelisms[1] < para_threshs2[1]:
-                Q_TILE_SIZE_PER_PHASE = [Q_TILE_SIZE_PER_PHASE[0]] * 2
-                params.set_q_tile_sizes(Q_TILE_SIZE_PER_PHASE)
-                params.set_kv_tile_sizes([params.TSKs[0]] * 2)
-            else:
-                break
+        node_assignments: list[int] = []
+        node_to_reqs: list[list[int]] = []
+        for it in range(3):
+            node_assignments = _tree_heuristic(tree_info, params)
+            parallelisms, node_to_reqs = _compute_parallelism(
+                tree_info,
+                node_assignments,
+                Q_TILE_SIZE_PER_PHASE,
+                KV_SPLIT_SIZE_PER_PHASE,
+                num_kv_heads,
+            )
+            if it == 0:
+                done = True
+                for phase in range(2):
+                    if 0 < parallelisms[phase] < para_threshs1[phase]:
+                        KV_SPLIT_SIZE_PER_PHASE[phase] = KV_SPLIT_SIZES[1]
+                        done = False
+                if done:
+                    break
+            elif it == 1:
+                if 0 < parallelisms[0] < para_threshs2[0]:
+                    Q_TILE_SIZE_PER_PHASE = [Q_TILE_SIZE_PER_PHASE[1]] * 2
+                    params.set_q_tile_sizes(Q_TILE_SIZE_PER_PHASE)
+                    params.set_kv_tile_sizes([params.TSKs[1]] * 2)
+                elif 0 < parallelisms[1] < para_threshs2[1]:
+                    Q_TILE_SIZE_PER_PHASE = [Q_TILE_SIZE_PER_PHASE[0]] * 2
+                    params.set_q_tile_sizes(Q_TILE_SIZE_PER_PHASE)
+                    params.set_kv_tile_sizes([params.TSKs[0]] * 2)
+                else:
+                    break
+
+        if _cache_enabled:
+            wrappers._heur_key = cache_key
+            wrappers._heur_assignments = node_assignments
+            wrappers._heur_q_tile = list(Q_TILE_SIZE_PER_PHASE)
+            wrappers._heur_kv_split = list(KV_SPLIT_SIZE_PER_PHASE)
+            wrappers._heur_kv_tsk = list(params.TSKs)
+            wrappers._heur_node_to_reqs = node_to_reqs
 
     Q_TILE_SIZE = Q_TILE_SIZE_PER_PHASE[0]
     # ``vnode_to_kv_chunks`` collects per-vnode KV-slot arrays as numpy
@@ -430,30 +472,42 @@ def _build_metadata(
                 vnode_to_q_offs.append(acc_q_len + split_q_off)
                 vnode_to_q_lens.append(vnode_q_len)
 
-    # req → vnode reduction metadata (stage 2)
-    per_req: list[list[int]] = [[] for _ in range(batch_size)]
-    for vidx, q in enumerate(vnode_to_q_entries):
-        per_req[q].append(vidx)
-    req_to_vnode_offs: list[int] = []
-    req_to_vnode_lens: list[int] = []
-    offset = 0
-    for r in range(batch_size):
-        req_to_vnode_offs.append(offset)
-        req_to_vnode_lens.append(len(per_req[r]))
-        offset += len(per_req[r])
-    req_to_vnode_entries = [v for sub in per_req for v in sub]
+    # req → vnode reduction metadata (stage 2). Vectorised with numpy:
+    # the Python list-of-lists + flatten was 0.1-0.3ms at typical sizes.
+    q_arr = np.asarray(vnode_to_q_entries, dtype=np.int32)
+    n_vnodes = q_arr.size
+    if n_vnodes > 0:
+        counts = np.bincount(q_arr, minlength=batch_size)
+        # ``argsort(stable)`` reorders vnode indices so that all vnodes for
+        # request r appear contiguously — exactly the kernel's expected
+        # ``req_to_vnode_entries`` layout.
+        req_to_vnode_entries_arr = np.argsort(q_arr, kind="stable").astype(np.int32)
+        req_to_vnode_lens_arr = counts.astype(np.int32)
+        req_to_vnode_offs_arr = np.empty(batch_size, dtype=np.int32)
+        req_to_vnode_offs_arr[0] = 0
+        np.cumsum(counts[:-1], out=req_to_vnode_offs_arr[1:])
+    else:
+        req_to_vnode_entries_arr = np.empty(0, dtype=np.int32)
+        req_to_vnode_lens_arr = np.zeros(batch_size, dtype=np.int32)
+        req_to_vnode_offs_arr = np.zeros(batch_size, dtype=np.int32)
 
     # Phase split + reorder vnodes by Q-tile size (matches fasttree.py).
     threshold = Q_TILE_SIZE_PER_PHASE[1]
-    above = [i for i, val in enumerate(vnode_to_q_lens) if val > threshold]
-    below = [i for i, val in enumerate(vnode_to_q_lens) if val <= threshold]
-    new_order = above + below
-    phase_node_nums = [len(above), len(below)]
-    phase_node_offsets = [0, len(above)]
-    vnode_to_q_lens = [vnode_to_q_lens[i] for i in new_order]
-    vnode_to_q_offs = [vnode_to_q_offs[i] for i in new_order]
-    vnode_to_kv_lens = [vnode_to_kv_lens[i] for i in new_order]
-    vnode_to_kv_offs = [vnode_to_kv_offs[i] for i in new_order]
+    q_lens_np = np.asarray(vnode_to_q_lens, dtype=np.int32)
+    q_offs_np = np.asarray(vnode_to_q_offs, dtype=np.int32)
+    kv_lens_np = np.asarray(vnode_to_kv_lens, dtype=np.int32)
+    kv_offs_np = np.asarray(vnode_to_kv_offs, dtype=np.int32)
+    above_mask = q_lens_np > threshold
+    above_idx = np.nonzero(above_mask)[0]
+    below_idx = np.nonzero(~above_mask)[0]
+    new_order = np.concatenate([above_idx, below_idx]).astype(np.int32) if n_vnodes > 0 else np.empty(0, dtype=np.int32)
+    phase_node_nums = [int(above_idx.size), int(below_idx.size)]
+    phase_node_offsets = [0, int(above_idx.size)]
+    q_lens_np = q_lens_np[new_order]
+    q_offs_np = q_offs_np[new_order]
+    kv_lens_np = kv_lens_np[new_order]
+    kv_offs_np = kv_offs_np[new_order]
+    q_entries_np = q_arr  # already int32; q_entries is not phase-reordered
 
     # Consolidate KV chunks into a single int32 numpy array + padding.
     pad = np.full(64, -1, dtype=np.int32)
@@ -461,40 +515,74 @@ def _build_metadata(
         kv_entries_np = np.concatenate(vnode_to_kv_chunks + [pad])
     else:
         kv_entries_np = pad.copy()
-    req_to_vnode_entries_np = np.asarray(
-        req_to_vnode_entries + [-1] * 64, dtype=np.int32,
+    req_to_vnode_entries_np = np.concatenate(
+        [req_to_vnode_entries_arr, np.full(64, -1, dtype=np.int32)]
     )
 
-    # Single host buffer + single H2D copy for all small int32 metadata.
-    # ``torch.from_numpy`` is zero-copy on host; ``.to(device)`` is one
-    # async memcpy per tensor — but using pinned memory + non_blocking
-    # lets them overlap. Most savings come from skipping the
-    # ``torch.tensor(list)`` Python-list-iteration path.
-    def _t(arr):
-        if isinstance(arr, np.ndarray):
-            return torch.from_numpy(arr).to(device, non_blocking=True)
-        return torch.from_numpy(
-            np.asarray(arr, dtype=np.int32),
-        ).to(device, non_blocking=True)
+    # Single H2D for all int32 metadata. Building one contiguous host buffer
+    # and copying it in a single ``.to(device)`` is ~9x fewer kernel launches
+    # than the prior tensor-per-array path; on multi_level_system this was
+    # ~0.5ms of the per-step CPU plan time.
+    arrays = (
+        kv_entries_np,                # 0
+        kv_offs_np,                   # 1
+        kv_lens_np,                   # 2
+        q_entries_np,                 # 3
+        q_offs_np,                    # 4
+        q_lens_np,                    # 5
+        req_to_vnode_entries_np,      # 6
+        req_to_vnode_offs_arr,        # 7
+        req_to_vnode_lens_arr,        # 8
+    )
+    sizes = [a.size for a in arrays]
+    starts = [0]
+    for s in sizes:
+        starts.append(starts[-1] + s)
+    big = np.concatenate(arrays) if starts[-1] > 0 else np.empty(0, dtype=np.int32)
+    big_t = torch.from_numpy(big).to(device, non_blocking=True)
+    def _slice(i):
+        return big_t[starts[i]:starts[i + 1]]
 
     n_q_entries = max(1, len(vnode_to_q_entries))
-    mid_o = torch.empty(
-        (n_q_entries, num_qo_heads, head_dim), dtype=torch.float32, device=device,
-    )
-    mid_lse = torch.empty(
-        (n_q_entries, num_qo_heads), dtype=torch.float32, device=device,
-    )
+    # Reuse mid_o, mid_lse across steps (allocated lazily / grown when needed).
+    if wrappers is not None:
+        cur_mid_o = wrappers._mid_o_buf
+        cur_mid_lse = wrappers._mid_lse_buf
+        need = (
+            cur_mid_o is None
+            or cur_mid_o.shape[0] < n_q_entries
+            or cur_mid_o.shape[1] != num_qo_heads
+            or cur_mid_o.shape[2] != head_dim
+        )
+        if need:
+            wrappers._mid_o_buf = torch.empty(
+                (n_q_entries, num_qo_heads, head_dim),
+                dtype=torch.float32, device=device,
+            )
+            wrappers._mid_lse_buf = torch.empty(
+                (n_q_entries, num_qo_heads),
+                dtype=torch.float32, device=device,
+            )
+        mid_o = wrappers._mid_o_buf[:n_q_entries]
+        mid_lse = wrappers._mid_lse_buf[:n_q_entries]
+    else:
+        mid_o = torch.empty(
+            (n_q_entries, num_qo_heads, head_dim), dtype=torch.float32, device=device,
+        )
+        mid_lse = torch.empty(
+            (n_q_entries, num_qo_heads), dtype=torch.float32, device=device,
+        )
 
     return _FTMeta(
-        vnode_to_kv_entries=_t(kv_entries_np),
-        vnode_to_kv_offs=_t(vnode_to_kv_offs),
-        vnode_to_kv_lens=_t(vnode_to_kv_lens),
-        vnode_to_q_entries=_t(vnode_to_q_entries),
-        vnode_to_q_offs=_t(vnode_to_q_offs),
-        vnode_to_q_lens=_t(vnode_to_q_lens),
-        req_to_vnode_entries=_t(req_to_vnode_entries_np),
-        req_to_vnode_offs=_t(req_to_vnode_offs),
-        req_to_vnode_lens=_t(req_to_vnode_lens),
+        vnode_to_kv_entries=_slice(0),
+        vnode_to_kv_offs=_slice(1),
+        vnode_to_kv_lens=_slice(2),
+        vnode_to_q_entries=_slice(3),
+        vnode_to_q_offs=_slice(4),
+        vnode_to_q_lens=_slice(5),
+        req_to_vnode_entries=_slice(6),
+        req_to_vnode_offs=_slice(7),
+        req_to_vnode_lens=_slice(8),
         mid_o=mid_o,
         mid_lse=mid_lse,
         phase_node_nums=phase_node_nums,
@@ -575,8 +663,18 @@ class _FastTreeWrappers(WrapperBundle):
     """Cached at backend startup. ``out_buf`` is reused across decode steps;
     ``ft_params`` carries autotuned (alpha, beta, gamma) cost-model
     coefficients for ``_tree_heuristic``.
+
+    The ``_heur_*`` slots cache the outputs of ``_tree_heuristic`` /
+    ``_compute_parallelism`` between consecutive decode steps. ``_mid_o_buf``
+    and ``_mid_lse_buf`` are persistent float32 scratch buffers reused
+    across steps instead of being reallocated.
     """
-    __slots__ = ("ft_params", "out_buf")
+    __slots__ = (
+        "ft_params", "out_buf",
+        "_heur_key", "_heur_assignments", "_heur_q_tile", "_heur_kv_split",
+        "_heur_kv_tsk", "_heur_node_to_reqs",
+        "_mid_o_buf", "_mid_lse_buf",
+    )
 
 
 @dataclass
@@ -611,6 +709,17 @@ class FastTreeBackend:
         # ``out_buf`` is sized once we know B*K at the first decode call; we
         # over-allocate to a generous bound so subsequent steps reuse it.
         wb.out_buf = None
+        # Heuristic-loop cache. Populated on the first plan_decode_step
+        # then reused while the tree topology + total page count are stable.
+        wb._heur_key = None
+        wb._heur_assignments = None
+        wb._heur_q_tile = None
+        wb._heur_kv_split = None
+        wb._heur_kv_tsk = None
+        wb._heur_node_to_reqs = None
+        # Persistent reduction-stage scratch tensors (sized as needed).
+        wb._mid_o_buf = None
+        wb._mid_lse_buf = None
         return wb
 
     def plan_decode_step(
@@ -679,6 +788,17 @@ class FastTreeBackend:
             _t_slots = _time.perf_counter()
 
         # ---- Build FastTree metadata for the kernel. ----
+        # Cache key: (n_nodes, B, K, total_pages). Invalidates exactly at
+        # page boundaries (when any beam appends a new tail page) and on
+        # structural change. The heuristic decision is stable between page
+        # boundaries — root seqlen is constant and leaf seqlens grow by ≤1
+        # token/step, well below the threshold for assignment flips.
+        total_pages = 0
+        for b in range(B):
+            total_pages += len(shared_prefix_per_prompt[b])
+            for tl in tails_per_beam_per_prompt[b]:
+                total_pages += len(tl)
+        cache_key = (len(tree_info), B, K, total_pages)
         meta = _build_metadata(
             tree_info=tree_info,
             node_slots=node_slots,
@@ -691,6 +811,8 @@ class FastTreeBackend:
             para_threshs2=list(self.para_threshs2),
             params=wrappers.ft_params,
             device=device,
+            wrappers=wrappers,
+            cache_key=cache_key,
         )
         if trace_on:
             torch.cuda.synchronize()

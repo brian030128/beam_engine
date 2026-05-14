@@ -246,6 +246,147 @@ def _pack_batched_cascade_arrays_any_depth(
 
 
 # ---------------------------------------------------------------------------
+# Decomp/workload cache
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _DecompCacheEntry:
+    """Cacheable part of one prompt's ``_adaptive_levels`` +
+    ``_workload_from_levels`` output.
+
+    Excludes ``last_page_len`` — that's per-step (``off + 1``) and is
+    patched in on every hit. Includes everything that's a pure function
+    of the page-list topology.
+
+    The cache key is a tuple of (id, len) tuples over pages_prefix and
+    every beam's pages_tail. List identity changes only on fork (a
+    parent's tail is copied to a fresh list, ``page_driver.py:680``);
+    list length changes only on page-boundary append (``off == 0``).
+    Within a 16-step page epoch with no fork, the key is invariant
+    and every step hits.
+    """
+    # The level structure with placeholder lpl entries. On cache hit we
+    # patch the leaf-level lpl in place before returning (this list is
+    # rebuilt fresh for the caller, so no aliasing into the caller's
+    # downstream state).
+    sizes_per_level: list                      # one list[int] per level
+    pages_per_level: list                      # one list[list[int]] per level
+    beam_order: list                           # length-K permutation
+    lca_b: int
+    # Cached WorkloadShape inputs that don't depend on lpl.
+    L_p: int
+    intermediate: object                       # IntermediateShape | None
+    # Per-leaf tail page-counts (for fast suffix_lens rebuild).
+    leaf_pages_lens: list
+
+
+def _build_decomp_key(
+    pages_prefix: list,
+    pages_tails: list,
+    max_depth: int,
+) -> tuple:
+    """One key tuple per prompt. Order-sensitive over beams (cache miss
+    if beams reorder, which doesn't happen in our drivers but would be
+    visible in the key)."""
+    return (
+        id(pages_prefix),
+        len(pages_prefix),
+        tuple((id(t), len(t)) for t in pages_tails),
+        max_depth,
+    )
+
+
+def _materialize_levels_from_cache(
+    entry: _DecompCacheEntry,
+    lpl: int,
+    page_size_sentinel: int = -1,
+) -> list:
+    """Build the levels list the dispatch code expects from a cached
+    entry. ``lpl`` is the current ``off + 1`` for this prompt — applies
+    to the leaf level only; intermediates use the ``page_size`` sentinel
+    (``-1``) which downstream substitutes with the true page size."""
+    levels = []
+    n_levels = len(entry.sizes_per_level)
+    for li in range(n_levels):
+        sizes = entry.sizes_per_level[li]
+        pages = entry.pages_per_level[li]
+        if li == n_levels - 1:
+            # Per-beam tail level: K entries of single-token lpls.
+            lpls = [lpl] * len(sizes)
+        else:
+            # Non-leaf level: page_size sentinel.
+            lpls = [page_size_sentinel] * len(sizes)
+        levels.append((sizes, pages, lpls))
+    return levels
+
+
+def _workload_from_cache(
+    entry: _DecompCacheEntry,
+    K: int,
+    page_size: int,
+    num_kv_heads: int,
+    head_dim: int,
+    dtype_bytes: int,
+    lpl: int,
+) -> WorkloadShape:
+    """Rebuild the ``WorkloadShape`` from cached structure + current
+    lpl. Equivalent to calling ``_workload_from_levels`` on the
+    materialised levels but skips the level-walk; suffix_lens is the
+    only field that depends on ``lpl``."""
+    suffix_lens = [
+        ((entry.leaf_pages_lens[i] - 1) * page_size + lpl)
+        if entry.leaf_pages_lens[i] > 0 else 0
+        for i in range(K)
+    ]
+    return WorkloadShape(
+        K=K,
+        L_p=entry.L_p,
+        suffix_lens=suffix_lens,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+        bytes_per_kv=2 * num_kv_heads * head_dim * dtype_bytes,
+        intermediate=entry.intermediate,
+    )
+
+
+def _entry_from_decomp(
+    levels: list,
+    beam_order: list,
+    lca_b: int,
+    K: int,
+    page_size: int,
+    num_kv_heads: int,
+    head_dim: int,
+    dtype_bytes: int,
+) -> tuple[_DecompCacheEntry, WorkloadShape]:
+    """Build the cache entry from a fresh ``_adaptive_levels`` output
+    (on cache miss). Also returns the current-step WorkloadShape so the
+    miss path doesn't pay a second pass."""
+    # Compute WorkloadShape via the existing helper (this also derives
+    # L_p and intermediate, which we need for the entry).
+    w = _workload_from_levels(
+        levels, K, page_size, num_kv_heads, head_dim, dtype_bytes,
+    )
+    # Tease apart the levels into (sizes, pages, lpl) parallel lists.
+    sizes_per_level = [lv[0] for lv in levels]
+    pages_per_level = [lv[1] for lv in levels]
+    leaf_pages = levels[-1][1]
+    leaf_pages_lens = [len(leaf_pages[i]) if i < len(leaf_pages) else 0
+                       for i in range(K)]
+    entry = _DecompCacheEntry(
+        sizes_per_level=sizes_per_level,
+        pages_per_level=pages_per_level,
+        beam_order=beam_order,
+        lca_b=lca_b,
+        L_p=w.L_p,
+        intermediate=w.intermediate,
+        leaf_pages_lens=leaf_pages_lens,
+    )
+    return entry, w
+
+
+# ---------------------------------------------------------------------------
 # Backend
 # ---------------------------------------------------------------------------
 
@@ -345,6 +486,25 @@ class BsKernelBackend:
     # re-plan and overwrite the entry.
     _shared_plan_cache: dict = field(default_factory=dict, init=False, repr=False)
 
+    # Per-prompt decomp/workload cache. ``_adaptive_levels`` builds the
+    # cascade level tree by walking each beam's tail page list; at high B
+    # (e.g. SGLang multi_chain_reasoning B=32 K=4) that's ~0.25 ms × B
+    # of pure Python overhead per step (~7.5 ms total — dominant in
+    # plan_decode_step). The result is a pure function of
+    # (id+len(pages_prefix), tuple of (id+len) per beam.pages_tail,
+    # max_depth); ``last_page_len`` (= off+1) doesn't change the LEVEL
+    # STRUCTURE — it only feeds into the leaf-level lpl array and into
+    # ``WorkloadShape.suffix_lens``, both of which are cheap to rebuild.
+    # So we cache the structural part and patch lpl-dependent fields on
+    # every hit. In standard beam search, a fork copies the parent's
+    # tail list (``page_driver.py:680``) → new id → cache miss for that
+    # prompt; in non-fork cases (steady-state decode, the common case
+    # at high K — same regime that drives ``_shared_plan_cache`` to
+    # 94% hits) the cache hits within a 16-step page epoch and misses
+    # only on page-boundary tail-append steps.
+    # Key: prompt index b → ``_DecompCacheEntry`` (one entry per prompt).
+    _decomp_cache: dict = field(default_factory=dict, init=False, repr=False)
+
     # Sub-phase trace for plan_decode_step. Enabled by env var
     # BS_KERNEL_TRACE_PLAN=1. Each entry is a dict of per-phase ms +
     # cache-hit flags for one step.
@@ -434,27 +594,60 @@ class BsKernelBackend:
             _t_start = time.perf_counter()
 
         # ---- Per-prompt: compute up-to-D_max-level decomposition + workload. ----
+        # Fast path: check the per-prompt decomp cache before falling
+        # through to ``_adaptive_levels`` + ``_workload_from_levels``.
+        # See ``_DecompCacheEntry`` docstring for cache-key rationale.
+        # Disable via ``BS_KERNEL_DISABLE_DECOMP_CACHE=1`` for A/B
+        # comparison.
+        _cache_disabled = bool(int(
+            os.environ.get("BS_KERNEL_DISABLE_DECOMP_CACHE", "0")
+        ))
         levels_full_per_prompt: list[list] = []
         beam_order_full_per_prompt: list[list[int]] = []
         workloads: list[WorkloadShape] = []
+        decomp_hits = 0
         for b in range(B):
             pos = current_pos[b]
             off = pos % ps
+            lpl = off + 1
             bp_b = beams_per_prompt[b]
             pages_prefix = bp_b[0].pages_prefix
             pages_tails = [bm.pages_tail for bm in bp_b]
-            lpl_per_beam = [off + 1] * K
-            levels, beam_order, lca_b = _adaptive_levels(
-                pages_prefix, pages_tails, lpl_per_beam, K,
-                max_levels=max_depth,
-                start_lca=last_lca_per_prompt[b],
+            key = None if _cache_disabled else _build_decomp_key(
+                pages_prefix, pages_tails, max_depth,
             )
+            cached = (
+                None if _cache_disabled else self._decomp_cache.get(b)
+            )
+            if cached is not None and cached[0] == key:
+                entry: _DecompCacheEntry = cached[1]
+                levels = _materialize_levels_from_cache(entry, lpl)
+                beam_order = entry.beam_order
+                lca_b = entry.lca_b
+                w = _workload_from_cache(
+                    entry, K, ps, num_kv_heads, head_dim, dtype_bytes, lpl,
+                )
+                decomp_hits += 1
+            else:
+                lpl_per_beam = [lpl] * K
+                levels, beam_order, lca_b = _adaptive_levels(
+                    pages_prefix, pages_tails, lpl_per_beam, K,
+                    max_levels=max_depth,
+                    start_lca=last_lca_per_prompt[b],
+                )
+                if not _cache_disabled:
+                    entry, w = _entry_from_decomp(
+                        levels, beam_order, lca_b, K, ps,
+                        num_kv_heads, head_dim, dtype_bytes,
+                    )
+                    self._decomp_cache[b] = (key, entry)
+                else:
+                    w = _workload_from_levels(
+                        levels, K, ps, num_kv_heads, head_dim, dtype_bytes,
+                    )
             last_lca_per_prompt[b] = lca_b
             levels_full_per_prompt.append(levels)
             beam_order_full_per_prompt.append(beam_order)
-            w = _workload_from_levels(
-                levels, K, ps, num_kv_heads, head_dim, dtype_bytes,
-            )
             workloads.append(w)
 
         if trace_on:
@@ -548,6 +741,8 @@ class BsKernelBackend:
                     "strategy": "PER_BEAM",
                     "depth": 1,
                     "decomp_ms":         (_t_decomp        - _t_start) * 1000.0,
+                    "decomp_hits":       decomp_hits,
+                    "decomp_total":      B,
                     "pick_ms":           (_t_pick          - _t_decomp) * 1000.0,
                     "per_beam_build_ms": (_t_per_beam_build- _t_pick) * 1000.0,
                     "per_beam_h2d_ms":   (_t_per_beam_h2d  - _t_per_beam_build) * 1000.0,
@@ -754,6 +949,8 @@ class BsKernelBackend:
                     "strategy": pick.strategy.name,
                     "depth": pick.depth,
                     "decomp_ms": (_t_decomp - _t_start) * 1000.0,
+                    "decomp_hits": decomp_hits,
+                    "decomp_total": B,
                     "pick_ms": (_t_pick - _t_decomp) * 1000.0,
                     "prefix_plan_ms": (_t_prefix_plan - _t_pick) * 1000.0,
                     "decode_build_ms": (_t_decode_build - _t_prefix_plan) * 1000.0,
@@ -923,6 +1120,8 @@ class BsKernelBackend:
                 "strategy": pick.strategy.name,
                 "depth": pick.depth,
                 "decomp_ms":       (_t_decomp       - _t_start)     * 1000.0,
+                "decomp_hits":     decomp_hits,
+                "decomp_total":    B,
                 "pick_ms":         (_t_pick         - _t_decomp)    * 1000.0,
                 "shared_pack_ms":  (_t_shared_pack  - _t_pick)      * 1000.0,
                 "shared_plan_ms":  (_t_shared_plan  - _t_shared_pack) * 1000.0,

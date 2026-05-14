@@ -175,6 +175,7 @@ def run_one(
     prompts: list[list[int]],
     K: int,
     max_new: int,
+    max_pages_override: int | None = None,
 ) -> Row | None:
     B = len(prompts)
     L_p = len(prompts[0])
@@ -184,6 +185,8 @@ def run_one(
         + B * K * ((max_new + page_size) // page_size + 2)
         + 256
     )
+    if max_pages_override is not None:
+        needed_pages = max_pages_override
     extra_kwargs: dict = {}
     sig = inspect.signature(method_fn)
     if "max_num_pages" in sig.parameters:
@@ -230,6 +233,14 @@ def main():
     ap.add_argument("--distinct", action="store_true",
                     help="use B pairwise-distinct prompts instead of B copies "
                          "of one prompt (disables cross-prompt page sharing)")
+    ap.add_argument("--max_pages", type=int, default=None,
+                    help="override the computed max_num_pages cap (slab "
+                         "allocation size). Use for shared-prompt cells where "
+                         "the worst-case bound overallocates.")
+    ap.add_argument("--warmup", action="store_true",
+                    help="run each (method, cell) twice and discard the "
+                         "first iter (absorbs Triton-JIT autotune + first-"
+                         "call CUDA-graph capture).")
     args = ap.parse_args()
 
     methods = {k: METHODS[k] for k in args.methods if k in METHODS}
@@ -256,19 +267,32 @@ def main():
             base = _make_prompt(tok, L_p)
             prompts = [list(base) for _ in range(B)]
         for name, fn in methods.items():
-            print(f"  {name:<14} K={K:<3d} L_p={L_p:<6d} B={B:<2d}", end=" ", flush=True)
-            t0 = time.perf_counter()
-            row = run_one(name, fn, model, config, prompts, K, args.max_new)
-            t1 = time.perf_counter()
-            if row is not None:
-                rows.append(row)
-                print(
-                    f"prefill={row.prefill_ms:7.1f}ms  "
-                    f"decode_total={row.decode_total_ms:7.1f}ms  "
-                    f"per_pt_token={row.decode_per_prompt_per_token_ms:6.2f}ms  "
-                    f"({t1 - t0:5.1f}s wall)"
-                )
-            torch.cuda.empty_cache()
+            iters = 2 if args.warmup else 1
+            for it in range(iters):
+                tag = "warmup " if (args.warmup and it == 0) else "       "
+                print(f"  {name:<14} {tag}K={K:<3d} L_p={L_p:<6d} B={B:<2d}", end=" ", flush=True)
+                t0 = time.perf_counter()
+                row = run_one(name, fn, model, config, prompts, K, args.max_new,
+                              max_pages_override=args.max_pages)
+                t1 = time.perf_counter()
+                if row is None:
+                    torch.cuda.empty_cache()
+                    break  # OOM / failure — don't bother retrying
+                # Discard warmup iteration's row.
+                if args.warmup and it == 0:
+                    print(
+                        f"discard          decode_total={row.decode_total_ms:7.1f}ms  "
+                        f"({t1 - t0:5.1f}s wall)"
+                    )
+                else:
+                    rows.append(row)
+                    print(
+                        f"prefill={row.prefill_ms:7.1f}ms  "
+                        f"decode_total={row.decode_total_ms:7.1f}ms  "
+                        f"per_pt_token={row.decode_per_prompt_per_token_ms:6.2f}ms  "
+                        f"({t1 - t0:5.1f}s wall)"
+                    )
+                torch.cuda.empty_cache()
 
     out = args.out
     if out is None:
