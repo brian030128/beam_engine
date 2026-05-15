@@ -116,8 +116,11 @@ def _beam_search_single(
     select_at_prefill: PrefillSelect = standard_prefill_select,
     select_at_decode: DecodeSelect = standard_decode_select,
 ) -> list[Beam]:
-    num_qo_heads = config.num_attention_heads
-    num_kv_heads = config.num_key_value_heads
+    from ..distributed import get_tp_world_size
+
+    tp_size = get_tp_world_size()
+    num_qo_heads = config.num_attention_heads // tp_size
+    num_kv_heads = config.num_key_value_heads // tp_size
     head_dim = config.head_dim
     num_layers = config.num_hidden_layers
 
