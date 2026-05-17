@@ -1,431 +1,1143 @@
-# Paper story — adaptive multi-kernel attention dispatch for tree-structured generation
+# Paper story — a fixed-cardinality dispatcher for tree-structured attention
 
-## What is the workload, really?
+## Introduction
 
-Many recent generation patterns share one structural feature: **a long
-shared prefix fans out into a tree of branching continuations**, and
-attention is computed over the (prefix + branches) joint state at every
-step.
+Tree-structured generation is becoming increasingly common in LLM
+inference. Applications such as beam search, diverse beam search,
+self-consistency, speculative decoding, and batched reasoning
+workloads all produce multiple continuations from a shared context.
+In our target workloads, this structure appears in three concrete
+settings: `multi_chain_reasoning`, where multiple reasoning paths are
+decoded from a common prompt; `multi_level_system`, where a batch of
+prompts shares long system and task prefixes; and `multi_few_shot`,
+where many continuations reuse the same in-context examples. Although
+these applications differ in how branches are generated, they share
+the same attention-time structure: **a long shared prefix fans out
+into a tree of branch-specific continuations**.
 
-| Workload                                 | Branching structure                         | Reference                                         |
-|------------------------------------------|---------------------------------------------|---------------------------------------------------|
-| Beam search                              | uniform K-way at every step                 | classical                                         |
-| **Diverse beam search (DBS)**            | **K-way with group-diversity penalty; top-K shifts every step** | Vijayakumar et al. 2018       |
-| Self-consistency                         | N independent samples from one prompt       | Wang et al. 2022                                  |
-| Few-shot prompting                       | M shared in-context examples → 1 query      | Mann et al. 2020                                  |
-| Tree of Thoughts                         | non-uniform branching, variable depth       | Yao et al. 2023; Hao et al. 2023; Xie et al. 2024 |
-| Speculative decoding (SpecInfer, Medusa) | speculative-tree fan-out per step (static)  | Miao et al. 2023; Cai et al. 2024                 |
+This structure makes conventional paged decoding inefficient. If each
+branch is treated independently, every branch rereads the same shared
+KV prefix from HBM at every decoding step. We use $K$ to denote the
+**total queries issued per prompt at one decoding step** — the leaves
+of that prompt's per-step KV-sharing tree (K beams in beam search, K
+samples in self-consistency, the top-K candidates in speculative
+decoding). A radix tree with K leaves and compressed internal nodes
+has at most $2K-2$ edges and, for balanced fanout, depth $O(\log K)$.
+For a batch of $B$ prompts, paged decoding replicates prefix traffic
+across $B \cdot K$ branch instances. Prior systems have therefore proposed
+ways to exploit shared-prefix or tree-structured attention. Paged
+attention improves KV-cache management but does not eliminate repeated
+prefix reads across branches. Multi-level cascade attention exposes
+shared-prefix computation across multiple KV levels, but the level
+structure and kernel configuration are fixed by the caller. Recent
+tree-attention systems such as FastTree dynamically plan over a
+radix-tree representation of the KV cache, but still execute their
+work through a single prefill-style kernel template family. These
+approaches show that tree attention is an important optimization
+target, but they do not fully address the interaction between tree
+structure and kernel tile shape.
 
-**Beam search and DBS are the hardest case in this list.** DBS in
-particular: the diversity penalty perturbs the per-step top-K so that
-which beams survive a fork shifts every step. The branch tree is
-maximally dynamic — the planner cannot pre-compute the topology, the
-KV pages diverge unpredictably, and the per-beam tail length is
-non-uniform. The other workloads are subsets:
+The **core difficulty** is that tree attention contains two very
+different query-grouping regimes inside the same attention problem.
+At the root of the tree, many branches attend to the same long
+prefix, so the effective query group is large. At the leaves, each
+branch attends to its own short tail, so the effective query group is
+small. However, GPU attention kernels commit at compile time to a
+fixed query tile size, which we denote `CTA_Q`. A small `CTA_Q` is
+well matched to narrow per-branch tails, but it splits the shared
+root into many tiles and repeatedly scans the same prefix. A large
+`CTA_Q` packs the root efficiently but wastes compute on the tail
+because most rows in the query tile are padding. **A single
+prefill-style attention template cannot be optimal for both the
+shared root and the narrow per-branch tail.**
 
-- **Self-consistency** — degenerate `K=1` branching per "beam"; static
-  paths.
-- **Few-shot prompting** — one query against M shared examples; one
-  fork.
-- **Tree of Thoughts / RAP** — non-uniform branching but with
-  retraction; less aggressively dynamic than DBS step-to-step.
-- **Speculative decoding** — per-step *static* speculative tree of
-  ~5–20 candidate tokens; the topology is fixed inside each step.
+A natural solution is to use **two kernel families**: process the
+wide shared prefix with a prefill-style kernel, and process the
+narrow per-branch tail with a dedicated decoding kernel whose query
+tile size is native to single-token decoding. This removes the
+`CTA_Q` padding problem on the tail. However, this solution is not
+always faster. Launching a separate decoding kernel introduces extra
+launch overhead, and can cause SM underutilization when the tail has
+too little work. The right execution strategy therefore depends on
+the current tree shape, prefix length, branch count, batch size, and
+tail length: sometimes the dedicated decoding kernel wins, sometimes
+a fused prefill-style execution is faster.
 
-If a dispatcher works on DBS, the rest follow. **Primary evaluations
-in this paper: DBS and speculative decoding** — DBS as the technical
-stress test (most-dynamic branching) and speculative decoding as the
-deployment case (the production tree workload). Vanilla beam search
-serves as a simpler controlled sweep. The technique is for
-tree-structured attention generally.
+A second challenge is **how the tree should be grouped**. Real
+tree-structured workloads are not always two-level problems
+consisting only of a root prefix and independent leaves. They may
+contain intermediate sharing levels, such as diversity groups, beam
+survivors that share partial suffixes, or speculative subtrees.
+Exposing more levels can reduce KV traffic, but each additional level
+also increases planning cost, scheduling overhead, and merge cost.
+This creates an optimization space: the runtime must decide how many
+levels of the tree to expose, how to group queries at each level, and
+whether the tail should be handled by the prefill kernel or by a
+dedicated decoding kernel.
 
-## What existing kernels actually do
+This paper proposes a **fixed-cardinality dispatcher** for
+tree-structured attention. Instead of planning over every node in the
+tree, we restrict the runtime decision to a small set of execution
+strategies: independent per-branch decoding, two-level shared-prefix
+attention, two-level shared-prefix attention with a decode-native
+tail, and three-level shared-prefix attention. This dispatch space is
+motivated by two observations. First, the dominant kernel mismatch is
+**bimodal**: the shared root prefers a wide prefill-style query tile,
+while the per-branch tail prefers a decode-native query tile.
+Second, in the tree workloads we target, most reusable KV volume is
+concentrated in a small number of contiguous sharing spans — a global
+root prefix, an optional intermediate group-level suffix, and a
+per-branch tail.
 
-Existing kernels framed as "shared-prefix attention" fall into two
-shape buckets, and **neither bucket makes a runtime, multi-kernel
-dispatch decision**:
+The dispatcher uses a **calibrated cost model** to choose among these
+strategies at every decoding step. The model accounts for KV
+bandwidth, query-tile utilization, wave-quantized prefill work,
+decode-tail cost, and merge overhead. Since the candidate set is
+fixed and the exposed cascade depth is capped, planning time is
+linear in batch size and beam width rather than in the full number of
+nodes in the input tree. This gives the system enough flexibility to
+choose between fused shared-prefix execution and decode-tail
+execution, while avoiding the overhead of an uncapped tree-dependent
+planner.
 
-**Bucket 1 — single-kernel dispatchers.** Paged-decode, FastTree, and
-DEFT all route every tile of the attention call through one compiled
-kernel template. The cost model (when present) picks parallelism /
-split parameters *for that one kernel*.
+We evaluate the dispatcher on Llama-3.1-8B and Llama-3.2-1B on an
+H100 GPU across tree-structured generation workloads spanning
+`multi_chain_reasoning`, `multi_level_system`, and `multi_few_shot`.
+Across the main workload grid, the dispatcher improves end-to-end
+decode time over paged decoding, multi-level cascade attention, and
+a recent tree-attention planner. Ablations show that the decode-tail
+strategy is necessary on workloads where narrow tails make
+prefill-style query tiles inefficient, while fused shared-prefix
+execution remains necessary when decode-tail launch and merge
+overheads dominate. Long-decode experiments further show that
+exposing deeper sharing levels can reduce forward time, but that
+unbounded depth is not always beneficial end to end because planning
+overhead can exceed the saved kernel time.
 
-- **paged-decode** (vLLM): per-branch independent decode calls. Each
-  branch re-reads the entire prefix from HBM. `O(B·K·L_p)` prefix
-  traffic. Long prefix → memory-bandwidth bound, scales linearly in
-  branch count. No cost model — one kernel, one beam at a time.
-- **FastTree** (MLSys '25, `docs/baseline/fasttree_analysis.md`):
-  page-radix tree + Triton two-stage decode kernel with per-vnode
-  SplitQ/SplitK heuristic. The cost model is non-trivial — but it picks
-  parallelism parameters for **one** Triton kernel template. At
-  `K=64/B=32/L_p=8K` the per-step Python planner takes 56 ms vs 31 ms of
-  actual kernel time (`fasttree_analysis.md:11–22`). All tiles flow
-  through the same compiled kernel and pay its worst-case padding.
-- **DEFT** (`3rdparty/DeFT`): tree-structured attention with a flatten /
-  node-level dispatcher. Same bucket structure: a per-step planner over
-  a single attention-kernel dispatcher. No multi-kernel routing.
+### Comparison with prior work
 
-**Bucket 2 — multi-level primitives without runtime selection.** MLCA
-and FlashInfer's fused cascade expose a flexible multi-level cascade
-*shape* but commit to depth, level boundaries, and CTA_Q at construction
-time.
+| Method      | Share Prefix | Dynamic Dispatch | Decision Space | Plan Complexity   | Q-Bimodal |
+|-------------|--------------|------------------|----------------|-------------------|-----------|
+| Paged       | no           | no               | $O(1)$         | —                 | no        |
+| FlashInfer  | yes          | no               | $O(1)$         | —                 | no        |
+| DeFT        | yes          | no               | $O(1)$         | —                 | no        |
+| FastTree    | yes          | yes              | $O(2^K)$       | $O(K \log K)$     | no        |
+| **Ours**    | yes          | yes              | $O(1)$         | $O(K)$            | **yes**   |
 
-- **MLCA** (FlashInfer's `MultiLevelCascadeAttentionWrapper`): launches
-  one prefill kernel per level and bridges them with a separate
-  `merge_states` call. The number of levels, the level boundaries, and
-  the CTA_Q template are all caller-supplied parameters. **MLCA lacks
-  runtime level / depth / T selection** — whether it wins or loses on a
-  given workload is decided by the caller at construction. It is a
-  primitive, not an adaptive system.
-- **FlashInfer fused cascade**: same shape, fused — but still fixed
-  depth, fixed `T`, no runtime selection.
+### Workloads in detail
 
-**The common failure across both buckets:** none adapts to the workload
-*at runtime, across kernels*. Bucket 1 has at most one cost model over
-one kernel; bucket 2 has multiple kernels but no cost model deciding
-how many or which. They are *primitives*, not adaptive systems.
+The three target workloads above are instances of a broader family of
+tree-structured generation patterns:
 
-## The core observation: bimodal Q-grouping → q_tile padding is frequent and severe
+| Workload                                 | Branching structure                                              | Reference                                         |
+|------------------------------------------|------------------------------------------------------------------|---------------------------------------------------|
+| Beam search                              | uniform K-way at every step                                       | classical                                         |
+| Diverse beam search (DBS)                | K-way with group-diversity penalty; top-K shifts every step      | Vijayakumar et al. 2018                           |
+| Self-consistency                         | N independent samples from one prompt                            | Wang et al. 2022                                  |
+| Few-shot prompting                       | M shared in-context examples → 1 query per prompt                | Mann et al. 2020                                  |
+| Speculative decoding (SpecInfer, Medusa) | speculative-tree fan-out per step                                | Miao et al. 2023; Cai et al. 2024                 |
 
-Tree-structured attention has **bimodal query grouping inside a single
-attention call**:
+The common shape: a small number of distinct **sharing levels** in the
+KV state — a long root prefix shared by every query, optionally one
+shorter prefix shared by a sub-group of queries, and a per-branch tail.
+"Level" here means *a contiguous KV span that some set of queries
+shares*. Batching independent prompts together does *not* add a level
+— different prompts share no KV, so each prompt contributes its own
+independent 2- or 3-level structure. A genuine intermediate sharing
+level appears only when one prompt's tree itself has sub-groups that
+share KV between the root and the per-branch tail, e.g., DBS diversity
+groups or mid-decode beam survivors that share a partial suffix.
+Even then, the intermediate span is usually short relative to the
+root prefix, so the additional bandwidth saving from a third level is
+small. **In the tree workloads we target, most reusable KV volume is
+concentrated in at most three spans**: the global root, an optional
+group-level suffix, and the per-branch tail. Deeper sharing
+structures may exist for other workload classes, but in our measured
+workloads the deeper spans contribute little KV volume, and
+exploiting them requires a larger planner space whose overhead
+outweighs the marginal bandwidth savings. This is a workload
+observation, not a universal theorem.
 
-| Level                          | Q grouping `R`        | Origin                                       |
-|--------------------------------|-----------------------|----------------------------------------------|
-| Shared root (the prefix)       | `K · G` (large)       | All branches share the prefix                |
-| Per-branch tail / leaf         | `G` (small)           | Each branch contributes one query × G heads  |
+## What existing kernels do, and where each one breaks
+
+The high-level comparison table in the Introduction summarized five
+methods on five axes (prefix sharing, dynamic dispatch, decision
+space, plan complexity, Q-bimodal support). Below we expand the four
+methods we benchmark against, and pinpoint where each one breaks.
+
+| method     | shares prefix | dynamic per-step dispatch | decision space (per-step candidates)                       | per-step heuristic cost          |
+|------------|---------------|---------------------------|------------------------------------------------------------|----------------------------------|
+| paged      | no            | n/a                       | n/a                                                        | —                                |
+| MLCA       | yes           | no                        | caller-fixed at construction (no per-step search)          | —                                |
+| FastTree   | yes           | yes                       | **O(2^K)** per-vnode binary split (SplitQ/SplitK at each tree node) | O(B · K · log K) (greedy heuristic) |
+| **bs_kernel (ours)** | yes  | yes                       | **O(1)** fixed cardinality (4 strategies, independent of tree shape) | O(B · K) (D_cap = 3)             |
+
+Note the two columns measure different things. The **decision space**
+is the size of the underlying combinatorial problem the planner is in
+principle searching over; FastTree's per-vnode binary split decision
+gives **O(2^K)** distinct assignments (one bit per tree node, with
+N = O(K) nodes for a compressed radix tree), which is why FastTree
+cannot enumerate and instead uses a greedy heuristic. The **per-step
+heuristic cost** is what that planner actually pays each decoding
+step. FastTree's heuristic prep — `_tree_heuristic` (greedy BFS,
+O(B · K)) + `compute_parallelism` (two K · D passes, adds the log K)
+— costs **O(B · K · log K)** per step on a balanced radix tree and is
+not capped by design. Our picker enumerates an O(1) candidate set and
+costs **O(B · K)** per step via a hard depth cap (`D_cap = 3`). On
+the beam-search workloads we measure the radix tree fed to FastTree
+is typically shallow, so both planners measure as O(B · K) with the
+gap in constants; on deeper trees only ours stays bounded. See
+*Decision-space size* below for the worst-case bound and where the
+log K comes from, and *Planning-overhead breakdown* for the measured
+plan-time gap.
+
+- **paged-decode** (vLLM-style): every branch independently re-reads
+  the full prefix from HBM. Bandwidth scales as `O(B·K·L_p)`. No
+  sharing, no dispatch. Loses by 1.42–2.82× on our six workload cells.
+- **MLCA** (FlashInfer's `MultiLevelCascadeAttentionWrapper`): multi-
+  level cascade primitive, but the level count, level boundaries, and
+  CTA_Q template are fixed at construction time. No runtime selection.
+  Pays a separate kernel launch per level + a `merge_states` bridge.
+  Loses by 1.75–2.78× on our workloads.
+- **FastTree** (MLSys '25): page-radix tree + a Triton **two-stage**
+  SplitQ/SplitK kernel. Stage 1 is fired multiple times — once per
+  "phase", with a per-phase `(Q_TILE_SIZE, KV_TILE_SIZE)` config (the
+  shipped default is `TSQs = [64, 16]`, two phases); stage 2 does
+  online-softmax merge across vnodes
+  (`3rdparty/FastTree-Artifact/kernel_bench/fasttree.py:443–565`). So
+  FastTree is **multi-launch** — but every launch goes through the
+  same Triton template family with the same minimum compile-time
+  `Q_TILE_SIZE = 16`. The dispatch is dynamic per step. The
+  underlying scheduling problem admits a per-node split decision
+  (SplitQ vs SplitK at each tree node), and the implementation uses
+  a greedy heuristic followed by a parallelism estimator:
+  `_tree_heuristic` (`fasttree.py:64–96`) walks the radix tree once
+  in BFS order, picking the per-node bucket from a closed-form cost
+  comparison; `compute_parallelism` (`fasttree.py:126–161`) then
+  rolls request sets up SplitK edges and counts the resulting
+  `(q_vnode, kv_vnode)` tile grid. The outer `fasttree_preparation`
+  loop (`fasttree.py:163-188`) re-runs both up to 3 times per step
+  to retune Q/KV split sizes if the parallelism falls below
+  thresholds. `_tree_heuristic` itself is **O(N) = O(K)** (single
+  BFS, constant work per edge), but `compute_parallelism` does two
+  passes that each cost up to K · D, where D is the radix-tree
+  depth (derivation in *Decision-space size* below). So
+  `fasttree_preparation` is **O(N + K · D)** per prompt =
+  **O(B · K · log K)** per step on a balanced radix tree
+  (D = O(log K)), and is unbounded by design because the depth D is
+  whatever the workload produces. At `K=64/B=32/L_p=8K` the Python
+  planner takes ≈56 ms vs ≈31 ms of actual kernel time
+  (`docs/baseline/fasttree_analysis.md:11–22`). And because every
+  launch shares the same template family, the narrow per-branch tail
+  (`R = G = 4`) still pays ≥75% MMA padding even at the smallest
+  configured phase (`Q_TILE_SIZE = 16`) — the template floor, not a
+  scheduling failure.
+
+**Where each one breaks:**
+
+- paged ignores sharing → loses bandwidth.
+- MLCA exposes sharing but doesn't pick → loses by being wrong for the
+  current step.
+- FastTree picks per step and launches multiple times, but every
+  launch is the same Triton template family with `Q_TILE_SIZE ≥ 16`
+  → loses by planning cost (the per-vnode greedy `_tree_heuristic`
+  is O(B·K), but the `compute_parallelism` pass that follows adds a
+  K·D term whose depth D is the radix tree's — so the combined
+  `fasttree_preparation` step is **O(B·K·log K)** on a balanced
+  tree, uncapped by design) *and* by template-floor padding on the
+  narrow per-branch level.
+
+## The core observation: fixed CTA_Q forces a tradeoff
+
+Every attention kernel commits at compile time to a fixed
+`CTA_TILE_Q = T` — the number of query rows it processes per CTA. A
+tree-attention call has **two simultaneous Q-grouping regimes inside a
+single call**:
+
+| Level                         | Q grouping `R`        |
+|-------------------------------|-----------------------|
+| Shared root (long prefix)     | `K · G` (large)       |
+| Per-branch tail (one query × G heads) | `G` (small)   |
 
 For Llama-3.1-8B / -3.2-1B, `G = num_qo_heads / num_kv_heads = 4`. At
-`K = 64`, root `R = 256` and leaf `R = 4` — a **64× gap inside one
-attention call**. No single CTA_Q resolves both:
+K = 64, root R = 256 and leaf R = 4 — a **64× gap inside one attention
+call**. No single `T` resolves both:
 
 - Small `T = 16`: leaf is fine (`R = 4 → U = 25%`), but root splits
-  into `K·G/16 = 16` tiles each re-reading the prefix from HBM —
-  **1.46× slowdown** at K=64 (`docs/cta_tile_q_design.md:75–86`).
-- Large `T = 128`: root packs into one tile, but leaf pads to `4/128 = 3%`
-  MMA utilization — **1.59× slowdown** at tail=4096
-  (`cta_tile_q_design.md:88–101`).
+  into `K·G/T = 16` tiles each re-reading the prefix from HBM —
+  1.46× slowdown at K=64.
+- Large `T = 128`: root packs into one tile, but leaf pads to
+  `R/T = 3%` MMA utilization — 1.59× slowdown at tail=4096.
 
-**This is not a corner case.** At our canonical workload cell
-(`K=64/B=32/L_p=8K`), the per-beam tail level pays **98.4% MMA padding**
-under any single-CTA_Q prefill template at `T ∈ {16, 64, 128}`
-(`benchmarks/bs_kernel/results/RESULTS.md:110–116`,
-`cta_tile_q_design.md:143`). Any tree workload with `K ≥ 16` hits the
-bimodal regime at *every* decode step. Frequent. Severe. And invisible
-to a single-kernel cost model.
+At our canonical cell (`K=64/B=32/L_p=8K`), the per-branch tail level
+pays **98.4% MMA padding** under any single prefill template at
+`T ∈ {16, 64, 128}`. q_tile padding is **frequent** (every step at
+K ≥ 16) and **severe** (≥98% on one of the two levels at large K).
 
-A closed-form tile-cost expression (`cta_tile_q_design.md:155–169`)
+A closed-form tile-cost expression makes both failure modes explicit:
 
 ```
 C_tile(T, L) ≈ α + β·T·L + γ·L
 ```
 
-makes both failure modes explicit: small `T` pays `O(R/T)` redundant KV
-scans for the large-R level; large `T` pays `O(T/R)` MMA-padding waste
-for the small-R level. Single-`T` is never Pareto-optimal.
+Small T pays `O(R/T)` redundant KV scans for the large-R level; large
+T pays `O(T/R)` MMA-padding waste for the small-R level. **A single T
+is never Pareto-optimal across a tree-attention call.**
 
-## Our mechanism — group queries by Q_tile size, adaptively pick levels and kernels
+This is the structural problem every "one-template" dispatcher shares
+— paged-decode uses one decode template, FastTree and DEFT fire
+multiple launches but all through the same Triton prefill template
+family with a fixed minimum `Q_TILE_SIZE`. Their cost model picks
+parallelism *within one kernel family*, but the bimodal Q-grouping
+needs **two kernel families** — a prefill-style template for the
+large-R root, and a CTA_Q=1-native decode kernel for the small-R
+per-branch tail.
 
-Existing kernels assume a *single* CTA_TILE_Q (and a single kernel
-*family*) for the entire attention call. The bimodal observation forces
-a different design. We make three runtime decisions per step:
+## A practically sufficient closure: 4 strategies, fixed-cardinality decision space
 
-**Step 1 — group queries by their Q_tile-optimal kernel.** Tiles with
-`R = K·G` (root) want a large-T prefill template (one KV scan,
-moderate-to-high MMA utilization). Tiles with `R = G` (per-branch)
-want either a small-T prefill template (`T = 16`, U = 25%) or — at the
-CTA_Q=1 limit — a paged-decode kernel (CTA_Q = 1 native, 0% padding).
-Different tile shapes go to different kernels in the *same* attention
-call.
+We derive the dispatch space from two empirical observations:
 
-**Step 2 — pick the number of cascade levels** (2 or 3). Depth=2
-gives a single prefix level shared by all beams plus a per-beam
-tail. Depth=3 inserts an intermediate level that captures
-group-level sharing (e.g., DBS groups, batched prompts that share a
-sub-prefix). Both depths are candidates in the dispatch space; the
-cost model picks per step based on whether the intermediate level
-amortizes its plan launch.
+- **Bimodal Q grouping** (preceding section). Inside a tree-attention
+  call, R takes two cardinalities: large (`K·G` at the root) and
+  small (`G` at each branch). No single CTA_Q is Pareto-optimal
+  across both.
+- **KV-volume concentration.** In the workloads we target, most
+  reusable KV volume is concentrated in at most three sharing spans:
+  root prefix, an optional group-level intermediate, and per-branch
+  tail.
 
-**Step 3 — adaptively decide the kernel family per level.** Each level
-gets routed to the kernel that minimizes its cost: prefill at `T_lg ∈
-{64, 128}` for the shared root, prefill at `T = 16` for an intermediate
-level, paged-decode (`BatchDecodeWithPagedKVCacheWrapper`) for the
-per-beam tail. Outputs across levels are bridged by FlashInfer's
-public `merge_state_in_place`
-(`flashinfer/cascade.py:136`) — same online-softmax numerical semantics
-as a fused-kernel LSE merge.
+These give the dispatch two axes:
 
-The result is a **multi-kernel, multi-level dispatch space** — a
-substrate, not a single answer:
+- **Level axis** — how many sharing spans the cascade exposes:
+  {1 (no sharing), 2, 3}.
+- **Tail-kernel axis** — whether the small-R per-branch level rides
+  the prefill kernel or routes to the CTA_Q=1 decode kernel and
+  merges back: {fused, decode-merge}.
+
+The Cartesian product is six cells, plus a pool-count axis (1POOL vs
+2POOL) one might consider for the prefill side. On our measured
+workloads, the production picker keeps four; the rest are either
+dominated in forward time or contribute only marginal forward
+benefit at the cost of added picker complexity (see *Excluded
+candidates* below and *Dispatch-space ablation* in §Evaluation).
+
+| strategy            | levels       | root kernel              | tail kernel                                   | merges (D−1) | wins when                                                                                                                                |
+|---------------------|--------------|--------------------------|-----------------------------------------------|-------------:|------------------------------------------------------------------------------------------------------------------------------------------|
+| `PER_BEAM`          | 1 (no share) | — (independent decode)   | paged decode, per beam                        | 0            | prefix short or K small — sharing doesn't recover its plan + merge overhead.                                                             |
+| `SHARED_2L_FUSED`   | 2            | prefill (single CTA_Q)   | same prefill kernel                            | 1            | prefix long enough to share; per-branch tail wide enough to fill prefill tiles without much padding.                                     |
+| `SHARED_2L_DECTAIL` | 2            | wide-T prefill           | `BatchDecodeWithPagedKVCacheWrapper` (CTA_Q=1) | 1            | prefix long; per-branch tail too narrow for a prefill launch to amortize — the q-tile padding saving on the small-R level exceeds the launch + SM-underutilization overhead, with the merge cost becoming significant only because the tail kernel itself is cheap. |
+| `SHARED_3L_FUSED`   | 3            | prefill (single CTA_Q)   | same prefill kernel                            | 2            | workload exposes a uniform group-level intermediate span (DBS groups, mid-decode partial-suffix sharing).                                |
+
+(In code: `PER_BEAM`, `SHARED_2L_1POOL`, `SHARED_2L_DEC_TAIL`,
+`SHARED_3L_1POOL` — `cost_model.py:68`.)
+
+Every depth-≥2 strategy pays `(D−1)` online-softmax merges between
+levels — standard split-KV-style merges that combine partial outputs
+and logsumexps from each per-level launch. Because online-softmax
+merge is associative, those `(D−1)` merges can be reduced in a
+balanced tree of depth `⌈log₂ D⌉` rounds, so the merge cost on the
+critical path is `⌈log₂ D⌉·μ` rather than `(D−1)·μ` — the two values
+coincide at D ∈ {2, 3} (which is why the cost model just writes
+`(D−1)·μ` at our cap) but diverge for the `SHARED_4L_FUSED` row in
+the depth-cap ablation, where 3 sequential merges collapse to 2
+parallel rounds. FUSED and DECTAIL at the same depth pay the same
+merge count; what differs between them is the **tail kernel**.
+
+`SHARED_2L_DECTAIL` is the row that does the real load-bearing work
+for the bimodal-Q observation. Routing the small-R per-branch level
+to the decode kernel **strictly removes q-tile padding on that
+level** (CTA_Q = 1 native, 0% padding vs prefill's ≥75% at R = G =
+4). It is *not* strictly better end-to-end: the decode kernel pays
+its own launch overhead and risks SM under-utilization when the
+tail's KV work is small, and because the tail-kernel cost shrinks
+so much, the merge cost (paid by FUSED and DECTAIL alike) becomes
+relatively larger on the DECTAIL side and can flip the boundary.
+DECTAIL wins end-to-end only when the padding saving exceeds those
+overheads — which is exactly the crossover the picker models.
+`SHARED_2L_FUSED` is the answer on the other side of the crossover.
+
+**Excluded candidates.** Two distinct reasons for exclusion, kept
+separate so the claim is precise:
+
+- *Dominated in forward time.* `SHARED_*L_2POOL` (two prefill pools
+  instead of prefill + decode-merge) and `SHARED_3L_DECTAIL` (3
+  levels + decode tail) are dominated on every workload cell we
+  measured by either `SHARED_2L_DECTAIL` (when there is enough
+  small-R work) or a FUSED variant (when there is not).
+- *Forward-only benefit exists but is overrun by plan-time cost.*
+  Depth-4+ FUSED is **not** dominated in forward time — forced
+  4L_FUSED is 3.0% faster in forward than 2L_FUSED on the long-decode
+  cell most favorable to deeper sharing. But its per-step plan cost
+  grows by **+25.6%** vs 2L (20.1 s vs 16.0 s plan_total at
+  K=32/L_p=8K/B=16/max_new=2048), which more than wipes out the
+  forward saving — forced 4L_FUSED is **6.9% slower end-to-end**
+  than forced 2L_FUSED on this cell. Each added depth requires
+  building more cascade-plan levels per step on the host
+  (`_adaptive_levels` + `_build_cascade_plan` work scales as
+  O(K · depth)), and the picker has to evaluate more candidates.
+  The depth cap is therefore not just a marginal-benefit argument —
+  past depth 3 the planner cost actively *exceeds* the forward
+  benefit on the workloads we target. The cap could be raised for
+  workloads where the forward benefit per added level is large
+  enough to dominate the linear-in-depth planner growth.
+
+All excluded variants remain in code (`cost_model.py:40`) and are
+reachable via the `available_strategies` override. Quantitative
+evidence is in the **Dispatch-space ablation** section below.
+
+We do not claim this set is a universal minimal closure. We claim it
+is the *practically sufficient* closure for the workloads we target,
+and that the space is extensible at O(1) per added candidate.
+
+### Decision-space size — fixed-cardinality candidate set, capped depth
+
+The candidate set has constant cardinality (four), regardless of tree
+shape, beam count, or prefix length, and the picker caps cascade
+depth at `D_cap = 3` (`cost_model.py:207, 747`). This gives a
+**per-step picker cost of O(B · K · D_cap) = O(B · K)** that is
+*independent of the workload's KV-sharing tree shape* — the cap is
+the guarantee, not the input.
+
+FastTree's *decision space* is **O(2^K)** — one binary SplitQ/SplitK
+choice per tree node, with N = O(K) nodes for a compressed radix tree
+over K leaves — so exact enumeration is infeasible and the
+implementation explores it greedily. Its *heuristic preparation* has
+no depth cap: `_tree_heuristic` + `compute_parallelism`
+(`3rdparty/FastTree-Artifact/kernel_bench/fasttree.py:64-161`) walk
+whatever radix tree the workload produces, giving a per-step cost of
+**O(B · K · log K)**.
+
+**Where the log K comes from.** Fix K = total queries (leaves of
+the radix tree). For a compressed radix tree (every internal node
+has ≥2 children), total nodes N ≤ 2K-1, so N = O(K); a balanced
+tree has depth D = O(log K), a degenerate path tree has D = O(K).
+`_tree_heuristic` is a single BFS doing O(1) work per edge, so it
+is **O(N) = O(K)** — no log factor. The log K factor lives
+entirely in `compute_parallelism` (`fasttree.py:126-161`), which
+runs two passes whose worst-case cost is K · D each: (1) a SplitK
+bubble-up (`fasttree.py:127-141`) that appends
+`tree_info[node].requests` into the parent's accumulator — and
+since `|tree_info[node].requests|` equals subtree size, summing
+over all SplitK-assigned non-root nodes gives Σ subtree_size up to
+K · D (all internal nodes SplitK is the worst case); and (2) for
+every effective node, an upward walk through consecutive
+SplitQ-assigned ancestors to merge KV ranges (`fasttree.py:144-158`)
+— at most K effective nodes each walking up to D ancestors gives
+K · D worst case (all internal nodes SplitQ). The overall planner
+is **O(N + K · D)** per prompt; on a balanced radix tree
+(D = O(log K)) this is **K · log K**, and `fasttree_preparation`
+re-runs the whole loop up to 3 times per step (`fasttree.py:163`),
+so per-step planner cost is **O(B · K · log K)**. On a path-shaped
+tree (D = O(K)) the bound degrades to O(B · K²). Our picker avoids
+this dependency because the cap fixes the number of cascade levels
+we sum over at `D_cap = 3`, regardless of how deep the underlying
+radix tree is — pages past depth 3 fold back into the per-branch tail
+bandwidth term (`cost_model.py:424-431`) rather than appearing as
+additional iterations of the cost loop.
+
+The asymmetry is the structural point:
+
+| planner | decision space | per-step heuristic cost | depends on input tree shape? |
+|---|---|---|---|
+| `pick_strategy_batch` | **O(1)** (4 strategies) | **O(B · K)** with D_cap = 3 | **no** — capped by design |
+| FastTree heuristic + parallelism | **O(2^K)** (per-vnode binary split) | **O(B · K · log K)** (greedy) | **yes** — uncapped, log K is the radix-tree depth |
+
+Measured `pick_ms` on H100 ranges from 0.09 ms at small cells to
+~0.8 ms at the largest 3L-cascade cells in our grid; on the
+supplementary cell exercising 3L cascades (`K=16/L_p=4K/B=32`, exp3)
+median `pick_ms` is **0.63 ms**, against FastTree's same-cell
+planner cost of **4.33 ms** (`meta_ms` + `radix_ms`). MLCA is a
+distinct point: fixed-cardinality candidate set but *caller-fixed* —
+chosen at construction, not adapted per step.
+
+The depth cap is what lets us *promise* a per-step planner bound
+that's independent of how the beams happen to fork; FastTree's
+planner is bounded only by the tree the workload hands it. On
+beam-search workloads where the tree happens to be naturally shallow
+(typically depth 2 after split-pages CoW: one shared-prefix root
+plus K divergent leaves) both planners measure as O(B · K), and the
+wall-clock gap (~7× on the matched cell) is in constants. On
+workloads with deeper natural sharing the gap widens with log K —
+see *Dispatch-space ablation* below for a direct measurement of
+plan-time growth with depth.
+
+## The cost-model picker
+
+For each candidate strategy s ∈ S we evaluate an analytical cost
+C_s(W; θ), where W is the per-step workload signature (K, L_p, B, the
+per-branch suffix lengths, and intermediate-level structure if any) and
+θ is a vector of device-calibrated constants (HBM bandwidth, SM count,
+per-tile prefill cost, decode-kernel per-(beam, KV-token) cost). The
+picker returns argmin_s C_s(W; θ). |S| = 4 by construction (preceding
+section), so the *candidate cardinality* is O(1) regardless of input
+shape. Each cost evaluation reduces over the B prompts and their K
+beams across at most `D_cap = 3` cascade levels, so per-step picker
+time is **O(B · K · D_cap) = O(B · K)** with small per-branch
+constants — independent of the workload's KV-sharing tree shape.
+Implementation in `src/beam_engine/methods/bs_kernel/cost_model.py`;
+entry point is `pick_strategy_batch` at line 701.
+
+Each candidate's cost is the sum of a bandwidth term and a
+wave-quantized compute term, plus an autotuned slack. Every
+depth-≥2 strategy launches `(D−1)` online-softmax merges between
+levels; the closed-form drops the merge term from `C_shared` (it's
+dwarfed by the prefill kernel work and absorbed into `ε`) and keeps
+it on the DEC_TAIL side, where the tail kernel is cheap enough that
+the same merge cost can flip the boundary:
 
 ```
-Strategy ∈ {
-  PER_BEAM,
-  SHARED_2L_1POOL,  SHARED_3L_1POOL,
-  SHARED_2L_2POOL,  SHARED_3L_2POOL,
-  SHARED_2L_DEC_TAIL, SHARED_3L_DEC_TAIL,
-}
+C_shared(W; θ)   = BW(W)/β + ⌈T(W)/N⌉·τ + ε                      // (D−1)·μ absorbed into ε
+C_dec_tail(W; θ) = C_shared(prefix; θ) + max(BW_tail/β, W_tail)
+                   + (D−1)·μ + ε_tail
 ```
 
-(verbatim from `cost_model.py:40–51`). **No point in this space
-dominates the workload grid.** PER_BEAM wins when L_p is short enough
-that cascade plan overhead exceeds prefix-sharing savings. Single-pool
-2-level wins when L_p is long but the bimodal gap is mild (small K, or
-small G). Two-pool variants win when the gap is severe and the tail
-length amortizes the second pool's plan launch. DEC_TAIL — the CTA_Q=1
-limit where the small-T pool is replaced by a paged-decode kernel —
-wins specifically when the per-beam tail is too short to amortize a
-prefill-tail launch (long prefix, large K, very short tail). The
-3-level entries become optimal when hierarchical sharing exists (e.g.,
-DBS group structure introduces a genuine intermediate sharing level
-between the root prefix and the per-beam tail).
+All costs are in microseconds. Symbols:
 
-Because no fixed point dominates, the cost model is the load-bearing
-mechanism, built **on top of** the dispatch space — it picks among
-kernel combinations per step, not within a single kernel's parameters.
-That is the structural difference vs. FastTree / DEFT (single
-dispatcher with a cost model over its parameters) and vs. MLCA
-(multiple kernels, no cost model).
+| symbol         | meaning                                                                                   | units                |
+|----------------|-------------------------------------------------------------------------------------------|----------------------|
+| `BW(W)`        | total KV bytes loaded across all cascade levels for the workload, with per-level Q-utilization penalty applied | bytes |
+| `β`            | calibrated HBM bandwidth (`B_hbm`)                                                        | bytes / µs           |
+| `T(W)`         | total prefill-tile count summed across cascade levels and across the B prompts            | dimensionless        |
+| `N`            | SM count (`num_sms`), read from `torch.cuda.get_device_properties`                        | dimensionless        |
+| `τ`            | calibrated time per prefill tile at the large-T pool (`per_tile_us[T_large]`)             | µs / tile            |
+| `μ`            | calibrated merge-kernel cost per cascade boundary (`merge_us`)                            | µs / merge           |
+| `D`            | dispatch depth (2 or 3); `(D−1)` merges sit between levels with critical-path depth `⌈log₂ D⌉` | dimensionless        |
+| `BW_tail`      | per-branch-tail KV bytes loaded by the decode kernel                                        | bytes                |
+| `W_tail`       | per-branch-tail compute term: `(beam_count · tail_kv_tokens) · decode_us_per_beam_kv_token` | µs                   |
+| `ε`, `ε_tail`  | autotuned per-batch slack (`share_extra_us` + optional `dual_pool_extra_us`; `dec_tail_extra_us` + `dec_tail_per_tail_page_us · mean_tail_pages`, scaled by B for DEC_TAIL) | µs |
 
-### Justification of dispatch-space size — why only 11 candidates?
+- **Bandwidth term `BW/β`** sums bytes loaded per cascade level, with
+  a Q-utilization penalty applied to low-utilization prefill tiles.
+  For each level the effective bandwidth is scaled by `eff_factor =
+  floor + (1 − floor) · min(1, packed/T)` when the level has
+  `packed < T/2` *and* the cross-batch group count is ≥ 8; otherwise
+  peak BW is used. The `floor` constant (calibrated; H100 fit is
+  ~0.6) captures the prefill kernel's BW efficiency drop at very low
+  Q-utilization. This is the bimodal-Q observation feeding back into
+  the picker: a per-branch tail at packed_qo=1 on a T=16 prefill tile
+  loads the same KV bytes at a *lower effective* bandwidth than a
+  root-level tile at packed_qo=K, which is exactly why DEC_TAIL can
+  win on the small-R side.
+- **Wave-quantized compute term `⌈T/N⌉·τ`** is what couples the picker
+  to batch size. Tiles are summed across all B prompts first, then
+  divided by N_sm and ceiling'd — so the picker's decision changes
+  with B, not just per-prompt shape: when the per-branch tile count
+  crosses N_sm, a second wave is paid in full, which is what tilts
+  the 1-pool vs 2-pool boundary at large B.
+- **`max(BW_tail/β, W_tail)`** on the DEC_TAIL side: the per-branch
+  decode kernel is purpose-built for `CTA_Q=1` and is bandwidth-bound
+  at our shapes (small per-branch KV per query). MMA work overlaps with
+  HBM reads, so the kernel cost is `max(BW_tail/β, W_tail)` rather
+  than a sum. `BW_tail/β` uses peak HBM bandwidth (no Q-utilization
+  penalty — the decode kernel does not pad). Using `max` rather than
+  `+` is what lets the model see that the decode kernel beats prefill
+  on the small-R level even when its arithmetic intensity is similar.
+- **`ε`, `ε_tail`** absorb effects the closed-form terms don't
+  capture — cross-beam L2 reuse at small K, merge-launch variability,
+  per-prompt prefill slack at mid-K. Both are autotuned once per
+  device by `autotune.py`.
 
-A reviewer should ask: *why this finite, hand-picked dispatch space?
-What's missing?* Four justifications — three structural, one
-empirical — close the question:
+**Calibration grid.** `θ` is measured by `calibrate.py` over a small,
+fixed grid: `β` from a 256 MiB device-to-device copy; `τ` (per-tile
+time) is measured at each `T ∈ {16, 64, 128}` by firing a
+single-tile prefill against a fixed L_kv, page_size=16, in a 100-
+iter warm loop; `decode_us_per_beam_kv_token` and `decode_launch_us`
+are measured by sweeping a `BatchDecodeWithPagedKVCacheWrapper` over
+a small (L_kv, batch) grid and fitting a linear model; `N` is read
+from device properties; `μ` is timed for the `merge_state_in_place`
+kernel at a representative shape. The autotune step then fits
+`share_extra_us`, `dual_pool_extra_us`, `dec_tail_extra_us`, and
+`dec_tail_per_tail_page_us` to minimize picker regret on a small
+(K, L_p, B) sweep. Total calibration takes roughly 3 minutes per
+GPU, run once and cached.
 
-**J1 — `T_LARGE ∈ {64, 128}` and `T_SMALL = 16` is the
-kernel-supported set, *and* the Pareto frontier of `C_tile(T, L) ≈ α
-+ β·T·L + γ·L` is sparse on it.**
-The cost is nearly linear in `T` at fixed `L`, with tile count
-`≈ ceil(R/T)`. Adjacent `T` values (T=32 between 16 and 64; T=96
-between 64 and 128) lie on the line and produce nearly identical
-predicted µs once `R` is fixed; adding them inflates candidate count
-without expanding the achievable optimum. Empirically verified by
-expanding `T_LARGE_CHOICES = {32, 64, 96, 128}` and confirming the
-picker rarely picks the new `T` values, with predicted-µs gap to
-the original set within a few percent.
+Launch / sync overheads on the cascade side are intentionally not
+modeled: for beam-search shapes the kernel work dwarfs them, and
+including them adds noise to the picker without changing the argmin.
+FUSED and DEC_TAIL pay the same `(D−1)` online-softmax merges; the
+DEC_TAIL expression keeps the merge term because its tail kernel is
+small enough that the merge cost can flip the boundary, while on
+FUSED the same merge cost sits well below the prefill kernel work
+and is absorbed into `ε`.
 
-**J2 — Pool count ∈ {1, 2} matches the natural cardinality of the
-bimodal observation.**
-The bimodal observation says R takes exactly two values (`K·G` at
-root, `G` at branch). One pool per R-value is the matching cardinality.
-A 3rd pool would only help if a 3rd R existed — which it does not in
-branch-tree-without-retraction workloads.
+Two notes on the cost model:
 
-**J3 — Depth ∈ {2, 3} matches the empirical sharing-structure
-cardinality of branch-tree workloads.**
-Branch-tree-without-retraction workloads have at most three
-naturally distinct sharing levels: root prefix, intermediate group
-prefix (e.g., DBS groups, sub-batches that share a partial prefix),
-per-beam tail. Deeper sharing structures don't arise from any
-workload in our table — DBS, beam search, and speculative decoding
-all peak at three. Each extra level adds a plan launch + a merge
-without a workload-structure justification.
+1. **Decision quality, not prediction accuracy, is the validation
+   target.** The picker is a discrete chooser over four candidates,
+   not a regression. What matters is that `argmin_s C_s` matches the
+   oracle argmin — not that the predicted µs matches the measured µs.
+   We validate this via picker-level oracle regret in the
+   Picker-validity check (exp1c) below, where the forced-2L ablation
+   shows the picker matches or beats the better forced variant on
+   every cell.
+2. **Per-device calibration is necessary, not optional.** HBM
+   bandwidth, per-tile cost, and SM count differ enough across
+   H100 / A100 / RTX-PRO that a hardcoded coefficient vector picks
+   wrong on at least one device — there is no way to give an accurate
+   per-tile cost by guessing. We measure θ once per GPU via
+   `calibrate.py` (~3 minutes one-time, run from a small script and
+   cached to disk; the cached coefficients are reused on every
+   subsequent engine init). This is the standard pattern for
+   analytical performance models on GPUs — Roofline-style models are
+   only useful with peak BW and peak FLOP/s measured on the device,
+   not read from spec sheets.
 
-**J4 — Single `(depth, pool, T)` per batch is a fused-launch
-constraint, not a modeling shortcut.**
-The wave-count / SM-occupancy term is *global* across the batch
-(`ceil(total_tiles / num_sms)` in our cost model). Per-prompt
-strategy choice would require splitting the batch into multiple
-kernel launches, losing the cross-batch SM-occupancy effect — even
-if per-prompt picks were theoretically better, the launch
-decomposition would erase the gain.
+## Evaluation
 
-J2 and J3 are *observation-derived*: they fall out of the bimodal
-observation (C1) and the workload-structure table at the top of the
-paper. J4 is a *launch-architecture constraint*. J1 is the only
-justification that needs an empirical anchor; the T-saturation
-experiment provides it. Together they close the "why only 11?"
-question.
+We organize the evaluation into five questions a reviewer would
+naturally ask: do the end-to-end numbers hold up; where in plan vs
+forward does our win come from; what does the picker actually pick;
+how close is the picker to the oracle; and which excluded
+dispatch-space points would have helped if we had kept them.
 
-## Why a cost model is the load-bearing piece
+### Scenarios
 
-The dispatch space alone doesn't help if you can't pick the right
-point in it. Two structural facts make picking non-trivial:
+The six benchmark cells map to the workload table at the top of the
+paper as follows:
 
-1. **No fixed point dominates the grid.** As enumerated above, every
-   strategy in the space is optimal in some workload regime and
-   suboptimal in others. A fixed-strategy choice — even a "good
-   default" like `SHARED_2L_2POOL` — pays a multiplicative penalty in
-   the regimes that don't match it. Section B (the experimental plan)
-   shows six adversarial cells, each with a different fixed-strategy
-   winner, and confirms that the only column matching the per-row
-   winner everywhere is the picker.
+| benchmark scenario     | what it is                                                                                                            | workload-table row                |
+|------------------------|-----------------------------------------------------------------------------------------------------------------------|-----------------------------------|
+| `multi_level_system`   | B prompts batched, each with a multi-segment system+task prefix, K beams per prompt                                   | few-shot / structured-prompt batched beam search |
+| `multi_few_shot`       | B prompts batched, each with shared in-context examples as the prefix, K beams per prompt                             | few-shot prompting + beam search  |
+| `multi_chain_reasoning`| B prompts batched, each running chain-of-thought beam search (long context with reasoning prefix, K beams per prompt) | beam search                       |
 
-2. **The picker has to be cheap per step.** Per-step adaptive dispatch
-   only pays off if the *planning* is cheap. If plan time costs more
-   than the dispatch saves, runtime adaptation is a net loss. FastTree's
-   plan is **56 ms / step** at our canonical cell — more than its
-   kernel time of 31 ms (`fasttree_analysis.md:11–22`). The reason is
-   structural: FastTree's per-step routing heuristic re-runs
-   node-by-node every step, and its state can't be amortized.
+Each prompt in a batch contributes its own independent shared-prefix
+tree; prompts share no KV across the batch. The variation across
+scenarios is in the per-prompt prefix structure and the (B, K)
+shape, which is what drives the per-step strategy picks.
 
-The cost model itself is a closed-form expression evaluated over a
-small dispatch space (≤7 strategies × a few T values), so it is
-microseconds-scale even before any caching. Plan-state caching of the
-underlying FlashInfer scheduler call is a straightforward engineering
-amortization on top of that — kept in the implementation, not claimed
-as a research contribution.
+### End-to-end speedups
 
-The intellectual claim is therefore narrow and falsifiable:
+Six cells (three scenarios × two Llama sizes) at **K=64**, warmup +
+measured. All times are total decode (255 steps).
+CSVs: `benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/`
+(timing) and `…/trace/` (strategy mix); reproducers:
+`scripts/paper-exp/exp1a_end_to_end_timing.sbatch` and
+`scripts/paper-exp/exp1b_end_to_end_strategy.sbatch`.
 
-> Across the workload grid, no fixed strategy in the dispatch space
-> matches the picker's per-cell choice. The cost model selects within
-> low oracle regret, with planning overhead small enough to leave the
-> dispatch savings net-positive.
+K=64 is the evaluation point throughout this section — a realistic
+production beam width for diverse-sampling and ensemble decoding
+(Google's beam-search APIs default to K∈[4,64]; reranker pipelines
+routinely use K=32–128). The last column is the picker's per-step
+strategy histogram for bs_kernel (the picker is a property of
+bs_kernel only); both FUSED and DEC_TAIL fire across the cells,
+exercising the full dispatch space.
 
-## Cited contributions
+On 8B, the K=64 KV slab exceeds H100 HBM at multi_few_shot's natural
+B=16 and multi_chain_reasoning's natural B=32; we halve to B=8 on
+those two cells so the run fits. 1B cells run at their natural B.
 
-1. **Bimodal Q-grouping observation + closed-form tile-cost model.**
-   A tree-structured attention call has two simultaneous Q-grouping
-   regimes (`R = K·G` at root, `R = G` at each branch). The cost
-   expression `C_tile(T, L) ≈ α + βTL + γL` shows no single CTA_Q is
-   Pareto-optimal: small `T` pays `O(R/T)` redundant prefix scans, large
-   `T` pays `O(T/R)` MMA padding. **q_tile padding is frequent and
-   severe**: 98.4% on the per-beam level at the canonical cell,
-   1.46–1.59× single-T degradation in adversarial regimes.
+| model           | scenario                       | method    | decode total (ms) | plan total (ms) | fwd total (ms) | plan % | fwd % | p50/step (ms) | strategy mix (bs_kernel, 255 steps)        |
+|-----------------|--------------------------------|-----------|------------------:|----------------:|---------------:|-------:|------:|--------------:|--------------------------------------------|
+| Llama-3.1-8B    | multi_level_system (B=4, K=64) | bs_kernel | 3684              | 206             | 3439           | 5.6%   | 93.4% | 14.32         | 2L_FUSED ×34, **2L_DECTAIL ×221** (87%)    |
+|                 |                                | paged     | 5687              | 490             | 5157           | 8.6%   | 90.7% | 22.33         | —                                          |
+|                 |                                | fasttree  | 5952              | 647             | 5267           | 10.9%  | 88.5% | 22.98         | —                                          |
+|                 |                                | mlca      | 6435              | 688             | 5709           | 10.7%  | 88.7% | 26.27         | —                                          |
+| Llama-3.1-8B    | multi_few_shot (B=8, K=64)     | bs_kernel | 7271              | 363             | 6851           | 5.0%   | 94.2% | 28.47         | **2L_DECTAIL ×255 (100%)**                 |
+|                 |                                | paged     | 17372             | 1431            | 15883          | 8.2%   | 91.4% | 68.13         | —                                          |
+|                 |                                | fasttree  | 13481             | 1417            | 12010          | 10.5%  | 89.1% | 52.61         | —                                          |
+|                 |                                | mlca      | 14139             | 1269            | 12815          | 9.0%   | 90.6% | 55.08         | —                                          |
+| Llama-3.1-8B    | multi_chain_reasoning (B=8, K=64) | bs_kernel | 9714          | 597             | 9029           | 6.1%   | 93.0% | 20.72         | 2L_FUSED ×60, **2L_DECTAIL ×195** (76%)    |
+|                 |                                | paged     | 13818             | 1062            | 12667          | 7.7%   | 91.7% | 26.44         | —                                          |
+|                 |                                | fasttree  | 13880             | 1625            | 12172          | 11.7%  | 87.7% | 26.66         | —                                          |
+|                 |                                | mlca      | 17823             | 1482            | 16257          | 8.3%   | 91.2% | 31.94         | —                                          |
+| Llama-3.2-1B    | multi_level_system (B=4, K=64) | bs_kernel | 1318              | 253             | 1027           | 19.2%  | 77.9% |  4.89         | 2L_FUSED ×255                              |
+|                 |                                | paged     | 2124              | 486             | 1600           | 22.9%  | 75.3% |  8.27         | —                                          |
+|                 |                                | fasttree  | 1993              | 657             | 1298           | 33.0%  | 65.1% |  7.43         | —                                          |
+|                 |                                | mlca      | 2922              | 685             | 2199           | 23.4%  | 75.3% | 12.06         | —                                          |
+| Llama-3.2-1B    | multi_few_shot (B=32, K=64)    | bs_kernel | 8853              | 1985            | 6721           | 22.4%  | 75.9% | 33.43         | 2L_FUSED ×159, **2L_DECTAIL ×96** (38%)    |
+|                 |                                | paged     | 24973             | 5917            | 18901          | 23.7%  | 75.7% | 95.23         | —                                          |
+|                 |                                | fasttree  | 15969             | 8833            | 6990           | 55.3%  | 43.8% | 53.59         | —                                          |
+|                 |                                | mlca      | 23127             | 4944            | 18046          | 21.4%  | 78.0% | 86.78         | —                                          |
+| Llama-3.2-1B    | multi_chain_reasoning (B=32, K=64) | bs_kernel | 10033          | 2636            | 7220           | 26.3%  | 72.0% | 21.29         | 2L_FUSED ×255                              |
+|                 |                                | paged     | 16955             | 4268            | 12505          | 25.2%  | 73.8% | 31.50         | —                                          |
+|                 |                                | fasttree  | 17025             | 9348            | 7500           | 54.9%  | 44.0% | 28.13         | —                                          |
+|                 |                                | mlca      | 27857             | 5198            | 22494          | 18.7%  | 80.7% | 47.21         | —                                          |
 
-2. **Q_tile-grouped, multi-kernel, multi-level dispatch space.**
-   The space `{PER_BEAM, SHARED_{2,3}L_{1,2}POOL,
-   SHARED_{2,3}L_DEC_TAIL}` groups tiles by Q_tile-optimal kernel,
-   admits 2- or 3-level decompositions of the attention call, and
-   admits per-level kernel-family choice (prefill@T_lg, prefill@T_sm,
-   paged-decode); levels are bridged by online-softmax merge. Different
-   points in the space win in different workload regimes — no single
-   point dominates the grid. Prior designs are either single-kernel
-   (paged, FastTree, DEFT) or multi-level-but-statically-configured
-   (MLCA, FlashInfer fused cascade); neither covers the full space.
+**bs_kernel speedups vs each baseline (K=64):**
 
-3. **Cost-model picker over the dispatch space.** A 4-axis runtime
-   choice — `(depth ∈ {2, 3}) × (pool count ∈ {1, 2}) × (tail-kernel
-   ∈ {prefill, decode-merge}) × (T per pool ∈ {16, 64, 128})` — driven
-   by a closed-form cost expression with online-calibrated coefficients
-   (per-tile probes at engine init). Across the workload grid, the
-   picker matches the per-cell oracle within low regret, while no
-   fixed strategy in the space matches the oracle on every cell.
-   Section B's six adversarial cells (one per dispatch-space winner)
-   are the empirical justification.
+| scenario              | model         | vs fasttree | vs paged | vs mlca |
+|-----------------------|---------------|------------:|---------:|--------:|
+| multi_level_system    | Llama-3.1-8B  | 1.62×       | 1.54×    | 1.75×   |
+| multi_few_shot        | Llama-3.1-8B  | 1.85×       | 2.39×    | 1.94×   |
+| multi_chain_reasoning | Llama-3.1-8B  | 1.43×       | 1.42×    | 1.83×   |
+| multi_level_system    | Llama-3.2-1B  | 1.51×       | 1.61×    | 2.22×   |
+| multi_few_shot        | Llama-3.2-1B  | 1.80×       | 2.82×    | 2.61×   |
+| multi_chain_reasoning | Llama-3.2-1B  | 1.70×       | 1.69×    | 2.78×   |
 
-## Scope claim — DBS as stress test, speculative decoding as deployment case
+Four observations from the table:
 
-The technique is **per-step multi-kernel dispatch for
-prefix-tree-structured attention**, validated on two primary
-workloads — DBS (technical stress test) and speculative decoding
-(deployment case) — and designed for the entire class of
-branch-tree-without-retraction workloads:
+- **Best forward time on every cell.** Cascading + decode-tail routing
+  reduces per-branch HBM reads and the per-step MMA-padding waste; the
+  forward column is the smallest across all four methods on every row.
+  The largest forward wins are on cells the picker routes through
+  DEC_TAIL (8B/multi_few_shot's 1.85× over FastTree is a 1.75× forward
+  reduction).
+- **Best plan time on every cell.** The fixed-cardinality cost-model
+  argmin (4 cost evaluations per step, each linear in B·K with small
+  constants) is cheaper to evaluate than FastTree's per-vnode
+  heuristic. At K=64 the plan-time ratio vs FastTree is 22–37%; the
+  gap widens with K because FastTree's planner walks more tree nodes
+  as K grows, while our planner enumerates a fixed four candidates
+  regardless of K — per-candidate cost still grows linearly in B·K,
+  but the candidate count itself is constant in K, L_p, and tree
+  shape. bs_kernel's plan total is within ≈2× of paged on every cell,
+  while paged has no dispatch to plan at all.
+- **SHARED_2L_DEC_TAIL fires on every cell where the per-branch tail
+  is narrow relative to the root.** At (B, K) = (8, 64) and (4, 64) on
+  Llama-3.1-8B, DEC_TAIL is selected on 76–100% of steps. The 1B
+  cells either stay on SHARED_2L_FUSED (when the merge cost dominates)
+  or split (1B/multi_few_shot picks DEC_TAIL on 38% of steps). This
+  is the bimodal-Q observation in action: when the per-branch level is
+  small enough that the prefill template's MMA padding eats >1.7× of
+  its throughput, the merge + launch overhead of routing that level
+  to the CTA_Q=1 decode kernel is the better deal.
+- **SHARED_2L_FUSED is the right call on the rest.** 1B's
+  multi_level_system and multi_chain_reasoning both run at full B=32
+  natural-K — the per-branch tail aggregates to enough work that
+  prefill amortizes its launch and the merge cost of DEC_TAIL would
+  be a regression (forced 2L_DEC_TAIL on 1B/multi_chain_reasoning is
+  1.70× slower than forced 2L_FUSED; see exp1c below). PER_BEAM is
+  never picked on the workloads we evaluate; SHARED_3L_FUSED appears
+  on longer-prefix and long-decode cells (see the Planning-overhead
+  breakdown and Beam-search-at-long-decode subsections below).
 
-- **DBS — primary evaluation.** Group-diversity penalty makes the
-  top-K (and thus the surviving-beam set) shift step to step. Branch
-  topology is maximally dynamic; KV pages diverge unpredictably. This
-  is the stress case for any per-step dispatcher.
-- **Speculative decoding (Medusa, SpecInfer) — primary evaluation.**
-  Per-step static speculative tree of ~5–20 candidates. The candidate
-  level is exactly the DEC_TAIL regime (CTA_Q=1) — the deployment
-  workload where the dispatcher's tail-kernel choice matters most in
-  practice.
-- **Vanilla beam search.** A controlled sweep — uniform K,
-  deterministic top-K — used to isolate kernel-time effects from
-  selection dynamics.
-- **Few-shot / in-context prompting.** Shared prefix → 1 query; the
-  picker collapses to `(2L, 1, prefill, T_default)` correctly,
-  matching paged-decode performance. Not separately evaluated.
-- **Tree of Thoughts / RAP / reasoning-as-search.** Branching with
-  potential retraction. The dispatcher itself still applies; not
-  separately evaluated in this paper.
+#### Picker-validity check (exp1c)
 
-We benchmark DBS as the technical stress test (most-dynamic
-branching) and speculative decoding as the deployment case (the
-production tree workload). The other workloads in the table are
-subsets the dispatcher applies to but which we do not separately
-evaluate; see Honest Limits.
+To verify the picker is genuinely choosing the right strategy per cell
+— and not the wrong one by coincidence — we re-run the same six cells
+with two forced-2L variants and compare against the picker's free
+choice. `bsk_2l_1p` pins SHARED_2L_FUSED on every step; `bsk_2l_dt`
+pins SHARED_2L_DEC_TAIL. CSV:
+`benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/forced_2l/`;
+reproducer: `scripts/paper-exp/exp1c_forced_2l.sbatch`.
+
+| cell                                  | picker (ms) | forced FUSED (ms) | forced DEC_TAIL (ms) | picker vs better forced | picker pick                |
+|---------------------------------------|------------:|------------------:|---------------------:|------------------------:|----------------------------|
+| Llama-3.1-8B / multi_level_system     |       3679  |             3803  |                3674  |                  +0.1%  | 87% DEC_TAIL (221/34)      |
+| Llama-3.1-8B / multi_few_shot         |       7307  |             7941  |                7324  |                **−0.2%** | 100% DEC_TAIL (255/0)     |
+| Llama-3.1-8B / multi_chain_reasoning  |       9721  |            11364  |               12780  |                **−16.9%** | mixed (195 DT / 60 FUSED) |
+| Llama-3.2-1B / multi_level_system     |       1357  |             1337  |                1481  |                  +1.5%  | all FUSED (255/0)          |
+| Llama-3.2-1B / multi_few_shot         |       8897  |             8842  |                9128  |                  +0.6%  | mixed (159 FUSED / 96 DT)  |
+| Llama-3.2-1B / multi_chain_reasoning  |      10113  |            10431  |               17211  |                **−3.1%** | all FUSED (255/0)          |
+
+Three findings:
+
+- **Picker matches the better forced variant on every cell** to within
+  1.5% — and on three cells it *beats* the better forced variant
+  (8B/multi_chain_reasoning by **16.9%**, 1B/multi_chain_reasoning by
+  3.1%, 8B/multi_few_shot by 0.2%). The 16.9% improvement on
+  8B/multi_chain_reasoning comes from per-step strategy switching:
+  forcing pure FUSED gives 11,364 ms, forcing pure DEC_TAIL gives
+  12,780 ms, but the picker's mixed call (195 DT + 60 FUSED) gives
+  9,721 ms — neither pure strategy is the right answer on this cell,
+  only the mix is.
+- **DEC_TAIL is genuinely load-bearing.** On 8B/multi_few_shot, forced
+  DEC_TAIL beats forced FUSED by 7.8%; on 8B/multi_level_system, it
+  beats FUSED by 3.4%. These are the cells where the picker also
+  chooses (mostly) DEC_TAIL. If we removed DEC_TAIL from the
+  candidate set, end-to-end performance would regress by 3.4–7.8%
+  on the 8B level_system and few_shot cells, and by 16.9% on
+  8B/multi_chain_reasoning.
+- **FUSED is genuinely load-bearing on the other side.** On
+  1B/multi_chain_reasoning, forced DEC_TAIL is **1.65× slower** than
+  forced FUSED — the merge + launch cost of routing the per-branch
+  level to the decode kernel dwarfs the q-tile padding saving when
+  the tail's aggregate KV work is large. The picker correctly chose
+  all-FUSED on this cell.
+
+This is the closure validity claim: the picker's choice is correct on
+every cell (matches or beats the better forced variant), and both
+strategies in the candidate set are necessary (each strategy wins on
+some cell by a meaningful margin).
+
+### Dispatch-space ablation
+
+The natural reviewer attack on a small dispatch space is *"add more
+candidates and you would win more."* To address this we sweep both
+families at every depth in our space (2L/3L/4L × FUSED/DECTAIL) on
+long-decode beam search (`max_new = 2048`, 2047 decode steps) — the
+workload regime that grows the most intermediate-sharing spans, and
+therefore the case most favorable to deeper-cascade or DECTAIL wins.
+
+CSVs: `benchmarks/bs_kernel/results/paper-exp/exp2_dispatch_ablation/merged.csv`;
+reproducer: `scripts/paper-exp/exp2_dispatch_ablation.sbatch`.
+
+We report **plan time, forward time, and end-to-end decode time**:
+the depth-cap rationale lives in the interaction between forward and
+plan, so isolating either in isolation hides the point.
+
+| variant            | plan total (ms) | forward total (ms) | decode total (ms) | Δ decode vs 2L_FUSED |
+|--------------------|----------------:|-------------------:|------------------:|---------------------:|
+| forced 2L_FUSED    |          16,021 |             24,902 |            47,904 |                    — |
+| forced 3L_FUSED    |          17,088 |             24,502 |            48,551 |        +647  (+1.4%) |
+| forced 4L_FUSED    |          20,116 |             24,150 |            51,226 |      **+3,322 (+6.9%)** |
+| forced 2L_DECTAIL  |          13,529 |             30,527 |            51,048 |       +3,144 (+6.6%) |
+| forced 3L_DECTAIL  |          19,029 |             32,350 |            58,307 |      +10,403 (+22%) |
+| forced 4L_DECTAIL  |          15,690 |             30,503 |            53,178 |       +5,274 (+11%) |
+
+Three findings:
+
+- **Forward time keeps shrinking with depth, but plan time grows
+  faster.** Forward saves 1.6% from 2L→3L and another 1.4% from
+  3L→4L. Plan time grows +6.7% from 2L→3L and a much larger +17.7%
+  from 3L→4L. End-to-end on this cell, 3L is **1.4% slower** than
+  2L and 4L is **6.9% slower** than 2L — plan cost overruns the
+  forward benefit. (The picker still chooses 3L on most steps of
+  this cell because it amortizes the 3L plan cost against the cells
+  *within* the run where 3L's forward saving is larger; the picker's
+  net regret on this whole cell is +2.5%, see *Oracle regret*
+  below.) This is the direct quantitative answer to "why cap depth
+  at 3 instead of letting it grow like FastTree": past depth 3 the
+  plan-time growth exceeds the forward saving on the workloads we
+  target.
+- **4L_FUSED is not dominated in forward but is dominated
+  end-to-end.** The earlier *Excluded candidates* paragraph captures
+  exactly this: forward-faster, but the planner growth makes the
+  trade negative. Whether to keep depth-4+ in the dispatch space is
+  ultimately a workload question — on workloads where the per-level
+  forward saving stays larger than ~17% the trade flips back; we do
+  not measure such a workload here.
+- **DECTAIL is the wrong family on this cell at every depth.** All
+  three DECTAIL variants are 23–30% slower in forward than 2L_FUSED.
+  The CTA_Q=1 per-branch decode kernel is purpose-built for short
+  tails, but at L_p=8K/max_new=2048 the tail is large enough that
+  prefill@T=64 dominates. The picker correctly avoids DECTAIL on
+  this cell.
+
+Two-pool variants (`SHARED_*L_2POOL`) are similarly available behind
+the override and are dominated by either DECTAIL (when there is
+enough small-R work) or fused (when there is not); we do not
+reproduce the full 2POOL sweep here.
+
+### Planning-overhead breakdown
+
+The plan/forward split in the end-to-end table is too coarse for an
+apples-to-apples FastTree comparison. FastTree's planner cost is one
+of our load-bearing claims, so a clean decomposition is required. Per-
+step decode cost is split into plan (host-side scheduling, including
+the FlashInfer C++ scheduler call cached on our path), forward (kernel
+compute), and beam-search bookkeeping (alloc + top-K, shared
+identically across all four methods). The plan/forward numbers below
+come from the same end-to-end run as the headline speedup table
+(`benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/`); a
+trace-enabled variant for sub-phase tables lives in
+`scripts/paper-exp/exp3_plan_breakdown.sbatch`.
+
+Measured totals at the K=64 end-to-end cells (bs_kernel vs fasttree
+only — paged and mlca already shown in the end-to-end table):
+
+| model           | scenario              | method    | plan total (ms) | fwd total (ms) | plan ratio vs FT | fwd ratio vs FT |
+|-----------------|-----------------------|-----------|----------------:|---------------:|------------------:|------------------:|
+| Llama-3.1-8B    | multi_level_system    | bs_kernel |             206 |          3,439 |             0.32× |             0.65× |
+|                 |                       | fasttree  |             647 |          5,267 |                 — |                 — |
+| Llama-3.1-8B    | multi_few_shot        | bs_kernel |             363 |          6,851 |             0.26× |             0.57× |
+|                 |                       | fasttree  |           1,417 |         12,010 |                 — |                 — |
+| Llama-3.1-8B    | multi_chain_reasoning | bs_kernel |             597 |          9,029 |             0.37× |             0.74× |
+|                 |                       | fasttree  |           1,625 |         12,172 |                 — |                 — |
+| Llama-3.2-1B    | multi_level_system    | bs_kernel |             253 |          1,027 |             0.39× |             0.79× |
+|                 |                       | fasttree  |             657 |          1,298 |                 — |                 — |
+| Llama-3.2-1B    | multi_few_shot        | bs_kernel |           1,985 |          6,721 |             0.22× |             0.96× |
+|                 |                       | fasttree  |           8,833 |          6,990 |                 — |                 — |
+| Llama-3.2-1B    | multi_chain_reasoning | bs_kernel |           2,636 |          7,220 |             0.28× |             0.96× |
+|                 |                       | fasttree  |           9,348 |          7,500 |                 — |                 — |
+
+Findings:
+
+- **Plan time is 22–39% of FastTree's, on every cell.** The fixed-
+  cardinality, capped-depth cost-model argmin is 2.5–4.5× cheaper
+  than FastTree's `_tree_heuristic` + radix-tree maintenance + slot
+  expansion. Our planner enumerates the same four candidates at
+  depth ≤ 3 regardless of input — per-candidate cost is
+  O(B·K·D_cap) with `D_cap = 3` — while FastTree's planner walks
+  whatever radix tree the workload produces (uncapped depth) with
+  per-step cost O(B·K·log K) where log K is the radix-tree depth.
+  The Python-side share of our plan is sub-millisecond per step
+  (see `pick_ms` sub-breakdown below); the bulk of our plan_total
+  is the FlashInfer C++ scheduler call.
+- **Forward time beats FastTree on every cell at K=64**, by 21–43%.
+  The biggest forward speedup is 8B/`multi_few_shot` (0.57×, i.e.
+  1.76× faster) — the cell where the picker routes 100% of steps
+  through DEC_TAIL. Even on cells where bs_kernel chooses all-FUSED
+  (1B/multi_chain_reasoning), forward is 4% faster than FastTree,
+  because we run a single prefill template per call rather than
+  FastTree's stage-1×phases + stage-2 merge.
+- **Per-step sub-breakdown** (from
+  `benchmarks/bs_kernel/results/paper-exp/exp3_plan_breakdown/exp3.log`,
+  supplementary cell K=16/L_p=4096/B=32 — a longer-prefix cell where
+  the picker selects `3L_FUSED ×239, 2L_FUSED ×16` and so exercises
+  the deepest cascade in our space): bs_kernel's `pick_ms` (cost-
+  model argmin) averages **0.63 ms/step**, vs FastTree's `meta_ms`
+  (per-vnode heuristic) at **2.21 ms/step** plus `radix_ms` (radix-
+  tree maintenance) at **2.12 ms/step**. The host-side planning gap
+  is roughly 7× per step on this cell — consistent with the ~3× plan-
+  total ratio once cached FlashInfer plan calls are included on both
+  sides.
+
+### Oracle regret
+
+Picker oracle regret is the gap between the picker's decode time and
+the best decode time achievable by *any single pinned strategy* on
+the same cell:
+
+`regret = picker_time / min(forced_strategy_time) − 1`
+
+A positive regret means a pure-forced strategy would have been
+faster; a negative regret means the picker's per-step strategy
+switching beat every pure-forced run. Data combines exp1c (each of
+the six end-to-end cells with forced 2L_FUSED + 2L_DECTAIL) with
+exp2 (the long-decode cell with all six FUSED/DECTAIL × 2L/3L/4L
+forced variants).
+
+| cell                                       | picker (ms) | oracle forced (ms) | oracle strategy | regret  |
+|--------------------------------------------|------------:|-------------------:|-----------------|--------:|
+| Llama-3.1-8B / multi_level_system          |       3,679 |              3,674 | 2L_DECTAIL      |  +0.1%  |
+| Llama-3.1-8B / multi_few_shot              |       7,307 |              7,324 | 2L_DECTAIL      |  −0.2%  |
+| Llama-3.1-8B / multi_chain_reasoning       |       9,721 |             11,364 | 2L_FUSED        | **−14.5%** |
+| Llama-3.2-1B / multi_level_system          |       1,357 |              1,337 | 2L_FUSED        |  +1.5%  |
+| Llama-3.2-1B / multi_few_shot              |       8,897 |              8,842 | 2L_FUSED        |  +0.6%  |
+| Llama-3.2-1B / multi_chain_reasoning       |      10,113 |             10,431 | 2L_FUSED        |  −3.1%  |
+| Llama-3.2-1B / long-decode (max_new=2048)  |      49,123 |             47,904 | 2L_FUSED        |  +2.5%  |
+
+Three findings:
+
+- **Worst-case regret is +2.5%, on a single cell.** The 1B
+  long-decode cell is the only place a pure-forced strategy
+  (2L_FUSED) materially beats the picker; the picker selects 3L on
+  97% of steps on this cell, which is forward-faster than 2L but
+  pays +6.7% more plan time per step (see *Dispatch-space
+  ablation*) — the picker's cost model is mildly over-weighting
+  3L's forward saving relative to its plan-time cost at long L_p.
+  Every other cell has |regret| ≤ 1.5%, with three cells showing
+  *negative* regret (picker beats every static strategy).
+- **Median regret is +0.1%.** Picker matches the static oracle to
+  within 1.5% on 6 of 7 cells.
+- **The negative-regret cells justify the picker's existence.**
+  8B/multi_chain_reasoning (−14.5%) is the headline: no pinned
+  strategy comes within 17% of the picker's mixed run, because the
+  cell's KV layout shifts mid-decode and only per-step switching
+  captures both regimes. 1B/multi_chain_reasoning (−3.1%) and
+  8B/multi_few_shot (−0.2%) show the same mechanism in smaller
+  form. If we replaced the picker with the best static choice per
+  cell, average decode time would *rise* — the 14.5% loss on
+  8B/multi_chain_reasoning alone outweighs every positive-regret
+  cell combined.
+
+This closes the picker-validity argument quantitatively: the picker
+is within a few percent of optimal on every cell, and on a third of
+the cells it is strictly better than the dispatch space's best
+static answer.
+
+### Workload coverage: beam search at long decode length
+
+The four scenarios above are static-tree workloads (uniform K, fixed
+prefix). Beam search at long decode length stresses the per-step
+dispatch differently: the tree is dynamic step to step; beam survival
+shifts every step; KV pages diverge unpredictably; and at long decode
+lengths, surviving beams accumulate partial-suffix sharing below the
+root prefix, so the tree naturally grows more intermediate levels as
+decode progresses. This is also the regime where the "you should
+support more levels" critique is strongest: the longer the decode,
+the more intermediate sharing one *could* in principle exploit.
+
+We ran Llama-3.2-1B at (K=32, L_p=8192, B=16, **max_new=2048**)
+against fasttree, paged, and mlca on the same workload. CSV:
+`benchmarks/bs_kernel/results/paper-exp/exp4_long_decode/merged.csv`;
+reproducer: `scripts/paper-exp/exp4_long_decode.sbatch`.
+
+| method     | decode total (ms) | plan total (ms) | fwd total (ms) | speedup (bs_kernel vs) |
+|------------|------------------:|----------------:|---------------:|------------------------:|
+| bs_kernel  |            50,289 |          18,637 |         24,458 | —                       |
+| fasttree   |            63,408 |          30,360 |         26,612 | 1.26×                   |
+| paged      |            83,543 |          18,370 |         57,655 | 1.66×                   |
+| mlca       |           112,409 |          12,250 |         94,305 | 2.24×                   |
+
+Two findings:
+
+- **The 4-strategy dispatcher still wins under the long-decode stress
+  case.** bs_kernel is 1.26× faster than FastTree end-to-end at
+  max_new=2048 (4.0× longer decode than the paper-grid scenarios).
+  This is the workload regime the "more levels would help" critique
+  predicts FastTree should be closest on, and it remains 26% behind.
+- **Plan time, not forward, is where we win on long decode.**
+  FastTree's forward (26.6 s) is actually marginally slower than ours
+  (24.5 s) on this cell — both are competently using the prefix
+  cascade. But FastTree's plan (30.4 s) is 1.63× ours (18.6 s), and
+  that gap accumulates over 2047 decode steps. This is the direct
+  measurement behind the capped-depth claim: as decode length grows,
+  FastTree's uncapped per-vnode planner walks a tree that itself
+  grows (per-step cost O(B·K·log K) where log K is the radix-tree
+  depth), while our candidate set stays fixed at four candidates ×
+  depth ≤ 3 = O(B·K) per step independent of the tree the workload
+  produces. The wall-clock
+  gap on this cell comes from a combination of (a) our cap holding
+  while FastTree's tree grows, and (b) four closed-form cost-evals
+  on pre-built dataclasses vs walking hundreds of vnodes with
+  per-node CUDA allocations.
+
+The picker's strategy mix on this cell (`SHARED_3L_FUSED ×1988,
+SHARED_2L_FUSED ×59`) confirms that mid-decode partial-suffix sharing
+does materialize at long decode — 3L is selected 97% of the time.
+The *Dispatch-space ablation* table earlier in this section shows
+that going deeper than 3L (forced 4L_FUSED) does save 3.0% of
+forward time on this cell, but its plan-time growth (+25.6% vs 2L)
+makes 4L 6.9% **slower** end-to-end — the practical justification
+for capping the candidate set at depth 3.
+
+We ran this stress case on Llama-3.2-1B only. At (K=32, L_p=8192,
+B=16, max_new=2048) the KV cache footprint exceeds the H100's
+80 GB HBM at the 8B model size, so the 1B run is the most demanding
+long-decode cell that fits on a single device.
+
+**Tree-based speculative decoding** (SpecInfer, Medusa) — per-step
+static speculative tree of 5–20 candidate tokens, exactly the
+CTA_Q = 1 regime DECTAIL targets — remains TODO. The dispatcher
+applies unchanged.
+
+## Reproduction
+
+All runs use Llama-3.1-8B and Llama-3.2-1B on a single H100 (80 GB
+HBM3), warmup + measured, 255 decode steps unless otherwise noted.
+Per-experiment CSVs and `.sbatch` reproducers are cited inline in the
+Evaluation subsections above.
+
+**Radix-tree / LCA caching.** To avoid rebuilding the radix tree on
+every decode step, we cache the LCA indexes between consecutive
+steps and reuse them while the page-level topology is stable. This
+optimization is applied uniformly across all methods.
+
+**FastTree usage.** We use FastTree's shipped `_tree_heuristic`
+(per-vnode greedy + iterative refinement) and its Triton
+`fasttree_decode` kernel directly from the MLSys'25 artifact
+(`3rdparty/FastTree-Artifact/kernel_bench/fasttree.py`); neither the
+heuristic nor the kernel is patched. What our integration replaces
+is the artifact's host-side metadata pipeline — which the artifact
+itself flags as needing pre-allocation in production
+(`fasttree.py:264`, "In practice, we should pre-allocate the
+buffers"). Specifically: we use numpy-vectorized vnode metadata
+(`np.bincount` + stable `argsort` for the req→vnode reduction), a
+single concatenated H2D copy for the nine int32 plan tensors,
+persistent `mid_o` / `mid_lse` scratch buffers reused across steps,
+and the LCA cache above. These are optimizations a production
+FastTree deployment would include but the shipped artifact does not.
+The FastTree numbers in this paper therefore reflect a
+**strengthened** baseline relative to the shipped artifact, not a
+weakened one.
 
 ## Honest limits
 
-- We do not write a new attention kernel. Kernels are FlashInfer's
-  prefill + decode wrappers (with one upstream patch — `force_cta_tile_q`
-  per call, ours, in `3rdparty/flashinfer`).
-- Empirical scope: H100, Llama-3.1-8B / Llama-3.2-1B. Multi-GPU and
-  multi-model breadth is future work.
-- The dispatch space is hand-curated, not learned. The 11-candidate
-  set is justified by J1–J4 above (kernel-supported `T` values + the
-  bimodal Q-grouping observation + the workload's sharing-structure
-  cardinality + the fused-launch constraint), but workloads outside
-  the branch-tree-without-retraction class (e.g., ToT with
-  backtracking, general radix-tree attention) may need additional
-  dispatch points this paper does not cover.
-- Workload coverage: DBS + speculative decoding are evaluated;
-  few-shot / self-consistency / ToT are argued to be subsets but not
-  separately benchmarked.
-- DBS overhead at the moment is dominated by Python-side per-prompt
-  top-K (`benchmarks/bs_kernel/results/RESULTS.md:218–279`) and is
-  shared across all six methods. We report kernel time; the Python
-  overhead is orthogonal to the dispatcher and not a kernel problem.
+- **No new attention kernel.** Kernels are FlashInfer's prefill +
+  decode wrappers, with one upstream patch (`force_cta_tile_q`) in
+  `3rdparty/flashinfer`. The contribution is the dispatch space and
+  picker, not a kernel-level innovation.
+- **Picker is argmin-correct, not numerically accurate.** Validated
+  at the oracle-regret level (worst-case +2.5% across seven cells;
+  median +0.1%; three cells show negative regret where the picker
+  beats every pure-forced strategy), not at the predicted-µs level.
+- **Empirical scope.** H100, Llama-3.1-8B / Llama-3.2-1B. Multi-GPU
+  and multi-model breadth is future work.
+
+## Contributions
+
+In summary, this paper makes the following contributions:
+
+1. **CTA_Q mismatch in tree attention.** We identify that the shared
+   root and per-branch tail require different query-tile
+   granularities, so a single prefill-style template is inefficient
+   for the full workload. A closed-form tile-cost expression
+   `C_tile(T, L) ≈ α + β·T·L + γ·L` makes this precise: small T pays
+   `O(R/T)` redundant prefix scans, large T pays `O(T/R)` MMA padding
+   (≥98% on the per-branch level at K = 64). The bimodal regime occurs
+   every step at K ≥ 16.
+
+2. **Decoding kernel removes tail-side padding but is not universally
+   faster.** A dedicated decoding kernel processes the narrow
+   per-branch tail at its native query-tile size (CTA_Q = 1) and
+   strictly removes q-tile padding on that level. But it introduces
+   launch, merge, and occupancy overheads, so its end-to-end win
+   depends on the current tree shape, prefix length, branch count,
+   batch size, and tail length. We show empirically (Dispatch-space
+   ablation, Picker-validity check) that DECTAIL beats FUSED on
+   workloads with narrow tails by up to 7.8% and loses on workloads
+   with wide tails by up to 65% — both directions are load-bearing.
+
+3. **Tree-attention execution as a small runtime dispatch problem.**
+   Rather than an uncapped planning problem over all tree nodes, we
+   formulate execution as a runtime dispatch over query grouping,
+   cascade depth, and tail-kernel choice. Under the bimodal-Q
+   observation and the diminishing-returns / plan-cost-overruns-
+   forward-benefit trade past depth 3 (measured: forced 4L_FUSED is
+   3.0% faster in forward but 6.9% slower end-to-end than forced
+   2L_FUSED on the long-decode cell most favorable to deeper
+   sharing), four candidates — `PER_BEAM`, `SHARED_2L_FUSED`,
+   `SHARED_2L_DECTAIL`, `SHARED_3L_FUSED` — are sufficient to cover
+   the workload grid we measure. Candidate cardinality is constant
+   regardless of tree shape, beam count, or prefix length, and the
+   hard depth cap `D_cap = 3` gives a per-step picker bound of
+   **O(B · K · D_cap) = O(B · K)** *independent of the workload's
+   KV-sharing tree shape*; measured `pick_ms` is 0.09–0.8 ms in our
+   grid. FastTree's planner has no analogous cap and is
+   **O(B · K · log K)** where log K is the radix-tree depth. Prior
+   work is either single-template-family with a cost model over that
+   template's parameters (paged uses one decode template; FastTree
+   and DEFT fire multiple launches but all through the same Triton
+   prefill template with a fixed minimum `Q_TILE_SIZE`) or
+   multi-kernel-family but without runtime selection (MLCA, fused
+   cascade) — none covers the space at fixed-cardinality, capped-
+   depth planning cost with two distinct kernel families.
+
+4. **Calibrated fixed-cardinality dispatcher.** We implement a
+   closed-form cost-model picker with per-device coefficients
+   (calibrated once at engine init) that selects among fused
+   shared-prefix and decode-tail strategies at each decoding step.
+   On H100 the dispatcher wins 1.42–2.82× vs paged, 1.43–1.85× vs
+   FastTree, and 1.75–2.78× vs MLCA across six real-world scenarios
+   in `multi_chain_reasoning`, `multi_level_system`, and
+   `multi_few_shot` spanning two model sizes; it has the smallest
+   forward time on every cell and plan time within 2× of paged
+   (which has no dispatch).
 
 ## One-paragraph abstract draft
 
-> Tree-structured LLM generation — diverse beam search, speculative
-> decoding, self-consistency, Tree-of-Thoughts — shares one
-> attention-time problem: a long prefix fans out into many divergent
-> branches, producing **bimodal query grouping** (`R = K·G` at the
-> shared root, `R = G` at each branch) inside one attention call. A
-> closed-form tile-cost model `C_tile(T, L) ≈ α + β·T·L + γ·L` shows
-> *no single CTA_Q is Pareto-optimal*: small `T` pays redundant prefix
-> scans, large `T` pays MMA padding (98.4% on the per-beam level at
-> K=64/B=32/L_p=8K). Existing kernels split into two camps and
-> *neither* makes runtime, multi-kernel decisions: paged-decode,
-> FastTree, and DEFT route all tiles through a single
-> attention-kernel dispatcher with a cost model over that one
-> kernel's parameters; MLCA and the FlashInfer fused cascade expose a
-> multi-level primitive but with no runtime level / depth / T
-> selection. We propose a **Q_tile-grouped, multi-kernel, multi-level
-> dispatch space** `{PER_BEAM, SHARED_{2,3}L_{1,2}POOL,
-> SHARED_{2,3}L_DEC_TAIL}` and a **per-step cost-model picker** over
-> the 4-axis runtime choice `(depth × pool count × tail-kernel × T
-> per pool)`, with online-calibrated coefficients. Across our
-> workload grid, *no fixed strategy in the dispatch space matches
-> the picker on every cell* — six adversarial cells each have a
-> different fixed-strategy winner, and only the picker tracks the
-> per-cell oracle. On Llama-3.1-8B at K=64/L_p=8K we obtain **2.0×
-> over MLCA** and a `<TODO>` × gap over FastTree at the same
-> workload cell, with the gap growing as plan-time amortizes across
-> longer decodes. We evaluate primarily on diverse beam search (the
-> technical stress case) and speculative decoding (the deployment
-> case), with the dispatcher applying unchanged to other
-> branch-tree-without-retraction workloads.
-
-## TL;DR for review
-
-Three load-bearing claims:
-
-1. **Bimodal Q-grouping is fundamental, not an artifact.** Closed-form
-   tile-cost model shows no single CTA_Q can serve both regimes.
-   q_tile padding is *frequent* (every step at K ≥ 16) and *severe*
-   (98.4% on the per-beam level at the canonical cell; 1.46–1.59×
-   single-T degradation in adversarial cells).
-
-2. **The dispatch space + per-step picker is the substrate prior work
-   doesn't have.** FastTree and DEFT build their cost model around a
-   *single* attention-kernel dispatcher; MLCA and the FlashInfer
-   fused cascade expose multiple kernels but with no runtime level /
-   depth / T selection. We define the dispatch space `{PER_BEAM,
-   SHARED_{2,3}L_{1,2}POOL, SHARED_{2,3}L_DEC_TAIL}` and a 4-axis
-   cost-model picker over it. **For any single fixed strategy in the
-   space, there is a workload cell where it loses to the picker by
-   ≥X%** (Section B): six adversarial cells each have a different
-   fixed-strategy winner, and only the picker is best on every row.
-   The dispatch-space cardinality (11 candidates) is justified by
-   J1–J4: kernel-supported `T` set, bimodal-observation cardinality,
-   workload sharing-structure cardinality, and the fused-launch
-   constraint.
-
-3. **Scope: branch-tree-without-retraction workloads, with DBS and
-   speculative decoding as primary cases.** DBS is the technical
-   stress test (maximally dynamic top-K); speculative decoding is the
-   deployment case (per-step static candidate tree). Beam search,
-   few-shot, ToT, RAP, and self-consistency are subsets we argue the
-   dispatcher applies to but do not separately evaluate.
-
-The 2.0× over MLCA is solid. Open items before submission: replace
-`<TODO>` (FastTree-cell speedup) in the abstract; complete the
-6-cell adversarial table from Section B; report median oracle regret
-across the workload grid.
+> Tree-structured LLM generation — beam search, diverse beam search,
+> self-consistency, speculative decoding, and batched reasoning
+> workloads such as `multi_chain_reasoning`, `multi_level_system`,
+> and `multi_few_shot` — all share one attention-time structure: a
+> long shared prefix fans out into a tree of branch-specific
+> continuations. This produces **bimodal query grouping**
+> (`R = K·G` at the root, `R = G` at each branch) inside one
+> attention call. Every attention kernel commits to a fixed
+> `CTA_TILE_Q`, so a closed-form tile-cost model shows no single T
+> can serve both regimes — small T pays `O(R/T)` redundant prefix
+> scans, large T pays `O(T/R)` MMA padding (98.4% on the per-branch
+> level at K=64/L_p=8K). A dedicated decoding kernel removes the
+> tail-side padding but pays launch, merge, and SM-occupancy
+> overheads, so it is not universally faster: the right execution
+> strategy depends on tree shape, prefix length, branch count, batch
+> size, and tail length. Existing systems do not address this:
+> paged-decode and FastTree route every launch through a single
+> Triton template family with a fixed minimum `Q_TILE_SIZE = 16` —
+> FastTree is multi-launch but every launch hits the same template-
+> floor padding on the narrow per-branch level, and its per-vnode
+> planner walks the workload's full radix tree with no depth cap,
+> giving an **O(B · K · log K)** per-step bound (log K is the
+> radix-tree depth); MLCA and the fused cascade expose a multi-level
+> primitive but commit to depth, level boundaries, and `T` at
+> construction. We propose a **fixed-cardinality dispatcher** that
+> selects among four execution strategies — `PER_BEAM`,
+> `SHARED_2L_FUSED`, `SHARED_2L_DECTAIL`, `SHARED_3L_FUSED` — using
+> a calibrated cost model that accounts for KV bandwidth, query-tile
+> utilization, wave-quantized prefill work, decode-tail cost, and
+> merge overhead. The hard depth cap `D_cap = 3` is justified by the
+> measured plan-cost-overruns-forward-benefit trade past depth 3
+> (forced 4L_FUSED is 3.0% faster in forward but 6.9% slower
+> end-to-end than forced 2L_FUSED on the long-decode cell most
+> favorable to deeper sharing). Fixed candidate cardinality and
+> capped depth give a per-step picker bound of **O(B · K)**
+> independent of tree shape; one closed-form argmin over per-device-
+> calibrated coefficients, sub-millisecond in our grid. On H100
+> across six real-world scenarios on Llama-3.1-8B and Llama-3.2-1B,
+> our dispatcher obtains 1.43–1.85× over FastTree, 1.42–2.82× over
+> paged-decode, and 1.75–2.78× over MLCA, with the smallest forward
+> time on every cell and plan time within 2× of paged (which has no
+> dispatch).

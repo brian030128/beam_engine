@@ -163,6 +163,10 @@ def _beam_set_page(beam: Beam, idx: int, value: int, use_split: bool) -> None:
     tail by construction)."""
     if use_split:
         pl = len(beam.pages_prefix)
+        assert idx >= pl, (
+            f"_beam_set_page: idx={idx} lands in shared prefix (pl={pl}). "
+            f"Caller must place writeable pages in the per-beam tail."
+        )
         beam.pages_tail[idx - pl] = value
     else:
         beam.pages[idx] = value
@@ -360,12 +364,26 @@ def beam_search(
         top_lp, top_ids = select_at_prefill(log_probs[b], K)
         prompt_prefix = prompt_pages_per_b[b]
         if use_split:
+            # If the prompt's last page is partial, place it in the per-beam
+            # tail instead of the shared prefix. ``pages_prefix`` is shared
+            # by reference across all K beams, so a CoW that needed to
+            # detach the last page would have nowhere to write (the prefix
+            # is read-only). Putting the partial page in the tail means
+            # every decode-time write — whether CoW (off>0) or page append
+            # (off==0) — targets the per-beam tail, which is the invariant
+            # ``_beam_set_page`` relies on.
+            if L_ps[b] % ps == 0:
+                shared_prefix: list[int] = prompt_prefix
+                initial_tail: list[int] = []
+            else:
+                shared_prefix = prompt_prefix[:-1]
+                initial_tail = [prompt_prefix[-1]]
             beams = [
                 Beam(
                     token_ids=[top_ids[i].item()],
                     cum_log_prob=top_lp[i].item(),
-                    pages_prefix=prompt_prefix,  # shared ref across K
-                    pages_tail=[],
+                    pages_prefix=shared_prefix,  # shared ref across K
+                    pages_tail=list(initial_tail),  # per-beam copy
                 )
                 for i in range(K)
             ]
@@ -400,9 +418,17 @@ def beam_search(
     if return_picks:
         picks_per_prompt = [[] for _ in range(B)]
     # LCA cache — provably monotone non-decreasing across steps. Initial
-    # value = full prompt-prefix length (every beam shares it).
+    # value = length of the (full-page-only) shared prefix. The prompt's
+    # last partial page, if any, lives in each beam's tail and gets
+    # CoW'd on the first decode step, so it is NOT part of the post-CoW
+    # LCA. Setting the cache to the full prompt page count (including the
+    # partial) would over-claim the shared depth and cause
+    # ``_adaptive_levels`` to fold a per-beam private page into the shared
+    # level, producing wrong cascade KV indices.
     last_lca_per_prompt: list[int] = [
-        len(prompt_pages_per_b[b]) for b in range(B)
+        len(beams_per_prompt[b][0].pages_prefix) if use_split
+        else len(prompt_pages_per_b[b])
+        for b in range(B)
     ]
 
     # --------------------------------------------------------------
@@ -572,21 +598,41 @@ def beam_search(
                 packed = torch.stack([parents_t, tokens_t], dim=0).tolist()
                 parents_b = packed[0]
                 tokens_b = packed[1]
+            elif hasattr(select_at_decode, "_batched_form"):
+                # DBS fast path: a batched (B, K, V) form is attached to
+                # the closure so we can collapse B·G per-step topk
+                # launches to G. Strategy state (penalty matrix) is
+                # carried in the (B, V) tensor — independent per prompt.
+                parents_t, tokens_t, scores_t = select_at_decode._batched_form(
+                    scores_bkv, K,
+                )
+                cum_log_probs_bk = scores_t
+                packed = torch.stack([parents_t, tokens_t], dim=0).tolist()
+                parents_b = packed[0]
+                tokens_b = packed[1]
             else:
                 # Slow path: any non-standard select_at_decode (e.g. DBS)
                 # carries per-prompt state across groups inside one prompt,
-                # so we must call it per-prompt.
-                parents_b = [None] * B  # type: ignore[list-item]
-                tokens_b = [None] * B   # type: ignore[list-item]
+                # so we must call it per-prompt. We still collapse the 2·B
+                # host syncs (parent.tolist() / token.tolist()) into one
+                # by stacking all per-prompt outputs first.
+                parents_rows: list[torch.Tensor] = []
+                tokens_rows: list[torch.Tensor] = []
                 new_cum_rows: list[torch.Tensor] = []
                 for b in range(B):
                     parent_t, token_t, topk_scores = select_at_decode(
                         scores_bkv[b], K,
                     )
                     new_cum_rows.append(topk_scores)
-                    parents_b[b] = parent_t.tolist()
-                    tokens_b[b] = token_t.tolist()
+                    parents_rows.append(parent_t)
+                    tokens_rows.append(token_t)
                 cum_log_probs_bk = torch.stack(new_cum_rows, dim=0)
+                packed = torch.stack(
+                    [torch.stack(parents_rows), torch.stack(tokens_rows)],
+                    dim=0,
+                ).tolist()
+                parents_b = packed[0]
+                tokens_b = packed[1]
 
             if return_phase_timings:
                 torch.cuda.synchronize()

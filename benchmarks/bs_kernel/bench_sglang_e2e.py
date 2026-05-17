@@ -161,6 +161,14 @@ def _run_one(
     if method_name == "bs_kernel" and os.environ.get("BS_KERNEL_TRACE_PLAN", "0") != "0":
         from beam_engine.methods.bs_kernel.driver import _dump_plan_trace
         _dump_plan_trace(backend._plan_trace)
+    # Same for mlca — MLCA_TRACE_PLAN=1.
+    if method_name == "mlca" and os.environ.get("MLCA_TRACE_PLAN", "0") != "0":
+        from beam_engine.baselines.mlca import _dump_mlca_plan_trace
+        _dump_mlca_plan_trace(backend._plan_trace)
+    # Same for paged — PAGED_TRACE_PLAN=1.
+    if method_name == "paged" and os.environ.get("PAGED_TRACE_PLAN", "0") != "0":
+        from beam_engine.baselines.paged import _dump_paged_plan_trace
+        _dump_paged_plan_trace(backend._plan_trace)
     t = result.timings
     # Optional stage-2 (FastTree multi_chain_reasoning fork-join majority
     # vote): re-run tree_batch_decode with a stage-2 TreeSpec on a fresh

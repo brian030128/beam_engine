@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 
 import flashinfer.page
+import numpy as np
 import torch
 import torch.nn.functional as F
 from flashinfer import (
@@ -33,7 +34,6 @@ from ..decoding import (
     standard_decode_select,
     standard_prefill_select,
 )
-from ..methods.adaptive_pool import _adaptive_levels, _pack_batched_cascade_arrays
 from ..models.attention import AttentionContext
 from ..page_table import PageTable
 
@@ -274,6 +274,7 @@ class _MlcaWrappers:
 class MlcaBackend:
     name: str = "mlca"
     use_split_pages: bool = True
+    _plan_trace: list = field(default_factory=list, init=False, repr=False)
 
     def init_wrappers(
         self,
@@ -316,32 +317,97 @@ class MlcaBackend:
     ):
         from ..page_driver import StepPlan
 
-        ps = page_size
-        levels_per_prompt = []
-        for b in range(B):
-            pos = current_pos[b]
-            off = pos % ps
-            bp_b = beams_per_prompt[b]
-            # Split form (alias pages_prefix, only K tail references per
-            # prompt) avoids the O(K * L_p) concatenation of the original
-            # ``[bm.pages_prefix + bm.pages_tail for bm in bp_b]`` build.
-            # At max_levels=2, _adaptive_levels takes the fast path
-            # unconditionally and produces the same 2-level output as
-            # the now-retired _two_level_layout helper.
-            pages_prefix = bp_b[0].pages_prefix
-            pages_tails = [beam.pages_tail for beam in bp_b]
-            lpl_per_beam = [off + 1] * K
-            levels, _beam_order, lca_b = _adaptive_levels(
-                pages_prefix, pages_tails, lpl_per_beam, K,
-                max_levels=2,
-                start_lca=last_lca_per_prompt[b],
-            )
-            last_lca_per_prompt[b] = lca_b
-            levels_per_prompt.append(levels)
+        import os as _os
+        trace_on = bool(int(_os.environ.get("MLCA_TRACE_PLAN", "0")))
+        if trace_on:
+            torch.cuda.synchronize()
+            _t0 = time.perf_counter()
 
-        qo_arr, kvp_arr, kvi_arr, kvl_arr = _pack_batched_cascade_arrays(
-            levels_per_prompt, ps, device,
-        )
+        ps = page_size
+
+        # ----- Numpy-bridge build of the packed 2-level cascade arrays. -----
+        # Replaces the per-prompt _adaptive_levels + _pack_batched_cascade_arrays
+        # pipeline. We exploit the fixed 2-level MLCA layout:
+        #   Level 0 (shared): K beams per prompt; kv = pages_prefix (full
+        #     pages — the page_driver fix moves the prompt's partial page
+        #     into each beam's pages_tail, so pages_prefix here is all-full).
+        #   Level 1 (per-beam tail): 1 beam per group; kv = pages_tail.
+        # The _adaptive_levels LCA-extension that folds naturally-shared tail
+        # pages into level 0 is dropped — beams' tails are essentially always
+        # divergent on the workloads MLCA is benched on (the SGLang two-stage
+        # harness pre-allocates a distinct tail per leaf; CoW keeps them
+        # distinct afterward). last_lca_per_prompt is no longer maintained
+        # here; the driver's initial value is ignored by this path.
+        BK = B * K
+        qo0 = np.arange(0, BK + 1, K, dtype=np.int32)
+        qo1 = np.arange(0, BK + 1, dtype=np.int32)
+
+        shared_lens = np.empty(B, dtype=np.int32)
+        tail_lens = np.empty(BK, dtype=np.int32)
+        for b in range(B):
+            bp_b = beams_per_prompt[b]
+            shared_lens[b] = len(bp_b[0].pages_prefix)
+            base = b * K
+            for k in range(K):
+                tail_lens[base + k] = len(bp_b[k].pages_tail)
+
+        kvp0 = np.empty(B + 1, dtype=np.int32)
+        kvp0[0] = 0
+        np.cumsum(shared_lens, out=kvp0[1:])
+        kvp1 = np.empty(BK + 1, dtype=np.int32)
+        kvp1[0] = 0
+        np.cumsum(tail_lens, out=kvp1[1:])
+
+        kvi0 = np.empty(int(kvp0[-1]), dtype=np.int32)
+        pos_w = 0
+        for b in range(B):
+            pp = beams_per_prompt[b][0].pages_prefix
+            n = len(pp)
+            if n:
+                kvi0[pos_w:pos_w + n] = pp
+                pos_w += n
+
+        kvi1 = np.empty(int(kvp1[-1]), dtype=np.int32)
+        pos_w = 0
+        for b in range(B):
+            bp_b = beams_per_prompt[b]
+            for k in range(K):
+                pt = bp_b[k].pages_tail
+                n = len(pt)
+                if n:
+                    kvi1[pos_w:pos_w + n] = pt
+                    pos_w += n
+
+        # Last-page-len: level 0 is all-full → page_size; level 1 is the
+        # post-write last_page_len = (pos % ps) + 1.
+        kvl0 = np.full(B, ps, dtype=np.int32)
+        kvl1 = np.empty(BK, dtype=np.int32)
+        for b in range(B):
+            kvl1[b * K:(b + 1) * K] = (current_pos[b] % ps) + 1
+
+        if trace_on:
+            _t_numpy = time.perf_counter()
+
+        qo_arr = [
+            torch.from_numpy(qo0).to(device, non_blocking=True),
+            torch.from_numpy(qo1).to(device, non_blocking=True),
+        ]
+        kvp_arr = [
+            torch.from_numpy(kvp0).to(device, non_blocking=True),
+            torch.from_numpy(kvp1).to(device, non_blocking=True),
+        ]
+        kvi_arr = [
+            torch.from_numpy(kvi0).to(device, non_blocking=True),
+            torch.from_numpy(kvi1).to(device, non_blocking=True),
+        ]
+        kvl_arr = [
+            torch.from_numpy(kvl0).to(device, non_blocking=True),
+            torch.from_numpy(kvl1).to(device, non_blocking=True),
+        ]
+        if trace_on:
+            torch.cuda.synchronize()
+            _t_h2d = time.perf_counter()
+
         wrappers.cascade.plan(
             qo_indptr_arr=qo_arr,
             paged_kv_indptr_arr=kvp_arr,
@@ -355,6 +421,9 @@ class MlcaBackend:
             q_data_type=dtype,
             kv_data_type=dtype,
         )
+        if trace_on:
+            torch.cuda.synchronize()
+            _t_plan = time.perf_counter()
 
         write_pi_list = []
         write_po_list = []
@@ -376,7 +445,48 @@ class MlcaBackend:
                 write_po_list, dtype=torch.int32, device=device),
             wrapper=wrappers.cascade,
         )
+        if trace_on:
+            torch.cuda.synchronize()
+            _t_write = time.perf_counter()
+            self._plan_trace.append({
+                "numpy_ms": (_t_numpy - _t0)    * 1000.0,
+                "h2d_ms":   (_t_h2d   - _t_numpy) * 1000.0,
+                "plan_ms":  (_t_plan  - _t_h2d) * 1000.0,
+                "write_ms": (_t_write - _t_plan) * 1000.0,
+            })
         return StepPlan(ctx=ctx, beam_order_per_prompt=None, pick=None)
+
+
+def _dump_mlca_plan_trace(trace: list[dict], *, top_n: int = 5) -> None:
+    """Print a mean/p50/p99/total breakdown of MLCA's per-step plan phases.
+
+    Phases:
+      numpy_ms : per-prompt numpy build of qo/kvp/kvi/kvl cumsum + content
+      h2d_ms   : torch.from_numpy().to(device, non_blocking=True) × 8 buffers
+      plan_ms  : MultiLevelCascadeAttentionWrapper.plan (= 2× BatchPrefill.plan)
+      write_ms : write_pi/write_po per-beam build + 2 torch.tensor H2D
+    """
+    if not trace:
+        print("[mlca trace] empty")
+        return
+    import statistics as _st
+    phases = ("numpy_ms", "h2d_ms", "plan_ms", "write_ms")
+    print(f"  {'phase':<12}  {'mean':>9}  {'p50':>9}  {'p99':>9}  {'total':>9}")
+    print(f"  {'-'*12}  {'-'*9}  {'-'*9}  {'-'*9}  {'-'*9}")
+    for p in phases:
+        xs = [e[p] for e in trace]
+        xs_s = sorted(xs)
+        mean = sum(xs) / len(xs)
+        p50 = _st.median(xs)
+        p99 = xs_s[int(0.99 * (len(xs) - 1))]
+        total = sum(xs)
+        print(f"  {p:<12}  {mean:9.4f}  {p50:9.4f}  {p99:9.4f}  {total:9.2f}")
+    overall = [sum(e[p] for p in phases) for e in trace]
+    print(f"  {'sum/step':<12}  "
+          f"{sum(overall)/len(overall):9.4f}  "
+          f"{_st.median(overall):9.4f}  "
+          f"{sorted(overall)[int(0.99*(len(overall)-1))]:9.4f}  "
+          f"{sum(overall):9.2f}")
 
 
 # ---------------------------------------------------------------------------
