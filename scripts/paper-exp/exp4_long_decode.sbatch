@@ -19,7 +19,12 @@
 #              B halved 32→16 because the worst-case KV slab for
 #              B=32/K=32/max_new=2048 ~77 GB doesn't fit on a single
 #              H100. 8B at this cell exceeds 80 GB so we don't try.
-#   methods  : paged, fasttree, deft, mlca, bs_kernel
+#   methods  : paged, fasttree, mlca, bs_kernel
+#              (deft is in exp4_deft.sbatch — separated because the
+#              vendored DeFT kernel is ~20-30x slower per step than the
+#              others and would push the job over the 40-min wallclock
+#              cap. Both sbatches write into the same OUT_DIR; the
+#              deft variant appends to merged.csv.)
 #   prompts  : data/gov_report.jsonl (distinct per-prompt prefixes)
 #
 # bs_kernel strategy picks logged via BS_KERNEL_TRACE_PLAN=1.
@@ -43,12 +48,12 @@ LOG="$OUT_DIR/exp4.log"
     echo "model:    $BE_MODEL"
     echo "prompts:  data/gov_report.jsonl"
     echo "cell:     L_p=8192, K=32, B=16, max_new=2048"
-    echo "methods:  paged fasttree deft mlca bs_kernel"
+    echo "methods:  paged fasttree mlca bs_kernel  (deft in exp4_deft.sbatch)"
     echo "GPU:      $(nvidia-smi --query-gpu=name --format=csv,noheader)"
     echo
 } | tee "$LOG"
 
-methods=(paged fasttree deft mlca bs_kernel)
+methods=(paged fasttree mlca bs_kernel)
 for m in "${methods[@]}"; do
     echo "=== running method: $m ===" | tee -a "$LOG"
     trace_env=""

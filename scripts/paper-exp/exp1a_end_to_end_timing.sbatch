@@ -12,8 +12,13 @@
 
 # Reproduces docs/paper_story.md → "End-to-end speedups" timing table.
 #
-# Six cells (three scenarios × two Llama sizes), all five methods
-# (bs_kernel / fasttree / deft / paged / mlca), warmup + one measured run.
+# Six cells (three scenarios × two Llama sizes), four methods
+# (bs_kernel / fasttree / paged / mlca), warmup + one measured run.
+# DeFT is in exp1a_deft.sbatch — separated because the vendored DeFT
+# kernel is ~20-30x slower per step than the others and would push
+# the job over the 60-min wallclock cap on the dev partition. Both
+# sbatches write into the same OUT_DIR; the deft variant appends
+# its rows to the existing per-model merged CSVs.
 # One run is enough because each cell already averages over hundreds
 # to thousands of beams × 256 decode steps — timer noise is dominated
 # by the per-run integration. No trace flags — these would inflate
@@ -55,8 +60,8 @@ LOG="$OUT_DIR/exp1a.log"
     echo
 } | tee "$LOG"
 
-METHODS_ALL="fasttree deft bs_kernel paged mlca"
-METHODS_NON_MLCA="fasttree deft bs_kernel paged"
+METHODS_ALL="fasttree bs_kernel paged mlca"
+METHODS_NON_MLCA="fasttree bs_kernel paged"
 
 run_cell () {
     # run_cell <model_tag> <methods> <out_csv> <extra-args...>
