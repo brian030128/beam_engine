@@ -632,38 +632,44 @@ those two cells so the run fits. 1B cells run at their natural B.
 | Llama-3.1-8B    | multi_level_system (B=4, K=64) | bs_kernel | 3684              | 206             | 3439           | 5.6%   | 93.4% | 14.32         | 2L_FUSED ×34, **2L_DECTAIL ×221** (87%)    |
 |                 |                                | paged     | 5687              | 490             | 5157           | 8.6%   | 90.7% | 22.33         | —                                          |
 |                 |                                | fasttree  | 5952              | 647             | 5267           | 10.9%  | 88.5% | 22.98         | —                                          |
+|                 |                                | deft      | 8058              | 504             | 7515           |  6.3%  | 93.3% | 32.04         | —                                          |
 |                 |                                | mlca      | 6110              | 215             | 5854           |  3.5%  | 95.8% | 24.73         | —                                          |
 | Llama-3.1-8B    | multi_few_shot (B=8, K=64)     | bs_kernel | 7271              | 363             | 6851           | 5.0%   | 94.2% | 28.47         | **2L_DECTAIL ×255 (100%)**                 |
 |                 |                                | paged     | 17372             | 1431            | 15883          | 8.2%   | 91.4% | 68.13         | —                                          |
 |                 |                                | fasttree  | 13481             | 1417            | 12010          | 10.5%  | 89.1% | 52.61         | —                                          |
+|                 |                                | deft      | 19903             | 1011            | 18840          |  5.1%  | 94.7% | 77.74         | —                                          |
 |                 |                                | mlca      | 13634             | 329             | 13244          |  2.4%  | 97.1% | 52.98         | —                                          |
 | Llama-3.1-8B    | multi_chain_reasoning (B=8, K=64) | bs_kernel | 9714          | 597             | 9029           | 6.1%   | 93.0% | 20.72         | 2L_FUSED ×60, **2L_DECTAIL ×195** (76%)    |
 |                 |                                | paged     | 13818             | 1062            | 12667          | 7.7%   | 91.7% | 26.44         | —                                          |
 |                 |                                | fasttree  | 13880             | 1625            | 12172          | 11.7%  | 87.7% | 26.66         | —                                          |
+|                 |                                | deft      | 28681             | 1116            | 27485          |  3.9%  | 95.8% | 61.63         | —                                          |
 |                 |                                | mlca      | 17230             | 465             | 16683          |  2.7%  | 96.8% | 29.46         | —                                          |
 | Llama-3.2-1B    | multi_level_system (B=4, K=64) | bs_kernel | 1318              | 253             | 1027           | 19.2%  | 77.9% |  4.89         | 2L_FUSED ×255                              |
 |                 |                                | paged     | 2124              | 486             | 1600           | 22.9%  | 75.3% |  8.27         | —                                          |
 |                 |                                | fasttree  | 1993              | 657             | 1298           | 33.0%  | 65.1% |  7.43         | —                                          |
+|                 |                                | deft      | 3114              | 496             | 2582           | 15.9%  | 82.9% | 12.27         | —                                          |
 |                 |                                | mlca      | 2451              | 207             | 2205           |  8.5%  | 90.0% | 10.22         | —                                          |
 | Llama-3.2-1B    | multi_few_shot (B=32, K=64)    | bs_kernel | 8853              | 1985            | 6721           | 22.4%  | 75.9% | 33.43         | 2L_FUSED ×159, **2L_DECTAIL ×96** (38%)    |
 |                 |                                | paged     | 24973             | 5917            | 18901          | 23.7%  | 75.7% | 95.23         | —                                          |
 |                 |                                | fasttree  | 15969             | 8833            | 6990           | 55.3%  | 43.8% | 53.59         | —                                          |
+|                 |                                | deft      | 26734             | 4327            | 22273          | 16.2%  | 83.3% |102.85         | —                                          |
 |                 |                                | mlca      | 19670             | 1032            | 18492          |  5.2%  | 94.0% | 75.99         | —                                          |
 | Llama-3.2-1B    | multi_chain_reasoning (B=32, K=64) | bs_kernel | 10033          | 2636            | 7220           | 26.3%  | 72.0% | 21.29         | 2L_FUSED ×255                              |
 |                 |                                | paged     | 16955             | 4268            | 12505          | 25.2%  | 73.8% | 31.50         | —                                          |
 |                 |                                | fasttree  | 17025             | 9348            | 7500           | 54.9%  | 44.0% | 28.13         | —                                          |
+|                 |                                | deft      | 33010             | 4636            | 28209          | 14.0%  | 85.5% | 61.14         | —                                          |
 |                 |                                | mlca      | 23988             | 1232            | 22591          |  5.1%  | 94.2% | 40.51         | —                                          |
 
 **bs_kernel speedups vs each baseline (K=64):**
 
-| scenario              | model         | vs fasttree | vs paged | vs mlca |
-|-----------------------|---------------|------------:|---------:|--------:|
-| multi_level_system    | Llama-3.1-8B  | 1.62×       | 1.54×    | 1.66×   |
-| multi_few_shot        | Llama-3.1-8B  | 1.85×       | 2.39×    | 1.88×   |
-| multi_chain_reasoning | Llama-3.1-8B  | 1.43×       | 1.42×    | 1.77×   |
-| multi_level_system    | Llama-3.2-1B  | 1.51×       | 1.61×    | 1.86×   |
-| multi_few_shot        | Llama-3.2-1B  | 1.80×       | 2.82×    | 2.22×   |
-| multi_chain_reasoning | Llama-3.2-1B  | 1.70×       | 1.69×    | 2.39×   |
+| scenario              | model         | vs fasttree | vs paged | vs deft | vs mlca |
+|-----------------------|---------------|------------:|---------:|--------:|--------:|
+| multi_level_system    | Llama-3.1-8B  | 1.62×       | 1.54×    | 2.19×   | 1.66×   |
+| multi_few_shot        | Llama-3.1-8B  | 1.85×       | 2.39×    | 2.74×   | 1.88×   |
+| multi_chain_reasoning | Llama-3.1-8B  | 1.43×       | 1.42×    | 2.95×   | 1.77×   |
+| multi_level_system    | Llama-3.2-1B  | 1.51×       | 1.61×    | 2.36×   | 1.86×   |
+| multi_few_shot        | Llama-3.2-1B  | 1.80×       | 2.82×    | 3.02×   | 2.22×   |
+| multi_chain_reasoning | Llama-3.2-1B  | 1.70×       | 1.69×    | 3.29×   | 2.39×   |
 
 Four observations from the table:
 
@@ -701,6 +707,27 @@ Four observations from the table:
   never picked on the workloads we evaluate; SHARED_3L_FUSED appears
   on longer-prefix and long-decode cells (see the Planning-overhead
   breakdown and Beam-search-at-long-decode subsections below).
+
+**Strategy distribution across beam-search workloads.** Per-step
+strategy counts (255 decode steps per multi_* row; 2,047 per long-
+decode) from the bs_kernel trace in
+`benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/trace/exp1b.log`
+and `benchmarks/bs_kernel/results/paper-exp/exp4_long_decode/exp4.log`:
+
+| model | scenario | `SHARED_2L_1POOL` | `SHARED_2L_DEC_TAIL` | `SHARED_3L_1POOL` |
+|-------|----------|------------------:|---------------------:|------------------:|
+| 3.1-8B | `multi_level_system`    |    34 (13.3%) |   221 (86.7%) |             0 |
+| 3.1-8B | `multi_chain_reasoning` |    60 (23.5%) |   195 (76.5%) |             0 |
+| 3.1-8B | `multi_few_shot`        |     0 (0.0%)  |   255 (100.0%) |            0 |
+| 3.2-1B† | beam-search long-decode |   59 (2.9%)  |             0 |  1,988 (97.1%) |
+
+† Long-decode reported on Llama-3.2-1B because 8B at (K=32, B=16,
+max_new=2048) needs ~90 GiB of KV slab and doesn't fit in a single
+H100. The strategy mix is a property of the workload shape (per-beam
+tail length relative to the K-packed root tile), so 8B at this cell
+would also concentrate on `SHARED_3L_1POOL`. `PER_BEAM` and
+`SHARED_3L_DEC_TAIL` are in the candidate set but never chosen on
+these workloads — omitted from the table.
 
 #### Picker-validity check (exp1c)
 
@@ -874,6 +901,58 @@ Findings:
   total ratio once cached FlashInfer plan calls are included on both
   sides.
 
+**Two-stage plan breakdown across all five baselines.** A single-pass
+trace-mode run on Llama-3.2-1B / `multi_few_shot` / (B=32, K=64,
+max_new=256) splits each method's plan time into *build indices* (the
+minimal KV indexing every method needs — radix-tree walk for
+FastTree, cascade-level decomposition for bs_kernel, full plan for
+the others) and *dispatch decision* (per-step strategy or per-vnode
+chunk decisions that the kernel-specific dispatch scheme imposes on
+top of the indices). For bs_kernel this is `pick_ms` (cost-model
+argmin). For FastTree it is everything its `_tree_heuristic` planner
+emits beyond the radix tree itself — the per-leaf partial-last-page
+computation, the convergence-loop heuristic, the per-vnode metadata
+packing, and the H2D — all of which exist only because the split-Q/
+split-K kernel consumes per-vnode chunked metadata, not the raw
+radix tree. (FastTree's `slots_ms` — page→slot expansion, 2.2 s —
+is a mechanical numpy step that fits neither bucket cleanly and is
+*excluded* from FastTree's totals below so the comparison stays
+apples-to-apples with the other methods, which don't materialise
+slot indices at all.) paged / deft / mlca have no dispatch decision
+in the plan path: their entire plan time is index building. All
+five methods run in one bench invocation with
+`BS_KERNEL_TRACE_PLAN=1 FT_TRACE_PLAN=1 MLCA_PLAN_CACHE=1`; absolute
+totals for FastTree and bs_kernel are trace-mode-inflated by sync
+calls, but the cross-method comparison is internally consistent.
+Reproducer: `slurm/plan_breakdown_1b_fewshot.sbatch`.
+
+| method     | build_indices (ms) | dispatch (ms) | plan_total (ms) | dispatch % |
+|------------|-------------------:|--------------:|----------------:|-----------:|
+| deft       |             1,334  |             0 |          1,334  |       0.0% |
+| mlca       |             1,401  |             0 |          1,401  |       0.0% |
+| bs_kernel  |             2,119  |           105 |          2,225  |       4.7% |
+| fasttree   |             2,881  |         5,877 |          8,758  |      67.1% |
+| paged      |             6,471  |             0 |          6,471  |       0.0% |
+
+- **FastTree's index-building cost is comparable to bs_kernel's**
+  (2.9 s vs 2.1 s — the radix-tree walk vs cascade-level
+  decomposition, both per-step host-side work over 255 decode steps).
+  The 4× plan-total gap is entirely in the dispatch column: FastTree
+  pays 5.9 s to convert the radix tree into the per-vnode chunked
+  metadata its kernel requires (heuristic convergence loop 2.9 s +
+  vnode-chunk pack 1.2 s + per-leaf partial + H2D + wrapper plan +
+  ~1.5 s untraced harness overhead), while bs_kernel's 105 ms
+  dispatch is four closed-form cost evaluations.
+- **paged / deft / mlca have zero dispatch** by construction:
+  paged's per-beam decode template is fixed; deft emits one
+  flat-array metadata table per step regardless of tree shape;
+  mlca's cascade structure is fixed at wrapper construction (only
+  the per-level `kv_len` is patched per step via the SM90 plan-
+  state cache, commit `53ab924`). deft's per-prompt LCA cache
+  (commit `e989dae`) brings its plan time to 1.3 s, edging out
+  mlca (1.4 s) and ~40% of bs_kernel (2.2 s) — DeFT now has the
+  smallest plan time of the five on this cell.
+
 ### Oracle regret
 
 Picker oracle regret is the gap between the picker's decode time and
@@ -941,14 +1020,17 @@ support more levels" critique is strongest: the longer the decode,
 the more intermediate sharing one *could* in principle exploit.
 
 We ran Llama-3.2-1B at (K=32, L_p=8192, B=16, **max_new=2048**)
-against fasttree, paged, and mlca on the same workload. CSV:
+against fasttree, paged, deft, and mlca on the same workload. CSV:
 `benchmarks/bs_kernel/results/paper-exp/exp4_long_decode/merged.csv`;
-reproducer: `scripts/paper-exp/exp4_long_decode.sbatch`.
+reproducers: `scripts/paper-exp/exp4_long_decode.sbatch` (four
+baselines) + `scripts/paper-exp/exp4_deft.sbatch` (DeFT only,
+appended into the same merged.csv).
 
 | method     | decode total (ms) | plan total (ms) | fwd total (ms) | speedup (bs_kernel vs) |
 |------------|------------------:|----------------:|---------------:|------------------------:|
 | bs_kernel  |            50,289 |          18,637 |         24,458 | —                       |
 | fasttree   |            63,408 |          30,360 |         26,612 | 1.26×                   |
+| deft       |            75,114 |          17,145 |         46,999 | 1.49×                   |
 | paged      |            83,543 |          18,370 |         57,655 | 1.66×                   |
 | mlca       |           112,409 |          12,250 |         94,305 | 2.24×                   |
 

@@ -116,6 +116,13 @@ class Row:
     alloc_total_ms: float
     topk_mean_ms: float
     topk_total_ms: float
+    # Total dispatch-decision time across all decode steps. 0 for
+    # methods with no dispatch (paged, deft, mlca); for fasttree this
+    # is the heuristic + parallelism convergence loop sum, for
+    # bs_kernel it's the cost-model pick_strategy_batch sum. Requires
+    # the relevant TRACE_PLAN env var to be on (otherwise stays 0).
+    # build_indices_ms = plan_total_ms - dispatch_total_ms.
+    dispatch_total_ms: float = 0.0
 
 
 def _phase_stats(xs: list[float]) -> tuple[float, float, float, float]:
@@ -205,6 +212,24 @@ def _run_one(
     fwd_mean, fwd_p50, fwd_p99, fwd_total = _phase_stats(t.get("forward_ms", []))
     alloc_mean, _, _, alloc_total = _phase_stats(t.get("alloc_ms", []))
     topk_mean, _, _, topk_total = _phase_stats(t.get("topk_ms", []))
+    # Dispatch-decision total across all decode steps. fasttree's
+    # _build_metadata writes per-step 'dispatch_ms' into _plan_trace
+    # (heuristic + parallelism convergence loop, mostly amortised by
+    # the heuristic cache). bs_kernel's per-step cost-model pick is
+    # logged as 'pick_ms' across all three dispatch sites (PER_BEAM,
+    # prefix-prefill, shared). paged / mlca / deft have no dispatch
+    # decision in the plan path → 0. Requires trace flag on for
+    # fasttree (FT_TRACE_PLAN=1) / bs_kernel (BS_KERNEL_TRACE_PLAN=1);
+    # trace adds torch.cuda.synchronize() calls so absolute plan
+    # totals here are inflated vs the no-trace timing path. The
+    # build_indices / dispatch ratio is the meaningful number.
+    dispatch_total_ms = 0.0
+    if method_name == "fasttree":
+        for e in getattr(backend, "_plan_trace", []):
+            dispatch_total_ms += float(e.get("dispatch_ms", 0.0))
+    elif method_name == "bs_kernel":
+        for e in getattr(backend, "_plan_trace", []):
+            dispatch_total_ms += float(e.get("pick_ms", 0.0))
     row = Row(
         scenario="",  # filled in by caller
         method=method_name,
@@ -221,6 +246,7 @@ def _run_one(
         forward_mean_ms=fwd_mean, forward_p50_ms=fwd_p50, forward_p99_ms=fwd_p99, forward_total_ms=fwd_total,
         alloc_mean_ms=alloc_mean, alloc_total_ms=alloc_total,
         topk_mean_ms=topk_mean, topk_total_ms=topk_total,
+        dispatch_total_ms=dispatch_total_ms,
     )
     return row, decode_steps
 
@@ -403,6 +429,7 @@ def main():
             "forward_mean_ms", "forward_p50_ms", "forward_p99_ms", "forward_total_ms",
             "alloc_mean_ms", "alloc_total_ms",
             "topk_mean_ms", "topk_total_ms",
+            "dispatch_total_ms",
         ])
         for r in rows:
             w.writerow([
@@ -420,6 +447,7 @@ def main():
                 f"{r.forward_p99_ms:.4f}",  f"{r.forward_total_ms:.4f}",
                 f"{r.alloc_mean_ms:.4f}",   f"{r.alloc_total_ms:.4f}",
                 f"{r.topk_mean_ms:.4f}",    f"{r.topk_total_ms:.4f}",
+                f"{r.dispatch_total_ms:.4f}",
             ])
     print(f"\nwrote {len(rows)} rows to {out}\n")
 

@@ -371,6 +371,14 @@ def _build_metadata(
         and wrappers._heur_key == cache_key
         and wrappers._heur_assignments is not None
     )
+    # Time only the "dispatch decision" — the heuristic that selects
+    # tile sizes + per-node SplitQ/SplitK assignments. Index packing
+    # below (vnode chunk concat, numpy → torch H2D) is timed separately
+    # by the caller. On cache hit the dispatch cost collapses to a few
+    # list copies + a single dict lookup; on miss it runs the 3-iter
+    # tree_heuristic + compute_parallelism convergence loop.
+    import time as _heur_time
+    _t_disp_start = _heur_time.perf_counter()
     if cache_hit:
         node_assignments = wrappers._heur_assignments
         Q_TILE_SIZE_PER_PHASE = list(wrappers._heur_q_tile)
@@ -423,6 +431,10 @@ def _build_metadata(
             wrappers._heur_kv_split = list(KV_SPLIT_SIZE_PER_PHASE)
             wrappers._heur_kv_tsk = list(params.TSKs)
             wrappers._heur_node_to_reqs = node_to_reqs
+
+    _dispatch_ms = (_heur_time.perf_counter() - _t_disp_start) * 1000.0
+    if wrappers is not None:
+        wrappers._last_dispatch_ms = _dispatch_ms
 
     Q_TILE_SIZE = Q_TILE_SIZE_PER_PHASE[0]
     # ``vnode_to_kv_chunks`` collects per-vnode KV-slot arrays as numpy
@@ -674,6 +686,7 @@ class _FastTreeWrappers(WrapperBundle):
         "_heur_key", "_heur_assignments", "_heur_q_tile", "_heur_kv_split",
         "_heur_kv_tsk", "_heur_node_to_reqs",
         "_mid_o_buf", "_mid_lse_buf",
+        "_last_dispatch_ms",
     )
 
 
@@ -720,6 +733,10 @@ class FastTreeBackend:
         # Persistent reduction-stage scratch tensors (sized as needed).
         wb._mid_o_buf = None
         wb._mid_lse_buf = None
+        # Side channel for plan-trace: _build_metadata writes the
+        # dispatch-decision (heuristic loop) elapsed ms here so
+        # plan_decode_step can report it separately from index packing.
+        wb._last_dispatch_ms = 0.0
         return wb
 
     def plan_decode_step(
@@ -854,14 +871,22 @@ class FastTreeBackend:
             out=out_buf,
         )
         if trace_on:
+            meta_ms = (_t_meta - _t_slots) * 1000.0
+            dispatch_ms = float(getattr(wrappers, "_last_dispatch_ms", 0.0))
             self._plan_trace.append({
-                "gather_ms":  (_t_gather  - _t0) * 1000.0,
-                "radix_ms":   (_t_radix   - _t_gather) * 1000.0,
-                "partial_ms": (_t_partial - _t_radix) * 1000.0,
-                "slots_ms":   (_t_slots   - _t_partial) * 1000.0,
-                "meta_ms":    (_t_meta    - _t_slots) * 1000.0,
-                "write_ms":   (_t_write   - _t_meta) * 1000.0,
-                "n_nodes":    len(tree_info),
+                "gather_ms":   (_t_gather  - _t0) * 1000.0,
+                "radix_ms":    (_t_radix   - _t_gather) * 1000.0,
+                "partial_ms":  (_t_partial - _t_radix) * 1000.0,
+                "slots_ms":    (_t_slots   - _t_partial) * 1000.0,
+                # meta_ms covers both the dispatch decision (heuristic
+                # loop) and the index packing; dispatch_ms is the slice
+                # of meta_ms spent in tree_heuristic + compute_parallelism
+                # (~0 on cache-hit steps). pack_ms = meta_ms - dispatch_ms.
+                "meta_ms":     meta_ms,
+                "dispatch_ms": dispatch_ms,
+                "pack_ms":     meta_ms - dispatch_ms,
+                "write_ms":    (_t_write   - _t_meta) * 1000.0,
+                "n_nodes":     len(tree_info),
             })
         # FastTree doesn't reorder beams; identity beam order.
         return StepPlan(ctx=ctx, beam_order_per_prompt=None, pick=None)
@@ -933,7 +958,7 @@ def _dump_ft_plan_trace(trace: list) -> None:
     n = len(trace)
     fields = (
         "gather_ms", "radix_ms", "partial_ms",
-        "slots_ms", "meta_ms", "write_ms",
+        "slots_ms", "meta_ms", "dispatch_ms", "pack_ms", "write_ms",
     )
     print(f"\n[fasttree plan-trace] {n} steps")
     n_nodes = [r["n_nodes"] for r in trace]
