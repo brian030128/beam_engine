@@ -165,6 +165,13 @@ def _run_one(
     if method_name == "mlca" and os.environ.get("MLCA_TRACE_PLAN", "0") != "0":
         from beam_engine.baselines.mlca import _dump_mlca_plan_trace
         _dump_mlca_plan_trace(backend._plan_trace)
+    # MLCA SM90 plan-cache hit/miss counter (whenever MLCA_PLAN_CACHE=1).
+    if method_name == "mlca" and os.environ.get("MLCA_PLAN_CACHE", "0") != "0":
+        h = getattr(backend, "_plan_hits", 0)
+        m = getattr(backend, "_plan_misses", 0)
+        tot = h + m
+        rate = (h / tot * 100.0) if tot else 0.0
+        print(f"[mlca plan-cache] hits={h} misses={m} hit-rate={rate:.1f}%")
     # Same for paged — PAGED_TRACE_PLAN=1.
     if method_name == "paged" and os.environ.get("PAGED_TRACE_PLAN", "0") != "0":
         from beam_engine.baselines.paged import _dump_paged_plan_trace
