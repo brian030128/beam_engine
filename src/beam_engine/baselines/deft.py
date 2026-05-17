@@ -7,7 +7,7 @@ that read this node's KV, emitting a partial output + LSE per
 (node, query); stage 2 merges per-query partials via online softmax.
 
 This backend builds a *page-level* radix tree across the B*K beams
-(reusing ``fasttree._build_combined_radix_tree_pages`` /
+(reusing ``fasttree._build_radix_tree_pages_single`` /
 ``_expand_pages_to_slots``) and converts it into DeFT's flat-array
 metadata format:
 
@@ -29,25 +29,24 @@ The vendored kernel lives in ``baselines/_deft_kernel/`` (copied
 verbatim from DeFT's artifact, since DeFT's package pins
 torch==2.5.1 / python>=3.12 and can't be co-installed with our env).
 
-**Plan-state cache (LCA cache).** Within a stable-topology period the
-per-node page lists and query mapping are all stable — only
-single-request leaves' ``KV_len`` grows by 1 per step as the partial
-last page fills. We cache the int32 numpy arrays + per-leaf patch
-info; cache hits skip the page→slot expansion and array packing,
-doing only a vectorised leaf-KV_len patch + one H2D copy. (The radix
-tree itself is always rebuilt — for our beam-search workloads the
-fast-path radix at ``fasttree._build_radix_tree_pages_single`` is a
-few microseconds.)
+**Plan-state cache (per-prompt LCA cache).** The metadata for each
+prompt's sub-tree is cached independently. Per-step, each prompt's
+key is checked against the cache: hit → reuse the cached arrays;
+miss → rebuild just that prompt's sub-tree. The concatenation step
+shifts per-prompt-local offsets into the combined batch arrays and
+patches single-request leaves' ``KV_len`` to the current partial-
+last-page count.
 
-Cache key follows the fasttree pattern in ``baselines/fasttree.py:801``:
-``(len(tree_info), B, K, total_pages)``. This is invariant under the
-list-identity churn from page_driver's fork phase (which copies
-``parent.pages_tail`` to a fresh list every step for non-assignee
-children at ``page_driver.py:726``) — an id-based key gets 0% hit
-rate. ``len(tree_info)`` catches CoW (always splits a previously-
-shared node into a deeper branch, adding at least one tree node);
-``total_pages`` catches page-boundary appends. Disable for A/B with
-``BE_DEFT_PLAN_CACHE=0``.
+Cache key per prompt follows the bs_kernel pattern in
+``methods/bs_kernel/driver.py:284``:
+``(id(pages_prefix), len, ((id, len) per beam's pages_tail))``. List
+identity catches forks (page_driver copies ``parent.pages_tail`` to a
+fresh list at ``page_driver.py:726``); length catches page-boundary
+appends. An earlier version used a single batch-wide structural key
+``(len(tree_info), B, K, total_pages)`` (~36% hit rate at B=32 — any
+single prompt's fork invalidated all of them); per-prompt caching
+brings hit rate to >90% on cells with frequent forks. Disable for
+A/B with ``BE_DEFT_PLAN_CACHE=0``.
 """
 
 from __future__ import annotations
@@ -74,7 +73,7 @@ from ..page_driver import (
 from ..page_table import PageTable
 from ._deft_kernel import tree_attention_fwd as _deft_tree_attn_fwd
 from .fasttree import (
-    _build_combined_radix_tree_pages,
+    _build_radix_tree_pages_single,
     _expand_pages_to_slots,
 )
 
@@ -101,72 +100,53 @@ class _DeftMeta:
 
 
 @dataclass
-class _DeftPlanCache:
-    """Cacheable arrays for one ``plan_decode_step``.
+class _DeftPromptCacheEntry:
+    """Cached per-prompt sub-tree arrays. All offsets are PROMPT-LOCAL;
+    ``_concat_and_h2d`` adds cumulative shifts to convert them to
+    batch-wide offsets at concat time. Leaf KV_lens are mutated in
+    place each step before concat (idempotent overwrite — every step
+    re-patches all of the prompt's leaf entries).
 
-    All fields are stable within a page-boundary period; the only
-    per-step change is ``KV_len_np`` at leaf-entry indices, patched by
-    ``_patch_and_h2d``.
-
-    Leaf-entry patch info (parallel int32 arrays of length
-    ``n_single_request_leaf_entries``):
-      * ``leaf_entry_idxs``  — index into ``KV_len_np``
-      * ``leaf_entry_b``     — owning prompt index (for current_pos[b])
-      * ``leaf_entry_base``  — ``(n_pages - 1) * page_size`` for the leaf
-                                (prior full pages; per-step KV_len adds
-                                ``current_pos[b] % page_size + 1``)
-    Multi-request leaves and non-leaf entries keep the cached KV_len
-    (full ``n_pages * page_size``) unchanged across steps — same as the
-    pre-cache behaviour, since multi-request leaves don't get partial
-    trim either (all beams sharing the leaf necessarily share off too).
+    KVMapQ_List stores GLOBAL beam indices (``b*K + local_k``) so the
+    arrays can be concatenated as-is.
     """
     KV_indices_np: np.ndarray
-    KV_indices_offset_np: np.ndarray
+    KV_indices_offset_np: np.ndarray   # LOCAL
     KV_len_np: np.ndarray              # mutable: leaf entries patched per step
-    KVMapQ_List_np: np.ndarray
-    KVMapQ_List_Offset_np: np.ndarray
+    KVMapQ_List_np: np.ndarray         # global rids
+    KVMapQ_List_Offset_np: np.ndarray  # LOCAL
     KVMapQ_List_Len_np: np.ndarray
-    leaf_entry_idxs: np.ndarray
-    leaf_entry_b: np.ndarray
-    leaf_entry_base: np.ndarray
+    # Patch info for this prompt's single-request leaf entries:
+    leaf_entry_idxs: np.ndarray        # LOCAL entry indices into KV_len_np
+    leaf_entry_base: np.ndarray        # (n_pages - 1) * page_size per leaf
+    b_owner: int                       # owning prompt — constant for this entry
 
 
-def _build_deft_cache_key(
-    tree_info: list,
-    total_pages: int,
-    B: int,
-    K: int,
-) -> tuple:
-    """Fasttree-style key: ``(len(tree_info), B, K, total_pages)``.
-
-    Invariant under page_driver's fork-list churn (CoW always splits a
-    shared radix node → ``len(tree_info)`` grows; page-boundary append
-    grows ``total_pages``). An id-based key gets 0% hit rate because
-    ``page_driver.py:726`` copies ``parent.pages_tail`` to a fresh list
-    every step for non-assignee children.
-    """
-    return (len(tree_info), B, K, total_pages)
+def _build_prompt_cache_key(prefix: list[int], tails: list[list[int]]) -> tuple:
+    """bs_kernel-style per-prompt key. id() captures forks (fresh
+    pages_tail lists at page_driver.py:726); len() captures page-
+    boundary appends and CoW-driven topology shifts within the
+    prompt."""
+    return (id(prefix), len(prefix), tuple((id(t), len(t)) for t in tails))
 
 
-def _pack_deft_arrays(
-    tree_info,
-    node_pages: list[list[int]],
-    node_slots: list[np.ndarray],
+def _pack_deft_arrays_for_prompt(
+    prefix: list[int],
+    tails: list[list[int]],
     K: int,
     page_size: int,
-) -> _DeftPlanCache:
-    """Pack the radix tree into DeFT's flat-array metadata.
+    b: int,
+) -> _DeftPromptCacheEntry:
+    """Build one prompt's radix → slot-expansion → DeFT-format arrays.
 
-    Splits nodes whose reader count exceeds ``_DEFT_BLOCK_M`` into
-    multiple virtual entries sharing the same KV range; stage 2 merges
-    per-query partials regardless of how many (node, query-chunk) pairs
-    contributed.
-
-    Single-request leaves contribute their *full last page* of slots (no
-    partial trim); the cache layer patches their per-step KV_len via
-    ``leaf_entry_*`` arrays. The kernel masks beyond KV_len so the extra
-    not-yet-written slots are never read.
+    Empty ``leaf_partial_last`` passed to ``_expand_pages_to_slots`` →
+    leaves get full-page slot ranges; ``_concat_and_h2d`` then writes
+    the correct partial-count to KV_len per step. The kernel masks
+    beyond KV_len so unwritten slots are never read.
     """
+    tree_info, node_pages = _build_radix_tree_pages_single(prefix, tails)
+    node_slots = _expand_pages_to_slots(tree_info, node_pages, page_size, {})
+
     kv_indices_chunks: list[np.ndarray] = []
     kv_indices_offset: list[int] = []
     kv_len: list[int] = []
@@ -174,12 +154,12 @@ def _pack_deft_arrays(
     kvmapq_offset: list[int] = []
     kvmapq_len: list[int] = []
     leaf_entry_idxs: list[int] = []
-    leaf_entry_b: list[int] = []
     leaf_entry_base: list[int] = []
 
     kv_acc = 0
     mapq_acc = 0
-    entry_idx = 0  # running index into kv_len / kv_indices_offset
+    entry_idx = 0
+    base_rid = b * K  # local request ids [0, K) → global [b*K, b*K + K)
 
     for i, n in enumerate(tree_info):
         n_slots = node_slots[i].size
@@ -189,21 +169,15 @@ def _pack_deft_arrays(
         kv_start = kv_acc
         kv_indices_chunks.append(node_slots[i])
         kv_acc += n_slots
-        reqs_arr = np.asarray(reqs, dtype=np.int32)
+        reqs_arr = (np.asarray(reqs, dtype=np.int32) + base_rid)
         n_reqs = reqs_arr.size
 
-        # Single-request leaf? If so all its chunks (one chunk for a
-        # single reader, since 1 ≤ BLOCK_M) will be patched per step.
         is_single_leaf = (
             n.num_children == 0 and n_reqs == 1 and len(node_pages[i]) > 0
         )
         if is_single_leaf:
-            rid = int(reqs_arr[0])
-            b_owner = rid // K
             base_len = (len(node_pages[i]) - 1) * page_size
 
-        # Split readers into BLOCK_M-sized chunks; emit one virtual
-        # kv_num entry per chunk. All chunks share (kv_start, n_slots).
         for off in range(0, n_reqs, _DEFT_BLOCK_M):
             chunk = reqs_arr[off : off + _DEFT_BLOCK_M]
             kvmapq_chunks.append(chunk)
@@ -213,62 +187,80 @@ def _pack_deft_arrays(
             kv_indices_offset.append(kv_start)
             kv_len.append(n_slots)
             if is_single_leaf:
-                # Single-request leaf → exactly one chunk (n_reqs == 1
-                # ≤ BLOCK_M). Record patch info for this entry.
                 leaf_entry_idxs.append(entry_idx)
-                leaf_entry_b.append(b_owner)
                 leaf_entry_base.append(base_len)
             entry_idx += 1
 
-    if kv_indices_chunks:
-        kv_indices_np = np.concatenate(kv_indices_chunks)
-    else:
-        kv_indices_np = np.empty(0, dtype=np.int32)
-    if kvmapq_chunks:
-        kvmapq_np = np.concatenate(kvmapq_chunks)
-    else:
-        kvmapq_np = np.empty(0, dtype=np.int32)
-
-    return _DeftPlanCache(
-        KV_indices_np=kv_indices_np,
+    return _DeftPromptCacheEntry(
+        KV_indices_np=(np.concatenate(kv_indices_chunks)
+                       if kv_indices_chunks else np.empty(0, dtype=np.int32)),
         KV_indices_offset_np=np.asarray(kv_indices_offset, dtype=np.int32),
         KV_len_np=np.asarray(kv_len, dtype=np.int32),
-        KVMapQ_List_np=kvmapq_np,
+        KVMapQ_List_np=(np.concatenate(kvmapq_chunks)
+                        if kvmapq_chunks else np.empty(0, dtype=np.int32)),
         KVMapQ_List_Offset_np=np.asarray(kvmapq_offset, dtype=np.int32),
         KVMapQ_List_Len_np=np.asarray(kvmapq_len, dtype=np.int32),
         leaf_entry_idxs=np.asarray(leaf_entry_idxs, dtype=np.int32),
-        leaf_entry_b=np.asarray(leaf_entry_b, dtype=np.int32),
         leaf_entry_base=np.asarray(leaf_entry_base, dtype=np.int32),
+        b_owner=b,
     )
 
 
-def _patch_and_h2d(
-    cache: _DeftPlanCache,
+def _concat_and_h2d(
+    per_prompt: list[_DeftPromptCacheEntry],
     current_pos: list[int],
     page_size: int,
     device: torch.device,
 ) -> _DeftMeta:
-    """Patch leaf KV_lens to the current partial-last-page count, then
-    concatenate all int32 arrays and copy to device in a single H2D.
+    """Patch each per-prompt entry's leaf KV_lens, then concatenate B
+    sets with offset shifts and do a single H2D copy.
 
-    Mutates ``cache.KV_len_np`` in place — safe because every step
-    re-patches all leaf entries (idempotent overwrite).
+    Per-step cost on the cache-hit path: O(B + total_leaf_entries) for
+    patching + O(B * n_entries_per_prompt) for the offset shifts —
+    avoids the entire radix walk + slot expansion + Python pack loop.
     """
-    if cache.leaf_entry_idxs.size > 0:
-        cur_pos_np = np.asarray(current_pos, dtype=np.int64)
-        pos_per_leaf = cur_pos_np[cache.leaf_entry_b]
-        partial = (pos_per_leaf % page_size + 1).astype(np.int32)
-        cache.KV_len_np[cache.leaf_entry_idxs] = (
-            cache.leaf_entry_base + partial
-        )
+    # 1) Patch leaf KV_lens in each per-prompt entry (mutates in place).
+    for entry in per_prompt:
+        if entry.leaf_entry_idxs.size > 0:
+            partial = current_pos[entry.b_owner] % page_size + 1
+            entry.KV_len_np[entry.leaf_entry_idxs] = (
+                entry.leaf_entry_base + partial
+            )
+
+    # 2) Concatenate B sets with cumulative offset shifts on
+    #    KV_indices_offset / KVMapQ_List_Offset (everything else stacks
+    #    as-is since KV_indices entries are absolute slot indices and
+    #    KVMapQ_List entries are absolute beam ids).
+    kv_indices_chunks: list[np.ndarray] = []
+    kv_offsets_shifted: list[np.ndarray] = []
+    kv_len_chunks: list[np.ndarray] = []
+    kvmapq_chunks: list[np.ndarray] = []
+    kvmapq_offsets_shifted: list[np.ndarray] = []
+    kvmapq_len_chunks: list[np.ndarray] = []
+    kv_acc = 0
+    mapq_acc = 0
+    for e in per_prompt:
+        kv_indices_chunks.append(e.KV_indices_np)
+        kv_offsets_shifted.append(e.KV_indices_offset_np + kv_acc)
+        kv_len_chunks.append(e.KV_len_np)
+        kvmapq_chunks.append(e.KVMapQ_List_np)
+        kvmapq_offsets_shifted.append(e.KVMapQ_List_Offset_np + mapq_acc)
+        kvmapq_len_chunks.append(e.KVMapQ_List_Len_np)
+        kv_acc += e.KV_indices_np.size
+        mapq_acc += e.KVMapQ_List_np.size
+
+    def _cat(chunks):
+        if chunks:
+            return np.concatenate(chunks)
+        return np.empty(0, dtype=np.int32)
 
     arrays = (
-        cache.KV_indices_np,           # 0
-        cache.KV_indices_offset_np,    # 1
-        cache.KV_len_np,               # 2
-        cache.KVMapQ_List_np,          # 3
-        cache.KVMapQ_List_Offset_np,   # 4
-        cache.KVMapQ_List_Len_np,      # 5
+        _cat(kv_indices_chunks),         # 0
+        _cat(kv_offsets_shifted),        # 1
+        _cat(kv_len_chunks),             # 2
+        _cat(kvmapq_chunks),             # 3
+        _cat(kvmapq_offsets_shifted),    # 4
+        _cat(kvmapq_len_chunks),         # 5
     )
     sizes = [a.size for a in arrays]
     starts = [0]
@@ -348,7 +340,7 @@ class DeftAttentionContext(AttentionContext):
 
 
 class _DeftWrappers(WrapperBundle):
-    __slots__ = ("out_buf", "plan_cache", "plan_cache_key")
+    __slots__ = ("out_buf", "plan_cache_keys", "plan_cache_entries")
 
 
 @dataclass
@@ -357,8 +349,9 @@ class DeftBackend:
     use_split_pages: bool = True
 
     _plan_trace: list = field(default_factory=list, init=False, repr=False)
-    # Cache hit/miss counters (visible via the backend handle for the
-    # bench harnesses that want to print them, mirroring mlca's pattern).
+    # Cache hit/miss counters at the *per-prompt* granularity (each
+    # decode step contributes B lookups). Visible via the backend
+    # handle for benches that want to print them.
     _plan_hits: int = field(default=0, init=False, repr=False)
     _plan_misses: int = field(default=0, init=False, repr=False)
 
@@ -376,8 +369,11 @@ class DeftBackend:
     ) -> _DeftWrappers:
         wb = _DeftWrappers()
         wb.out_buf = None
-        wb.plan_cache = None
-        wb.plan_cache_key = None
+        # Per-prompt cache: dict[b] -> (key, entry). Survives across
+        # decode steps; stale entries (e.g. from prior beam_search
+        # calls with different B) look like misses, harmless.
+        wb.plan_cache_keys = {}
+        wb.plan_cache_entries = {}
         return wb
 
     def plan_decode_step(
@@ -400,57 +396,31 @@ class DeftBackend:
         ps = page_size
         cache_enabled = os.environ.get("BE_DEFT_PLAN_CACHE", "1") != "0"
 
-        # ---- Always build the page-level radix tree. Fast-path at
-        # fasttree._build_radix_tree_pages_single is a few microseconds
-        # for the common K-distinct-divergence case; the heavy work is
-        # in _pack_deft_arrays which the cache skips on hit.
-        shared_prefix_per_prompt: list[list[int]] = []
-        tails_per_beam_per_prompt: list[list[list[int]]] = []
-        total_pages = 0
+        # ---- Per-prompt cache lookup + selective rebuild.
+        per_prompt: list[_DeftPromptCacheEntry] = []
         for b in range(B):
             bp_b = beams_per_prompt[b]
             prefix = bp_b[0].pages_prefix
-            shared_prefix_per_prompt.append(prefix)
             tails = [beam.pages_tail for beam in bp_b]
-            tails_per_beam_per_prompt.append(tails)
-            total_pages += len(prefix)
-            for tl in tails:
-                total_pages += len(tl)
-        tree_info, node_pages = _build_combined_radix_tree_pages(
-            shared_prefix_per_prompt, tails_per_beam_per_prompt, K,
-        )
 
-        # ---- Cache lookup, fasttree-style key. Invariant under fork-
-        # induced list-identity churn; CoW always splits a previously-
-        # shared radix node (len(tree_info) grows) so any content change
-        # is caught by the key.
-        cache_key = (
-            _build_deft_cache_key(tree_info, total_pages, B, K)
-            if cache_enabled else None
-        )
-        cache: _DeftPlanCache | None = None
-        if (
-            cache_enabled
-            and wrappers.plan_cache is not None
-            and wrappers.plan_cache_key == cache_key
-        ):
-            cache = wrappers.plan_cache
-            self._plan_hits += 1
-        else:
-            self._plan_misses += 1
-            # Empty leaf_partial_last → _expand_pages_to_slots returns
-            # full-page slots for every leaf. _patch_and_h2d sets the
-            # per-step KV_len to the correct partial count; the kernel
-            # masks beyond KV_len so the extra slots are never read.
-            node_slots = _expand_pages_to_slots(
-                tree_info, node_pages, ps, {},
-            )
-            cache = _pack_deft_arrays(tree_info, node_pages, node_slots, K, ps)
             if cache_enabled:
-                wrappers.plan_cache = cache
-                wrappers.plan_cache_key = cache_key
+                key = _build_prompt_cache_key(prefix, tails)
+                cached_key = wrappers.plan_cache_keys.get(b)
+                if cached_key == key:
+                    per_prompt.append(wrappers.plan_cache_entries[b])
+                    self._plan_hits += 1
+                    continue
+            else:
+                key = None
 
-        meta = _patch_and_h2d(cache, current_pos, ps, device)
+            self._plan_misses += 1
+            entry = _pack_deft_arrays_for_prompt(prefix, tails, K, ps, b)
+            if cache_enabled:
+                wrappers.plan_cache_keys[b] = key
+                wrappers.plan_cache_entries[b] = entry
+            per_prompt.append(entry)
+
+        meta = _concat_and_h2d(per_prompt, current_pos, ps, device)
 
         # ---- Build write_slots[B*K]: where to append the new K/V.
         write_slots: list[int] = []
