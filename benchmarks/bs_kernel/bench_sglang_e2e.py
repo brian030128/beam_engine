@@ -31,6 +31,7 @@ from pathlib import Path
 import torch
 from transformers import AutoTokenizer
 
+from beam_engine.baselines.deft import DeftBackend
 from beam_engine.baselines.fasttree import FastTreeBackend
 from beam_engine.baselines.mlca import MlcaBackend
 from beam_engine.baselines.paged import PagedBackend
@@ -74,6 +75,7 @@ def _make_backend(name: str):
         "fasttree": FastTreeBackend,
         "paged":    PagedBackend,
         "mlca":     MlcaBackend,
+        "deft":     DeftBackend,
     }[name]()
 
 
@@ -82,6 +84,7 @@ BACKEND_FACTORIES: dict[str, object] = {
     "fasttree":  FastTreeBackend,
     "paged":     PagedBackend,
     "mlca":      MlcaBackend,
+    "deft":      DeftBackend,
 }
 for _name in _BSK_FORCED:
     BACKEND_FACTORIES[_name] = None  # also routed through _make_backend

@@ -24,6 +24,17 @@ the trace pass also needs to be a separate job because
 `BS_KERNEL_TRACE_PLAN=1` adds `torch.cuda.synchronize()` calls that
 inflate `plan_total_ms` and would contaminate the timing numbers.
 
+**DeFT baseline (exp1a, exp4).** DeFT's Triton split-by-node attention
+kernel is vendored at `src/beam_engine/baselines/_deft_kernel/`
+(copied verbatim from `3rdparty/DeFT/DeFT/deft/layers/attention/
+tree_attention.py`; DeFT's own package pins torch==2.5.1 / python>=3.12
+so it can't be co-installed in `.venv/`). The bench-side wrapper
+`src/beam_engine/baselines/deft.py:DeftBackend` builds DeFT-format
+metadata from the page-radix tree we already build for FastTree and
+splits per-node readers into BLOCK_M=32 chunks (DeFT's stage-1 kernel
+only processes 32 queries per CTA — without the split it would silently
+drop overflow at K>32).
+
 **K=64 across exp1 cells.** The original sweep used the scenarios'
 natural K (32 for level_system, 16 for the others). At those Ks the
 picker chose `SHARED_2L_1POOL` for 100% of steps across every cell,
@@ -59,7 +70,7 @@ Logs land in two places:
 
 All three use the same K=64 cells.
 
-- **exp1a_end_to_end_timing.sbatch** — `bs_kernel`, `fasttree`, `paged`, `mlca` × six cells, warmup + median of 2.
+- **exp1a_end_to_end_timing.sbatch** — `bs_kernel`, `fasttree`, `deft`, `paged`, `mlca` × six cells, warmup + median of 2.
   CSVs land in `…/exp1_end_to_end/timing/`. The `${model_tag}.csv` files merge the three
   per-scenario CSVs per model.
 - **exp1b_end_to_end_strategy.sbatch** — `bs_kernel` only, same six cells,
@@ -101,9 +112,9 @@ Two sub-passes inside one job:
 ### exp4 — Beam search at long decode length
 
 Same cell as exp2 (Llama-3.2-1B, K=32, L_p=8192, B=16, max_new=2048) but
-with all four methods (`paged`, `fasttree`, `mlca`, `bs_kernel`). Mirrors
-the data behind the "Beam search at long decode length" table in the
-paper.
+with all five methods (`paged`, `fasttree`, `deft`, `mlca`, `bs_kernel`).
+Mirrors the data behind the "Beam search at long decode length" table
+in the paper.
 
 Output: `…/exp4_long_decode/merged.csv` with one row per method.
 

@@ -12,8 +12,8 @@
 
 # Reproduces docs/paper_story.md → "End-to-end speedups" timing table.
 #
-# Six cells (three scenarios × two Llama sizes), all four methods
-# (bs_kernel / fasttree / paged / mlca), warmup + one measured run.
+# Six cells (three scenarios × two Llama sizes), all five methods
+# (bs_kernel / fasttree / deft / paged / mlca), warmup + one measured run.
 # One run is enough because each cell already averages over hundreds
 # to thousands of beams × 256 decode steps — timer noise is dominated
 # by the per-run integration. No trace flags — these would inflate
@@ -55,8 +55,8 @@ LOG="$OUT_DIR/exp1a.log"
     echo
 } | tee "$LOG"
 
-METHODS_ALL="fasttree bs_kernel paged mlca"
-METHODS_NON_MLCA="fasttree bs_kernel paged"
+METHODS_ALL="fasttree deft bs_kernel paged mlca"
+METHODS_NON_MLCA="fasttree deft bs_kernel paged"
 
 run_cell () {
     # run_cell <model_tag> <methods> <out_csv> <extra-args...>

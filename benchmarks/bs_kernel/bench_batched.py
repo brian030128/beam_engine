@@ -34,7 +34,7 @@ from typing import Callable
 import torch
 from transformers import AutoTokenizer
 
-from beam_engine.baselines import dbs, fasttree, mlca, paged, tree
+from beam_engine.baselines import dbs, deft, fasttree, mlca, paged, tree
 from beam_engine.methods import adaptive_pool, bs_kernel
 from beam_engine.methods.bs_kernel.cost_model import Strategy
 from beam_engine.models.modeling_llama import LlamaForCausalLM
@@ -171,6 +171,7 @@ METHODS: dict[str, Callable] = {
     "paged":            paged.beam_search,
     "tree":             tree.beam_search,
     "fasttree":         fasttree.beam_search,
+    "deft":             deft.beam_search,
     "mlca":             mlca.beam_search,
     "adaptive_pool":    adaptive_pool.beam_search,
     "bs_kernel":        bs_kernel.beam_search,
