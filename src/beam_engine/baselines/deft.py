@@ -28,10 +28,31 @@ across non-overlapping KVMapQ_List slices. Stage 2 merges as usual.
 The vendored kernel lives in ``baselines/_deft_kernel/`` (copied
 verbatim from DeFT's artifact, since DeFT's package pins
 torch==2.5.1 / python>=3.12 and can't be co-installed with our env).
+
+**Plan-state cache (LCA cache).** Within a stable-topology period the
+per-node page lists and query mapping are all stable — only
+single-request leaves' ``KV_len`` grows by 1 per step as the partial
+last page fills. We cache the int32 numpy arrays + per-leaf patch
+info; cache hits skip the page→slot expansion and array packing,
+doing only a vectorised leaf-KV_len patch + one H2D copy. (The radix
+tree itself is always rebuilt — for our beam-search workloads the
+fast-path radix at ``fasttree._build_radix_tree_pages_single`` is a
+few microseconds.)
+
+Cache key follows the fasttree pattern in ``baselines/fasttree.py:801``:
+``(len(tree_info), B, K, total_pages)``. This is invariant under the
+list-identity churn from page_driver's fork phase (which copies
+``parent.pages_tail`` to a fresh list every step for non-assignee
+children at ``page_driver.py:726``) — an id-based key gets 0% hit
+rate. ``len(tree_info)`` catches CoW (always splits a previously-
+shared node into a deeper branch, adding at least one tree node);
+``total_pages`` catches page-boundary appends. Disable for A/B with
+``BE_DEFT_PLAN_CACHE=0``.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -65,7 +86,7 @@ _DEFT_BLOCK_M = 32
 
 
 # ---------------------------------------------------------------------------
-# Metadata
+# Metadata + plan cache
 # ---------------------------------------------------------------------------
 
 
@@ -79,18 +100,72 @@ class _DeftMeta:
     KVMapQ_List_Len: torch.Tensor     # (kv_num,) int32
 
 
-def _build_deft_metadata(
-    tree_info,
-    node_slots: list[np.ndarray],
-    device: torch.device,
-) -> _DeftMeta:
-    """Pack the page-radix tree into DeFT's flat-array metadata.
+@dataclass
+class _DeftPlanCache:
+    """Cacheable arrays for one ``plan_decode_step``.
 
-    Skips nodes with zero seqlen or zero readers (virtual root). Splits
-    nodes whose reader count exceeds ``_DEFT_BLOCK_M`` into multiple
-    virtual entries sharing the same KV range; this is invisible to the
-    kernel — stage 2 merges per-query partials regardless of how many
-    (node, query-chunk) pairs contributed.
+    All fields are stable within a page-boundary period; the only
+    per-step change is ``KV_len_np`` at leaf-entry indices, patched by
+    ``_patch_and_h2d``.
+
+    Leaf-entry patch info (parallel int32 arrays of length
+    ``n_single_request_leaf_entries``):
+      * ``leaf_entry_idxs``  — index into ``KV_len_np``
+      * ``leaf_entry_b``     — owning prompt index (for current_pos[b])
+      * ``leaf_entry_base``  — ``(n_pages - 1) * page_size`` for the leaf
+                                (prior full pages; per-step KV_len adds
+                                ``current_pos[b] % page_size + 1``)
+    Multi-request leaves and non-leaf entries keep the cached KV_len
+    (full ``n_pages * page_size``) unchanged across steps — same as the
+    pre-cache behaviour, since multi-request leaves don't get partial
+    trim either (all beams sharing the leaf necessarily share off too).
+    """
+    KV_indices_np: np.ndarray
+    KV_indices_offset_np: np.ndarray
+    KV_len_np: np.ndarray              # mutable: leaf entries patched per step
+    KVMapQ_List_np: np.ndarray
+    KVMapQ_List_Offset_np: np.ndarray
+    KVMapQ_List_Len_np: np.ndarray
+    leaf_entry_idxs: np.ndarray
+    leaf_entry_b: np.ndarray
+    leaf_entry_base: np.ndarray
+
+
+def _build_deft_cache_key(
+    tree_info: list,
+    total_pages: int,
+    B: int,
+    K: int,
+) -> tuple:
+    """Fasttree-style key: ``(len(tree_info), B, K, total_pages)``.
+
+    Invariant under page_driver's fork-list churn (CoW always splits a
+    shared radix node → ``len(tree_info)`` grows; page-boundary append
+    grows ``total_pages``). An id-based key gets 0% hit rate because
+    ``page_driver.py:726`` copies ``parent.pages_tail`` to a fresh list
+    every step for non-assignee children.
+    """
+    return (len(tree_info), B, K, total_pages)
+
+
+def _pack_deft_arrays(
+    tree_info,
+    node_pages: list[list[int]],
+    node_slots: list[np.ndarray],
+    K: int,
+    page_size: int,
+) -> _DeftPlanCache:
+    """Pack the radix tree into DeFT's flat-array metadata.
+
+    Splits nodes whose reader count exceeds ``_DEFT_BLOCK_M`` into
+    multiple virtual entries sharing the same KV range; stage 2 merges
+    per-query partials regardless of how many (node, query-chunk) pairs
+    contributed.
+
+    Single-request leaves contribute their *full last page* of slots (no
+    partial trim); the cache layer patches their per-step KV_len via
+    ``leaf_entry_*`` arrays. The kernel masks beyond KV_len so the extra
+    not-yet-written slots are never read.
     """
     kv_indices_chunks: list[np.ndarray] = []
     kv_indices_offset: list[int] = []
@@ -98,9 +173,13 @@ def _build_deft_metadata(
     kvmapq_chunks: list[np.ndarray] = []
     kvmapq_offset: list[int] = []
     kvmapq_len: list[int] = []
+    leaf_entry_idxs: list[int] = []
+    leaf_entry_b: list[int] = []
+    leaf_entry_base: list[int] = []
 
-    kv_acc = 0      # running total slots emitted
-    mapq_acc = 0    # running total query-entries emitted
+    kv_acc = 0
+    mapq_acc = 0
+    entry_idx = 0  # running index into kv_len / kv_indices_offset
 
     for i, n in enumerate(tree_info):
         n_slots = node_slots[i].size
@@ -112,6 +191,17 @@ def _build_deft_metadata(
         kv_acc += n_slots
         reqs_arr = np.asarray(reqs, dtype=np.int32)
         n_reqs = reqs_arr.size
+
+        # Single-request leaf? If so all its chunks (one chunk for a
+        # single reader, since 1 ≤ BLOCK_M) will be patched per step.
+        is_single_leaf = (
+            n.num_children == 0 and n_reqs == 1 and len(node_pages[i]) > 0
+        )
+        if is_single_leaf:
+            rid = int(reqs_arr[0])
+            b_owner = rid // K
+            base_len = (len(node_pages[i]) - 1) * page_size
+
         # Split readers into BLOCK_M-sized chunks; emit one virtual
         # kv_num entry per chunk. All chunks share (kv_start, n_slots).
         for off in range(0, n_reqs, _DEFT_BLOCK_M):
@@ -122,6 +212,13 @@ def _build_deft_metadata(
             mapq_acc += chunk.size
             kv_indices_offset.append(kv_start)
             kv_len.append(n_slots)
+            if is_single_leaf:
+                # Single-request leaf → exactly one chunk (n_reqs == 1
+                # ≤ BLOCK_M). Record patch info for this entry.
+                leaf_entry_idxs.append(entry_idx)
+                leaf_entry_b.append(b_owner)
+                leaf_entry_base.append(base_len)
+            entry_idx += 1
 
     if kv_indices_chunks:
         kv_indices_np = np.concatenate(kv_indices_chunks)
@@ -132,29 +229,55 @@ def _build_deft_metadata(
     else:
         kvmapq_np = np.empty(0, dtype=np.int32)
 
-    kv_indices_offset_np = np.asarray(kv_indices_offset, dtype=np.int32)
-    kv_len_np = np.asarray(kv_len, dtype=np.int32)
-    kvmapq_offset_np = np.asarray(kvmapq_offset, dtype=np.int32)
-    kvmapq_len_np = np.asarray(kvmapq_len, dtype=np.int32)
+    return _DeftPlanCache(
+        KV_indices_np=kv_indices_np,
+        KV_indices_offset_np=np.asarray(kv_indices_offset, dtype=np.int32),
+        KV_len_np=np.asarray(kv_len, dtype=np.int32),
+        KVMapQ_List_np=kvmapq_np,
+        KVMapQ_List_Offset_np=np.asarray(kvmapq_offset, dtype=np.int32),
+        KVMapQ_List_Len_np=np.asarray(kvmapq_len, dtype=np.int32),
+        leaf_entry_idxs=np.asarray(leaf_entry_idxs, dtype=np.int32),
+        leaf_entry_b=np.asarray(leaf_entry_b, dtype=np.int32),
+        leaf_entry_base=np.asarray(leaf_entry_base, dtype=np.int32),
+    )
 
-    # Single H2D for all int32 metadata (same pattern as fasttree.py).
+
+def _patch_and_h2d(
+    cache: _DeftPlanCache,
+    current_pos: list[int],
+    page_size: int,
+    device: torch.device,
+) -> _DeftMeta:
+    """Patch leaf KV_lens to the current partial-last-page count, then
+    concatenate all int32 arrays and copy to device in a single H2D.
+
+    Mutates ``cache.KV_len_np`` in place — safe because every step
+    re-patches all leaf entries (idempotent overwrite).
+    """
+    if cache.leaf_entry_idxs.size > 0:
+        cur_pos_np = np.asarray(current_pos, dtype=np.int64)
+        pos_per_leaf = cur_pos_np[cache.leaf_entry_b]
+        partial = (pos_per_leaf % page_size + 1).astype(np.int32)
+        cache.KV_len_np[cache.leaf_entry_idxs] = (
+            cache.leaf_entry_base + partial
+        )
+
     arrays = (
-        kv_indices_np,           # 0
-        kv_indices_offset_np,    # 1
-        kv_len_np,               # 2
-        kvmapq_np,               # 3
-        kvmapq_offset_np,        # 4
-        kvmapq_len_np,           # 5
+        cache.KV_indices_np,           # 0
+        cache.KV_indices_offset_np,    # 1
+        cache.KV_len_np,               # 2
+        cache.KVMapQ_List_np,          # 3
+        cache.KVMapQ_List_Offset_np,   # 4
+        cache.KVMapQ_List_Len_np,      # 5
     )
     sizes = [a.size for a in arrays]
     starts = [0]
     for s in sizes:
         starts.append(starts[-1] + s)
-    big = (
-        np.concatenate(arrays)
-        if starts[-1] > 0
-        else np.empty(0, dtype=np.int32)
-    )
+    if starts[-1] > 0:
+        big = np.concatenate(arrays)
+    else:
+        big = np.empty(0, dtype=np.int32)
     big_t = torch.from_numpy(big).to(device, non_blocking=True)
 
     def _slice(i):
@@ -225,7 +348,7 @@ class DeftAttentionContext(AttentionContext):
 
 
 class _DeftWrappers(WrapperBundle):
-    __slots__ = ("out_buf",)
+    __slots__ = ("out_buf", "plan_cache", "plan_cache_key")
 
 
 @dataclass
@@ -234,6 +357,10 @@ class DeftBackend:
     use_split_pages: bool = True
 
     _plan_trace: list = field(default_factory=list, init=False, repr=False)
+    # Cache hit/miss counters (visible via the backend handle for the
+    # bench harnesses that want to print them, mirroring mlca's pattern).
+    _plan_hits: int = field(default=0, init=False, repr=False)
+    _plan_misses: int = field(default=0, init=False, repr=False)
 
     def init_wrappers(
         self,
@@ -249,6 +376,8 @@ class DeftBackend:
     ) -> _DeftWrappers:
         wb = _DeftWrappers()
         wb.out_buf = None
+        wb.plan_cache = None
+        wb.plan_cache_key = None
         return wb
 
     def plan_decode_step(
@@ -269,34 +398,59 @@ class DeftBackend:
         last_lca_per_prompt: list[int],
     ) -> StepPlan:
         ps = page_size
+        cache_enabled = os.environ.get("BE_DEFT_PLAN_CACHE", "1") != "0"
 
-        # ---- Gather per-prompt prefixes + per-beam tails (by reference).
+        # ---- Always build the page-level radix tree. Fast-path at
+        # fasttree._build_radix_tree_pages_single is a few microseconds
+        # for the common K-distinct-divergence case; the heavy work is
+        # in _pack_deft_arrays which the cache skips on hit.
         shared_prefix_per_prompt: list[list[int]] = []
         tails_per_beam_per_prompt: list[list[list[int]]] = []
+        total_pages = 0
         for b in range(B):
             bp_b = beams_per_prompt[b]
-            shared_prefix_per_prompt.append(bp_b[0].pages_prefix)
-            tails_per_beam_per_prompt.append([beam.pages_tail for beam in bp_b])
-
-        # ---- Build the combined page-level radix tree (shared w/ fasttree).
+            prefix = bp_b[0].pages_prefix
+            shared_prefix_per_prompt.append(prefix)
+            tails = [beam.pages_tail for beam in bp_b]
+            tails_per_beam_per_prompt.append(tails)
+            total_pages += len(prefix)
+            for tl in tails:
+                total_pages += len(tl)
         tree_info, node_pages = _build_combined_radix_tree_pages(
             shared_prefix_per_prompt, tails_per_beam_per_prompt, K,
         )
 
-        # ---- Leaf partial-last-page handling, then expand pages→slots.
-        leaf_partial_last: dict[int, int] = {}
-        for i, n in enumerate(tree_info):
-            if n.num_children == 0 and len(n.requests) == 1 and node_pages[i]:
-                rid = n.requests[0]
-                b_idx = rid // K
-                pos = current_pos[b_idx]
-                leaf_partial_last[i] = pos % ps + 1
-        node_slots = _expand_pages_to_slots(
-            tree_info, node_pages, ps, leaf_partial_last,
+        # ---- Cache lookup, fasttree-style key. Invariant under fork-
+        # induced list-identity churn; CoW always splits a previously-
+        # shared radix node (len(tree_info) grows) so any content change
+        # is caught by the key.
+        cache_key = (
+            _build_deft_cache_key(tree_info, total_pages, B, K)
+            if cache_enabled else None
         )
+        cache: _DeftPlanCache | None = None
+        if (
+            cache_enabled
+            and wrappers.plan_cache is not None
+            and wrappers.plan_cache_key == cache_key
+        ):
+            cache = wrappers.plan_cache
+            self._plan_hits += 1
+        else:
+            self._plan_misses += 1
+            # Empty leaf_partial_last → _expand_pages_to_slots returns
+            # full-page slots for every leaf. _patch_and_h2d sets the
+            # per-step KV_len to the correct partial count; the kernel
+            # masks beyond KV_len so the extra slots are never read.
+            node_slots = _expand_pages_to_slots(
+                tree_info, node_pages, ps, {},
+            )
+            cache = _pack_deft_arrays(tree_info, node_pages, node_slots, K, ps)
+            if cache_enabled:
+                wrappers.plan_cache = cache
+                wrappers.plan_cache_key = cache_key
 
-        # ---- Pack into DeFT's flat-array metadata.
-        meta = _build_deft_metadata(tree_info, node_slots, device)
+        meta = _patch_and_h2d(cache, current_pos, ps, device)
 
         # ---- Build write_slots[B*K]: where to append the new K/V.
         write_slots: list[int] = []
