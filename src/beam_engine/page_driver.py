@@ -56,6 +56,7 @@ from .decoding import (
     standard_decode_select_batched,
     standard_prefill_select,
 )
+from .distributed import get_tp_world_size
 from .methods.adaptive_pool import Beam, _PrefillCtx
 from .models.attention import AttentionContext
 from .page_table import PageTable
@@ -223,8 +224,15 @@ def beam_search(
             timings[k] = []
     picks_per_prompt: list[list[Any]] = []
 
-    num_qo_heads = config.num_attention_heads
-    num_kv_heads = config.num_key_value_heads
+    # Under tensor parallelism the local rank only owns a slice of the
+    # heads. Every per-rank wrapper / page-table / attention call uses
+    # these post-shard counts; the FlashInfer wrappers don't need any
+    # awareness of the broader TP topology because each rank's KV cache
+    # holds only its local heads and o_proj's all-reduce stitches the
+    # output dim back to hidden_size before top-K.
+    tp_size = get_tp_world_size()
+    num_qo_heads = config.num_attention_heads // tp_size
+    num_kv_heads = config.num_key_value_heads // tp_size
     head_dim = config.head_dim
     num_layers = config.num_hidden_layers
 
