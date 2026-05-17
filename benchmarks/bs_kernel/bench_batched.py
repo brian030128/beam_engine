@@ -49,14 +49,121 @@ DTYPE = torch.float16
 def _bs_kernel_force_2l1p(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
+    return_phase_timings: bool = False,
 ):
     """bs_kernel pinned to SHARED_2L_1POOL — adaptive_pool's strategy
     dispatched through bs_kernel's driver path."""
     return bs_kernel.beam_search(
         model, config, prompts, max_new_tokens, beam_width,
         return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
         max_num_pages=max_num_pages,
         available_strategies={Strategy.SHARED_2L_1POOL},
+    )
+
+
+def _bs_kernel_force_2l_dec_tail(
+    model, config, prompts, max_new_tokens, beam_width,
+    *, return_timings: bool = False, max_num_pages: int = 2048,
+    return_phase_timings: bool = False,
+):
+    """bs_kernel pinned to SHARED_2L_DEC_TAIL — shared prefix prefill +
+    CTA_Q=1 decode kernel for per-beam tail + merge_state_in_place.
+    Baseline depth for the DECTAIL family in dispatch-space ablations."""
+    return bs_kernel.beam_search(
+        model, config, prompts, max_new_tokens, beam_width,
+        return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
+        max_num_pages=max_num_pages,
+        available_strategies={Strategy.SHARED_2L_DEC_TAIL},
+    )
+
+
+def _bs_kernel_force_3l1p(
+    model, config, prompts, max_new_tokens, beam_width,
+    *, return_timings: bool = False, max_num_pages: int = 2048,
+    return_phase_timings: bool = False,
+):
+    """bs_kernel pinned to SHARED_3L_1POOL — fused 3-level cascade prefill
+    (prefix + intermediate + per-beam tail) on the prefill kernel path
+    (CTA_Q=K). When a step's workload has no intermediate-level structure,
+    the picker's fallback path collapses to SHARED_2L_1POOL."""
+    return bs_kernel.beam_search(
+        model, config, prompts, max_new_tokens, beam_width,
+        return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
+        max_num_pages=max_num_pages,
+        available_strategies={Strategy.SHARED_3L_1POOL},
+    )
+
+
+def _bs_kernel_force_3l_dec_tail(
+    model, config, prompts, max_new_tokens, beam_width,
+    *, return_timings: bool = False, max_num_pages: int = 2048,
+    return_phase_timings: bool = False,
+):
+    """bs_kernel pinned to SHARED_3L_DEC_TAIL. When a step's workload
+    doesn't support depth=3 (no intermediate-level structure), the
+    picker's fallback path collapses to the deepest supported family
+    (SHARED_2L_DEC_TAIL)."""
+    return bs_kernel.beam_search(
+        model, config, prompts, max_new_tokens, beam_width,
+        return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
+        max_num_pages=max_num_pages,
+        available_strategies={Strategy.SHARED_3L_DEC_TAIL},
+    )
+
+
+def _bs_kernel_force_4l1p(
+    model, config, prompts, max_new_tokens, beam_width,
+    *, return_timings: bool = False, max_num_pages: int = 2048,
+    return_phase_timings: bool = False,
+):
+    """bs_kernel pinned to SHARED_4L_1POOL. Requires
+    ``max_cascade_levels=4`` (wrapper allocation) and
+    ``max_dispatch_depth=4`` in the coefficients (picker enumeration).
+    Workloads without a depth-4 intermediate structure fall back to
+    SHARED_3L_1POOL / SHARED_2L_1POOL via the picker's auto-fallback."""
+    from beam_engine.methods.bs_kernel.calibrate import load_or_defaults
+    from dataclasses import replace
+    coeffs = replace(load_or_defaults("cuda"), max_dispatch_depth=4)
+    return bs_kernel.beam_search(
+        model, config, prompts, max_new_tokens, beam_width,
+        return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
+        max_num_pages=max_num_pages,
+        max_cascade_levels=4,
+        coefficients=coeffs,
+        available_strategies={
+            Strategy.SHARED_4L_1POOL,
+            Strategy.SHARED_3L_1POOL,
+            Strategy.SHARED_2L_1POOL,
+        },
+    )
+
+
+def _bs_kernel_force_4l_dec_tail(
+    model, config, prompts, max_new_tokens, beam_width,
+    *, return_timings: bool = False, max_num_pages: int = 2048,
+    return_phase_timings: bool = False,
+):
+    """bs_kernel pinned to SHARED_4L_DEC_TAIL with shallower fallbacks."""
+    from beam_engine.methods.bs_kernel.calibrate import load_or_defaults
+    from dataclasses import replace
+    coeffs = replace(load_or_defaults("cuda"), max_dispatch_depth=4)
+    return bs_kernel.beam_search(
+        model, config, prompts, max_new_tokens, beam_width,
+        return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
+        max_num_pages=max_num_pages,
+        max_cascade_levels=4,
+        coefficients=coeffs,
+        available_strategies={
+            Strategy.SHARED_4L_DEC_TAIL,
+            Strategy.SHARED_3L_DEC_TAIL,
+            Strategy.SHARED_2L_DEC_TAIL,
+        },
     )
 
 
@@ -68,6 +175,11 @@ METHODS: dict[str, Callable] = {
     "adaptive_pool":    adaptive_pool.beam_search,
     "bs_kernel":        bs_kernel.beam_search,
     "bs_kernel_2l1p":   _bs_kernel_force_2l1p,
+    "bs_kernel_2ldt":   _bs_kernel_force_2l_dec_tail,
+    "bs_kernel_3l1p":   _bs_kernel_force_3l1p,
+    "bs_kernel_3ldt":   _bs_kernel_force_3l_dec_tail,
+    "bs_kernel_4l1p":   _bs_kernel_force_4l1p,
+    "bs_kernel_4ldt":   _bs_kernel_force_4l_dec_tail,
     # DBS variants — same kernel, diversity-penalized top-K
     # (num_groups=4, λ=0.5 default).
     "dbs_paged":         dbs.dbs_paged,
@@ -90,6 +202,24 @@ class Row:
     decode_total_ms: float
     decode_per_token_ms: float
     decode_per_prompt_per_token_ms: float
+    # Per-phase decode-step breakdowns (from return_phase_timings=True).
+    plan_mean_ms: float = 0.0
+    plan_total_ms: float = 0.0
+    forward_mean_ms: float = 0.0
+    forward_total_ms: float = 0.0
+    cow_mean_ms: float = 0.0
+    cow_total_ms: float = 0.0
+    topk_mean_ms: float = 0.0
+    topk_total_ms: float = 0.0
+    fork_mean_ms: float = 0.0
+    fork_total_ms: float = 0.0
+
+
+def _phase_mean_total(xs):
+    if not xs:
+        return 0.0, 0.0
+    total = sum(xs)
+    return total / len(xs), total
 
 
 def _make_prompt(tokenizer, target_len: int) -> list[int]:
@@ -192,6 +322,9 @@ def run_one(
     if "max_num_pages" in sig.parameters:
         extra_kwargs["max_num_pages"] = needed_pages
 
+    if "return_phase_timings" in sig.parameters:
+        extra_kwargs["return_phase_timings"] = True
+
     try:
         beams, timings = method_fn(
             model, config, prompts, max_new, K,
@@ -212,6 +345,11 @@ def run_one(
     # (B * (max_new - 1)).
     total_tokens = B * (max_new - 1)
     per_token = decode_total / max(1, total_tokens)
+    plan_mean, plan_total = _phase_mean_total(timings.get("plan_ms", []))
+    fwd_mean,  fwd_total  = _phase_mean_total(timings.get("forward_ms", []))
+    cow_mean,  cow_total  = _phase_mean_total(timings.get("cow_ms", []))
+    topk_mean, topk_total = _phase_mean_total(timings.get("topk_ms", []))
+    fork_mean, fork_total = _phase_mean_total(timings.get("fork_ms", []))
     return Row(
         method=method_name,
         K=K, L_p=L_p, B=B, max_new=max_new,
@@ -219,6 +357,11 @@ def run_one(
         decode_total_ms=decode_total,
         decode_per_token_ms=decode_total / max(1, n_steps),
         decode_per_prompt_per_token_ms=per_token,
+        plan_mean_ms=plan_mean, plan_total_ms=plan_total,
+        forward_mean_ms=fwd_mean, forward_total_ms=fwd_total,
+        cow_mean_ms=cow_mean, cow_total_ms=cow_total,
+        topk_mean_ms=topk_mean, topk_total_ms=topk_total,
+        fork_mean_ms=fork_mean, fork_total_ms=fork_total,
     )
 
 
@@ -241,6 +384,12 @@ def main():
                     help="run each (method, cell) twice and discard the "
                          "first iter (absorbs Triton-JIT autotune + first-"
                          "call CUDA-graph capture).")
+    ap.add_argument("--prompts-file", default=None,
+                    help="JSONL file (one record per line, fields "
+                         "{token_len, prompt}) supplying real-world prompts. "
+                         "First B records are taken (skipping any with "
+                         "token_len < L_p) and truncated to L_p tokens. "
+                         "Overrides --distinct.")
     args = ap.parse_args()
 
     methods = {k: METHODS[k] for k in args.methods if k in METHODS}
@@ -259,9 +408,29 @@ def main():
     config = model.config
     print("Model loaded.\n")
 
+    # Pre-load real-world prompts once if --prompts-file is set; we
+    # re-truncate per (K, L_p, B) cell below.
+    file_prompts_raw: list[list[int]] | None = None
+    if args.prompts_file:
+        import json as _json
+        file_prompts_raw = []
+        with open(args.prompts_file) as _pf:
+            for line in _pf:
+                rec = _json.loads(line)
+                # Tokenize once; we'll truncate per cell.
+                file_prompts_raw.append(tok.encode(rec["prompt"]))
+        print(f"loaded {len(file_prompts_raw)} prompts from {args.prompts_file}")
+
     rows: list[Row] = []
     for (K, L_p, B) in grid:
-        if args.distinct:
+        if file_prompts_raw is not None:
+            usable = [ids for ids in file_prompts_raw if len(ids) >= L_p]
+            if len(usable) < B:
+                print(f"  WARNING: only {len(usable)} prompts ≥ {L_p} tokens; "
+                      f"need {B}. Skipping (K={K}, L_p={L_p}, B={B}).")
+                continue
+            prompts = [usable[i][:L_p] for i in range(B)]
+        elif args.distinct:
             prompts = _make_distinct_prompts(tok, L_p, B)
         else:
             base = _make_prompt(tok, L_p)
@@ -309,6 +478,11 @@ def main():
             "method", "K", "L_p", "B", "max_new",
             "prefill_ms", "decode_total_ms",
             "decode_per_token_ms", "decode_per_prompt_per_token_ms",
+            "plan_mean_ms", "plan_total_ms",
+            "forward_mean_ms", "forward_total_ms",
+            "cow_mean_ms", "cow_total_ms",
+            "topk_mean_ms", "topk_total_ms",
+            "fork_mean_ms", "fork_total_ms",
         ])
         for r in rows:
             w.writerow([
@@ -317,6 +491,11 @@ def main():
                 f"{r.decode_total_ms:.4f}",
                 f"{r.decode_per_token_ms:.4f}",
                 f"{r.decode_per_prompt_per_token_ms:.4f}",
+                f"{r.plan_mean_ms:.4f}",    f"{r.plan_total_ms:.4f}",
+                f"{r.forward_mean_ms:.4f}", f"{r.forward_total_ms:.4f}",
+                f"{r.cow_mean_ms:.4f}",     f"{r.cow_total_ms:.4f}",
+                f"{r.topk_mean_ms:.4f}",    f"{r.topk_total_ms:.4f}",
+                f"{r.fork_mean_ms:.4f}",    f"{r.fork_total_ms:.4f}",
             ])
     print(f"\nwrote {len(rows)} rows to {out}")
 

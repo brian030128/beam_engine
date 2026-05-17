@@ -70,6 +70,7 @@ DEFAULT_STRATEGIES: frozenset[Strategy] = frozenset({
     Strategy.SHARED_2L_1POOL,
     Strategy.SHARED_3L_1POOL,
     Strategy.SHARED_2L_DEC_TAIL,
+    Strategy.SHARED_3L_DEC_TAIL,
 })
 
 
@@ -155,6 +156,17 @@ class Coefficients:
     #     site) inside ``cost_dec_tail_batch`` so the penalty scales
     #     with batch size, not K. Default 0; tuned by autotune.py.
     dec_tail_extra_us: float = 0.0
+    #   * `dec_tail_per_tail_page_us` - per-(workload, tail-page) extra
+    #     applied alongside ``dec_tail_extra_us``. Captures the
+    #     suffix-length-dependent overhead of the per-beam decode kernel:
+    #     more tail pages per beam means more page-table traversal, larger
+    #     online-merge state, and at long decode the kernel's launch
+    #     overhead is amortized over more useful work — so the picker's
+    #     constant DEC_TAIL slack mis-fits across regimes unless this
+    #     term is included. Multiplied by ``len(workloads)`` (=B) and the
+    #     mean per-beam tail-page count at the call site. Default 0;
+    #     tuned by autotune.py.
+    dec_tail_per_tail_page_us: float = 0.0
 
     # Decode-kernel per-(beam, kv-token) cost for the DEC_TAIL strategies.
     # Decode kernel is purpose-built for CTA_Q=1 and is bandwidth-bound
@@ -619,9 +631,28 @@ def cost_dec_tail_batch(
     # Merges: depth-1 boundaries (prefix→inter₁→…→tail).
     n_merges = depth - 1
     # Per-batch-element penalty for unmodeled DEC_TAIL overhead
-    # (autotuned). Scales with B because the prefix-prefill cost grows
-    # group-by-group at mid-K shapes — see Coefficients.dec_tail_extra_us.
-    extra_us = len(workloads) * c.dec_tail_extra_us
+    # (autotuned). Two terms:
+    #   - constant `dec_tail_extra_us` per workload (captures per-prompt
+    #     prefix-prefill slack at mid-K)
+    #   - `dec_tail_per_tail_page_us × mean_tail_pages` per workload
+    #     (captures suffix_len-dependent per-beam-decode overhead — at
+    #     long decode, page-table traversal and online-merge state grow
+    #     and a single constant can't fit both short- and long-suffix
+    #     regimes).
+    page_size = 16
+    # mean tail-pages-per-beam across workloads, averaged over the
+    # workload's per-beam suffix lengths.
+    total_tail_pages = 0.0
+    n_beams = 0
+    for w in workloads:
+        for s in w.suffix_lens:
+            total_tail_pages += (s + page_size - 1) // page_size
+            n_beams += 1
+    mean_tail_pages = total_tail_pages / max(1, n_beams)
+    extra_us = len(workloads) * (
+        c.dec_tail_extra_us
+        + c.dec_tail_per_tail_page_us * mean_tail_pages
+    )
     return prefix_us + tail_us + n_merges * c.merge_us + extra_us
 
 

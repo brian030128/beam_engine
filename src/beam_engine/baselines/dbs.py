@@ -29,6 +29,7 @@ kernel) for backward compat with the prior ``methods["dbs"]`` entry.
 
 from __future__ import annotations
 
+import functools
 from typing import Callable
 
 from ..decoding import dbs_strategy
@@ -49,6 +50,7 @@ def wrap(
     """
     pf, df = dbs_strategy(num_groups=num_groups, diversity_strength=diversity_strength)
 
+    @functools.wraps(method_fn)
     def _bs(*args, **kwargs):
         kwargs.setdefault("select_at_prefill", pf)
         kwargs.setdefault("select_at_decode", df)
@@ -68,19 +70,11 @@ dbs_tree = wrap(tree.beam_search)
 dbs_fasttree = wrap(fasttree.beam_search)
 dbs_mlca = wrap(mlca.beam_search)
 
+from ..methods.adaptive_pool import beam_search as _ap_bs
+from ..methods.bs_kernel import beam_search as _bsk_bs
 
-def _lazy_dbs_adaptive_pool(*args, **kwargs):
-    from ..methods.adaptive_pool import beam_search as _ap_bs
-    return wrap(_ap_bs)(*args, **kwargs)
-
-
-def _lazy_dbs_bs_kernel(*args, **kwargs):
-    from ..methods.bs_kernel import beam_search as _bsk_bs
-    return wrap(_bsk_bs)(*args, **kwargs)
-
-
-dbs_adaptive_pool = _lazy_dbs_adaptive_pool
-dbs_bs_kernel = _lazy_dbs_bs_kernel
+dbs_adaptive_pool = wrap(_ap_bs)
+dbs_bs_kernel = wrap(_bsk_bs)
 
 
 # Backward-compat default: dbs.beam_search == dbs_paged.

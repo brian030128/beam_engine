@@ -198,7 +198,7 @@ plan-time gap.
   level cascade primitive, but the level count, level boundaries, and
   CTA_Q template are fixed at construction time. No runtime selection.
   Pays a separate kernel launch per level + a `merge_states` bridge.
-  Loses by 1.75–2.78× on our workloads.
+  Loses by 1.66–2.39× on our workloads.
 - **FastTree** (MLSys '25): page-radix tree + a Triton **two-stage**
   SplitQ/SplitK kernel. Stage 1 is fired multiple times — once per
   "phase", with a per-phase `(Q_TILE_SIZE, KV_TILE_SIZE)` config (the
@@ -632,38 +632,38 @@ those two cells so the run fits. 1B cells run at their natural B.
 | Llama-3.1-8B    | multi_level_system (B=4, K=64) | bs_kernel | 3684              | 206             | 3439           | 5.6%   | 93.4% | 14.32         | 2L_FUSED ×34, **2L_DECTAIL ×221** (87%)    |
 |                 |                                | paged     | 5687              | 490             | 5157           | 8.6%   | 90.7% | 22.33         | —                                          |
 |                 |                                | fasttree  | 5952              | 647             | 5267           | 10.9%  | 88.5% | 22.98         | —                                          |
-|                 |                                | mlca      | 6435              | 688             | 5709           | 10.7%  | 88.7% | 26.27         | —                                          |
+|                 |                                | mlca      | 6110              | 215             | 5854           |  3.5%  | 95.8% | 24.73         | —                                          |
 | Llama-3.1-8B    | multi_few_shot (B=8, K=64)     | bs_kernel | 7271              | 363             | 6851           | 5.0%   | 94.2% | 28.47         | **2L_DECTAIL ×255 (100%)**                 |
 |                 |                                | paged     | 17372             | 1431            | 15883          | 8.2%   | 91.4% | 68.13         | —                                          |
 |                 |                                | fasttree  | 13481             | 1417            | 12010          | 10.5%  | 89.1% | 52.61         | —                                          |
-|                 |                                | mlca      | 14139             | 1269            | 12815          | 9.0%   | 90.6% | 55.08         | —                                          |
+|                 |                                | mlca      | 13634             | 329             | 13244          |  2.4%  | 97.1% | 52.98         | —                                          |
 | Llama-3.1-8B    | multi_chain_reasoning (B=8, K=64) | bs_kernel | 9714          | 597             | 9029           | 6.1%   | 93.0% | 20.72         | 2L_FUSED ×60, **2L_DECTAIL ×195** (76%)    |
 |                 |                                | paged     | 13818             | 1062            | 12667          | 7.7%   | 91.7% | 26.44         | —                                          |
 |                 |                                | fasttree  | 13880             | 1625            | 12172          | 11.7%  | 87.7% | 26.66         | —                                          |
-|                 |                                | mlca      | 17823             | 1482            | 16257          | 8.3%   | 91.2% | 31.94         | —                                          |
+|                 |                                | mlca      | 17230             | 465             | 16683          |  2.7%  | 96.8% | 29.46         | —                                          |
 | Llama-3.2-1B    | multi_level_system (B=4, K=64) | bs_kernel | 1318              | 253             | 1027           | 19.2%  | 77.9% |  4.89         | 2L_FUSED ×255                              |
 |                 |                                | paged     | 2124              | 486             | 1600           | 22.9%  | 75.3% |  8.27         | —                                          |
 |                 |                                | fasttree  | 1993              | 657             | 1298           | 33.0%  | 65.1% |  7.43         | —                                          |
-|                 |                                | mlca      | 2922              | 685             | 2199           | 23.4%  | 75.3% | 12.06         | —                                          |
+|                 |                                | mlca      | 2451              | 207             | 2205           |  8.5%  | 90.0% | 10.22         | —                                          |
 | Llama-3.2-1B    | multi_few_shot (B=32, K=64)    | bs_kernel | 8853              | 1985            | 6721           | 22.4%  | 75.9% | 33.43         | 2L_FUSED ×159, **2L_DECTAIL ×96** (38%)    |
 |                 |                                | paged     | 24973             | 5917            | 18901          | 23.7%  | 75.7% | 95.23         | —                                          |
 |                 |                                | fasttree  | 15969             | 8833            | 6990           | 55.3%  | 43.8% | 53.59         | —                                          |
-|                 |                                | mlca      | 23127             | 4944            | 18046          | 21.4%  | 78.0% | 86.78         | —                                          |
+|                 |                                | mlca      | 19670             | 1032            | 18492          |  5.2%  | 94.0% | 75.99         | —                                          |
 | Llama-3.2-1B    | multi_chain_reasoning (B=32, K=64) | bs_kernel | 10033          | 2636            | 7220           | 26.3%  | 72.0% | 21.29         | 2L_FUSED ×255                              |
 |                 |                                | paged     | 16955             | 4268            | 12505          | 25.2%  | 73.8% | 31.50         | —                                          |
 |                 |                                | fasttree  | 17025             | 9348            | 7500           | 54.9%  | 44.0% | 28.13         | —                                          |
-|                 |                                | mlca      | 27857             | 5198            | 22494          | 18.7%  | 80.7% | 47.21         | —                                          |
+|                 |                                | mlca      | 23988             | 1232            | 22591          |  5.1%  | 94.2% | 40.51         | —                                          |
 
 **bs_kernel speedups vs each baseline (K=64):**
 
 | scenario              | model         | vs fasttree | vs paged | vs mlca |
 |-----------------------|---------------|------------:|---------:|--------:|
-| multi_level_system    | Llama-3.1-8B  | 1.62×       | 1.54×    | 1.75×   |
-| multi_few_shot        | Llama-3.1-8B  | 1.85×       | 2.39×    | 1.94×   |
-| multi_chain_reasoning | Llama-3.1-8B  | 1.43×       | 1.42×    | 1.83×   |
-| multi_level_system    | Llama-3.2-1B  | 1.51×       | 1.61×    | 2.22×   |
-| multi_few_shot        | Llama-3.2-1B  | 1.80×       | 2.82×    | 2.61×   |
-| multi_chain_reasoning | Llama-3.2-1B  | 1.70×       | 1.69×    | 2.78×   |
+| multi_level_system    | Llama-3.1-8B  | 1.62×       | 1.54×    | 1.66×   |
+| multi_few_shot        | Llama-3.1-8B  | 1.85×       | 2.39×    | 1.88×   |
+| multi_chain_reasoning | Llama-3.1-8B  | 1.43×       | 1.42×    | 1.77×   |
+| multi_level_system    | Llama-3.2-1B  | 1.51×       | 1.61×    | 1.86×   |
+| multi_few_shot        | Llama-3.2-1B  | 1.80×       | 2.82×    | 2.22×   |
+| multi_chain_reasoning | Llama-3.2-1B  | 1.70×       | 1.69×    | 2.39×   |
 
 Four observations from the table:
 
@@ -1091,7 +1091,7 @@ In summary, this paper makes the following contributions:
    (calibrated once at engine init) that selects among fused
    shared-prefix and decode-tail strategies at each decoding step.
    On H100 the dispatcher wins 1.42–2.82× vs paged, 1.43–1.85× vs
-   FastTree, and 1.75–2.78× vs MLCA across six real-world scenarios
+   FastTree, and 1.66–2.39× vs MLCA across six real-world scenarios
    in `multi_chain_reasoning`, `multi_level_system`, and
    `multi_few_shot` spanning two model sizes; it has the smallest
    forward time on every cell and plan time within 2× of paged
@@ -1138,6 +1138,6 @@ In summary, this paper makes the following contributions:
 > calibrated coefficients, sub-millisecond in our grid. On H100
 > across six real-world scenarios on Llama-3.1-8B and Llama-3.2-1B,
 > our dispatcher obtains 1.43–1.85× over FastTree, 1.42–2.82× over
-> paged-decode, and 1.75–2.78× over MLCA, with the smallest forward
+> paged-decode, and 1.66–2.39× over MLCA, with the smallest forward
 > time on every cell and plan time within 2× of paged (which has no
 > dispatch).

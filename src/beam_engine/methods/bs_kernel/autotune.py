@@ -68,6 +68,12 @@ AUTOTUNE_GRID: list[tuple[int, int, int]] = [
     # DEC_TAIL where 1POOL is 2× faster in fwd.
     (16,  8192, 16), (16,  8192, 32),
     (16, 32768,  8), (16, 32768, 16),
+    # K=32/B=16 long-decode cell — the gov_report L_p=8192 cell where
+    # the picker over-selects DEC_TAIL by ~1481/2047 steps. forced
+    # SHARED_3L_1POOL is 3% faster (48.7s vs 50.3s) at max_new=2048,
+    # indicating dec_tail_extra_us is under-fit when probe max_new=256
+    # (suffix_len=128) but evaluated against max_new=2048 (suffix~1024).
+    (32,  8192, 16),
 ]
 
 # Probe modes: filter sets passed to bs_kernel.beam_search. depth=3
@@ -114,6 +120,15 @@ DUAL_POOL_EXTRA_GRID_US = (
 # grid spans up to 500 µs/prompt to cover that and beyond.
 DEC_TAIL_EXTRA_GRID_US = (
     0.0, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0,
+)
+# Per-(workload, mean-tail-page) DEC_TAIL slack, added on top of
+# ``dec_tail_extra_us``. Picker-side this is mean_tail_pages × B × value;
+# at K=32/B=16 with suffix_len=512 (max_new=1024 probe regime),
+# mean_tail_pages = 32 → value=0.5 contributes 16×32×0.5=256 µs to
+# DEC_TAIL cost. Grid spans 0–4 µs/page; with default 0 the model
+# reduces to the pre-existing constant DEC_TAIL slack.
+DEC_TAIL_PER_TAIL_PAGE_GRID_US = (
+    0.0, 0.1, 0.2, 0.5, 1.0, 2.0, 4.0,
 )
 
 
@@ -329,44 +344,49 @@ def autotune(
     best_share = 0.0
     best_dual = 0.0
     best_dec_tail = 0.0
+    best_dec_tail_per_page = 0.0
     best_worst = float("inf")
     best_n = 0
 
     for share_extra in SHARE_EXTRA_GRID_US:
         for dual_pool_extra in DUAL_POOL_EXTRA_GRID_US:
             for dec_tail_extra in DEC_TAIL_EXTRA_GRID_US:
-                cand = replace(
-                    coefficients,
-                    share_extra_us=share_extra,
-                    dual_pool_extra_us=dual_pool_extra,
-                    dec_tail_extra_us=dec_tail_extra,
-                )
-                total, worst, n = _eval_regret(
-                    cand, times,
-                    num_kv_heads=num_kv_heads,
-                    head_dim=head_dim,
-                    dtype_bytes=dtype_bytes,
-                    suffix_len=suffix_len,
-                )
-                if n == 0:
-                    continue
-                # Tie-break on worst-case regret to prefer smoother predictors.
-                if (total < best_total) or (
-                    total == best_total and worst < best_worst
-                ):
-                    best_total = total
-                    best_worst = worst
-                    best_share = share_extra
-                    best_dual = dual_pool_extra
-                    best_dec_tail = dec_tail_extra
-                    best_n = n
+                for dec_tail_per_page in DEC_TAIL_PER_TAIL_PAGE_GRID_US:
+                    cand = replace(
+                        coefficients,
+                        share_extra_us=share_extra,
+                        dual_pool_extra_us=dual_pool_extra,
+                        dec_tail_extra_us=dec_tail_extra,
+                        dec_tail_per_tail_page_us=dec_tail_per_page,
+                    )
+                    total, worst, n = _eval_regret(
+                        cand, times,
+                        num_kv_heads=num_kv_heads,
+                        head_dim=head_dim,
+                        dtype_bytes=dtype_bytes,
+                        suffix_len=suffix_len,
+                    )
+                    if n == 0:
+                        continue
+                    # Tie-break on worst-case regret to prefer smoother predictors.
+                    if (total < best_total) or (
+                        total == best_total and worst < best_worst
+                    ):
+                        best_total = total
+                        best_worst = worst
+                        best_share = share_extra
+                        best_dual = dual_pool_extra
+                        best_dec_tail = dec_tail_extra
+                        best_dec_tail_per_page = dec_tail_per_page
+                        best_n = n
 
     if verbose:
         avg = best_total / max(best_n, 1)
         print(
             f"[autotune] best share_extra_us={best_share} "
             f"dual_pool_extra_us={best_dual} "
-            f"dec_tail_extra_us={best_dec_tail}  "
+            f"dec_tail_extra_us={best_dec_tail} "
+            f"dec_tail_per_tail_page_us={best_dec_tail_per_page}  "
             f"avg regret={avg*100:+.2f}%  worst={best_worst*100:+.2f}% "
             f"({best_n} cells)"
         )
@@ -376,6 +396,7 @@ def autotune(
         share_extra_us=best_share,
         dual_pool_extra_us=best_dual,
         dec_tail_extra_us=best_dec_tail,
+        dec_tail_per_tail_page_us=best_dec_tail_per_page,
     )
 
 
@@ -419,8 +440,10 @@ def _main():
     )
 
     print(f"\n[autotune] tuned coefficients:")
-    print(f"  share_extra_us     = {tuned.share_extra_us}")
-    print(f"  dual_pool_extra_us = {tuned.dual_pool_extra_us}")
+    print(f"  share_extra_us            = {tuned.share_extra_us}")
+    print(f"  dual_pool_extra_us        = {tuned.dual_pool_extra_us}")
+    print(f"  dec_tail_extra_us         = {tuned.dec_tail_extra_us}")
+    print(f"  dec_tail_per_tail_page_us = {tuned.dec_tail_per_tail_page_us}")
 
     if args.save:
         path = _cache_path(torch.device(args.device))

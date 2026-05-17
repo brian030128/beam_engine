@@ -286,15 +286,25 @@ def _adaptive_levels(
     pl = len(pages_prefix)
     # 1) LCA depth — start from max(start_lca, pl).
     lca = max(start_lca, pl)
-    min_tail_len = min(len(t) for t in pages_tails)
-    min_len = pl + min_tail_len
-    while lca < min_len:
-        idx = lca - pl
-        first = pages_tails[0][idx]
-        if all(t[idx] == first for t in pages_tails):
-            lca += 1
-        else:
-            break
+    # K=1: skip the LCA extension. With a single beam the `all(...)`
+    # quantifier is trivially True, so the loop would walk to the end
+    # of the tail and leave the per-beam-tail level with 0 pages but
+    # ``last_page_len = off + 1 > 0``. FlashInfer's BatchPrefill plan
+    # then computes ``kv_len = (num_pages-1)*page_size + lpl`` < 0 and
+    # the cascade launch faults with an illegal memory access. (See
+    # exp1a multi_chain_reasoning stage-2 mlca crash.) bs_kernel/
+    # adaptive_pool sidestep this via PER_BEAM / fused-wrapper fallbacks
+    # but the unfused MLCA path doesn't.
+    if K > 1:
+        min_tail_len = min(len(t) for t in pages_tails)
+        min_len = pl + min_tail_len
+        while lca < min_len:
+            idx = lca - pl
+            first = pages_tails[0][idx]
+            if all(t[idx] == first for t in pages_tails):
+                lca += 1
+            else:
+                break
 
     # shared_pages: prefix + the (typically empty) common tail prefix.
     if lca == pl:
