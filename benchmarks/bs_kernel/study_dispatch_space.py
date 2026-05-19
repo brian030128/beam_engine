@@ -39,7 +39,7 @@ from beam_engine.methods.bs_kernel.cost_model import (
     T_SMALL,
     _bytes_to_us,
     _ceil_div,
-    _level_effective_bw_us,
+    _level_bw_us,
     _level_tiles_and_bytes,
 )
 
@@ -162,22 +162,15 @@ def cost_shared(
     )
     total_large = B * large_per
     total_small = B * small_per
-    # Per-level effective BW (penalizes low-utilization prefill tiles).
-    # B prompts with identical levels: each level's bytes scale by B,
-    # which is equivalent to scaling the per-prompt bw_us by B.
-    bw_us = B * _level_effective_bw_us(
-        levels, c, pool_count=pool_count, t_large=t_large,
-    )
+    # B prompts with identical levels: per-prompt bandwidth time × B.
+    bw_us = B * _level_bw_us(levels, c)
     waves_large = max(1, _ceil_div(total_large, c.num_sms)) if total_large > 0 else 0
     waves_small = max(1, _ceil_div(total_small, c.num_sms)) if total_small > 0 else 0
     compute_us = (
         waves_large * c.per_tile_us[t_large]
         + waves_small * c.per_tile_us[T_SMALL]
     )
-    extra_us = c.share_extra_us
-    if pool_count == 2:
-        extra_us += c.dual_pool_extra_us
-    return bw_us + compute_us + extra_us
+    return bw_us + compute_us
 
 
 def cost_dec_tail(
@@ -189,10 +182,6 @@ def cost_dec_tail(
 ) -> float:
     """Hybrid: prefix(/intermediate) prefill (single pool, T=64) + per-beam
     paged-decode tail + n_merges merges, for a uniform batch of B prompts.
-
-    The prefix-side prefill cost uses per-level effective BW (penalizes
-    low-utilization tiles). The tail uses the decode kernel which keeps
-    peak BW (purpose-built for CTA_Q=1).
     """
     levels = w.levels_at_depth(depth)
     prefix_levels = levels[:-1]
@@ -201,11 +190,9 @@ def cost_dec_tail(
         prefix_levels, pool_count=1, t_large=64,
     )
     total_large = B * large_per
-    bw_us = B * _level_effective_bw_us(
-        prefix_levels, c, pool_count=1, t_large=64,
-    )
+    bw_us = B * _level_bw_us(prefix_levels, c)
     waves_large = max(1, _ceil_div(total_large, c.num_sms)) if total_large > 0 else 0
-    prefix_us = bw_us + waves_large * c.per_tile_us[64] + c.share_extra_us
+    prefix_us = bw_us + waves_large * c.per_tile_us[64]
 
     g_count, beams_per_g, kv_tokens, bytes_per_kv = tail_level
     n_beams = B * g_count * beams_per_g
@@ -218,7 +205,7 @@ def cost_dec_tail(
         tail_us = c.decode_launch_us + max(tail_bw_us, tail_work_us)
 
     n_merges = depth - 1
-    return prefix_us + tail_us + n_merges * c.merge_us
+    return prefix_us + tail_us + n_merges * c.merge_launch_us
 
 
 # ---------------------------------------------------------------------------
@@ -531,26 +518,12 @@ def _load_calibrated_coeffs() -> Coefficients:
 
     c = Coefficients(
         B_hbm=data.get("B_hbm", 1_000_000.0),
-        launch_us=data.get("launch_us", 6.0),
-        sync_us=data.get("sync_us", 4.0),
-        merge_us=data.get("merge_us", 2.0),
+        merge_launch_us=data.get("merge_launch_us", data.get("merge_us", 2.0)),
+        merge_bw_us_per_row=data.get("merge_bw_us_per_row", 0.0),
         per_tile_us=per_tile,
-        per_beam_us_per_kv_token=data.get("per_beam_us_per_kv_token", 0.0008),
         num_sms=data.get("num_sms", 84),
-        share_extra_us=data.get("share_extra_us", 0.0),
-        dual_pool_extra_us=data.get("dual_pool_extra_us", 0.0),
         decode_us_per_beam_kv_token=data.get("decode_us_per_beam_kv_token", 0.0008),
         decode_launch_us=data.get("decode_launch_us", 2.0),
-        # H100 fit from `bench_dispatch_grid` measurements (16 cells across
-        # K∈{16,64} × L_p∈{2K,8K,32K} × B∈{1,8,32}, Llama-3.2-1B):
-        # floor=0.5 reproduces the measured per-cell winning strategy
-        # on 13/16 cells (81% match rate) with mean regret 0.4% and
-        # max regret 2.8%. The penalty applies only at low-util,
-        # high-tile-count levels (per-beam-tail-like situations,
-        # captured by `g_count >= 8 AND util < 0.5` in
-        # `_level_effective_bw_us`); root level with packed=K and
-        # tile_count=1 gets no penalty.
-        bw_efficiency_floor=data.get("bw_efficiency_floor", 0.5),
     )
     return c
 
@@ -597,9 +570,7 @@ def main():
     print(f"[study] Workload grid: {len(workloads)} cells")
 
     coeffs = _load_calibrated_coeffs() if args.use_calibrated else Coefficients.defaults()
-    print(f"[study] share_extra_us={coeffs.share_extra_us}, "
-          f"dual_pool_extra_us={coeffs.dual_pool_extra_us}, "
-          f"merge_us={coeffs.merge_us}, num_sms={coeffs.num_sms}")
+    print(f"[study] merge_launch_us={coeffs.merge_launch_us}, num_sms={coeffs.num_sms}")
     print(f"[study] per_tile_us={coeffs.per_tile_us}")
     print(f"[study] B values: {args.B_values}")
     summary = run_study(workloads, candidates, coeffs, out_csv, B_values=args.B_values)

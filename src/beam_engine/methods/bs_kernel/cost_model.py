@@ -14,15 +14,14 @@ The driver picks the minimum-cost strategy each step and dispatches the
 matching wrapper call.
 
 Cost terms in the current model:
-  * HBM bandwidth   (bytes_loaded / B_hbm)
+  * HBM bandwidth         (bytes_loaded / B_hbm)
   * SM-occupancy compute  (waves × per_tile_us[T])
-  * Autotuned slack       (share_extra_us, dual_pool_extra_us)
+  * Cascade merge cost    ((depth−1) × (merge_launch_us + merge_bw_us_per_row × rows))
+  * Decode-kernel cost    (decode_launch_us + max(bw_us, work_us))
 
-Launch / sync / merge overheads are intentionally *not* modeled: for
+Generic launch / sync overheads are intentionally *not* modeled: for
 beam-search workloads the per-step kernel work dwarfs those constant
-terms, so the picker is dominated by SM utilization. The fields
-``launch_us``, ``sync_us``, ``merge_us`` remain on ``Coefficients`` for
-calibration cache compatibility but no longer enter the cost.
+terms, so the picker is dominated by SM utilization.
 
 Coefficients (`Coefficients`) come from per-device calibration
 (see `calibrate.py`); on first use, fall back to plausible RTX-class
@@ -100,13 +99,22 @@ class Coefficients:
     is callable for tests when no calibration has been done.
     """
     B_hbm: float = 1_000_000.0          # ~1 TB/s (1e6 bytes/µs = 1e12 B/s)
-    launch_us: float = 6.0              # empty-kernel launch overhead
-    sync_us: float = 4.0                # cudaStreamSynchronize cost
-    # merge_state_in_place is a small in-place kernel — H100 measurement
-    # at B*K=2048 rows × num_qo_heads × head_dim is ~2 µs. The previous
-    # default (8) was an over-estimate that biased the picker against
-    # DEC_TAIL strategies which rely on this kernel.
-    merge_us: float = 2.0
+    # Cascade-merge cost. ``merge_state_in_place`` reads two
+    # (B*K, num_qo_heads, head_dim) tensors plus two (B*K, num_qo_heads)
+    # softmax-state tensors and writes one of each, so the bandwidth term
+    # scales with the per-merge row count = sum_b K_b (= B*K when all B
+    # prompts share K). Split into a per-launch constant (CUDA launch +
+    # warmup overhead — calibrated at K=8 small-rows) and a per-row slope
+    # (memory-bound bandwidth, calibrated from the K=large measurement
+    # minus the launch intercept). Both auto-fit by ``measure_merge_us``.
+    #
+    # Cascade depth-L (L ≥ 2) has (L-1) merges that run *sequentially* —
+    # each merge depends on the prior level's output, so they can't be
+    # parallelized across waves. Cost is therefore
+    # ``(L-1) × (merge_launch_us + merge_bw_us_per_row × total_rows)``.
+    # See _cascade_merge_us below.
+    merge_launch_us: float = 2.0
+    merge_bw_us_per_row: float = 0.0
 
     # Per-tile time table (µs per CTA-tile).
     # Indexed by T_large ∈ T_LARGE_CHOICES + the small tile T_SMALL.
@@ -116,11 +124,6 @@ class Coefficients:
         128: 2.4,
     })
 
-    # Compute-time per row in a tile (rough; refined by per_tile_us
-    # which already absorbs Q-side cost). Used only by the per-beam
-    # path which doesn't tile.
-    per_beam_us_per_kv_token: float = 0.0008
-
     # ------------------------------------------------------------------
     # SM count for wave-occupancy modeling. Tiles within a pool run in
     # parallel across SMs; the per-tile compute scales with
@@ -128,45 +131,6 @@ class Coefficients:
     # ``torch.cuda.get_device_properties().multi_processor_count``.
     # A6000 = 84, RTX 6000 Ada = 142, H100 = 132.
     num_sms: int = 84
-
-    # Auto-tuned (filled by autotune.py). These two parameters absorb
-    # device-specific effects the closed-form expressions above don't
-    # capture:
-    #   * `share_extra_us`     - flat per-layer overhead added to
-    #     T_shared. Captures unmodeled merge-launch cost, plus the
-    #     L2-cache reuse advantage PER_BEAM gets at small K (the
-    #     bandwidth model treats reads as HBM-bound; reality has
-    #     cross-beam KV reuse hot in L2). Tuned upward → favors
-    #     PER_BEAM more.
-    #   * `dual_pool_extra_us` - flat extra overhead added to T_shared
-    #     when pool_count=2. Captures SM-occupancy effects beyond the
-    #     wave-count term — even when both pools fit in 1 wave each,
-    #     the inter-pool sync + extra launch is real overhead.
-    #     Tuned upward → favors single-pool dispatch.
-    # Both default to 0; pass `autotune=True` to calibrate to fit them.
-    share_extra_us: float = 0.0
-    dual_pool_extra_us: float = 0.0
-    #   * `dec_tail_extra_us`  - per-workload (i.e. per-batched-prompt)
-    #     overhead added to T_dec_tail. The empirical DEC_TAIL gap at
-    #     mid-K (K=16) is dominated by per-prompt prefix-prefill work
-    #     that scales linearly with B — the FA2 prefill kernel re-reads
-    #     each prompt's shared prefix KV group-by-group, and at
-    #     packed_qo≈64 it doesn't reach the arithmetic intensity that
-    #     hides this. Multiplied by ``len(workloads)`` (=B at the call
-    #     site) inside ``cost_dec_tail_batch`` so the penalty scales
-    #     with batch size, not K. Default 0; tuned by autotune.py.
-    dec_tail_extra_us: float = 0.0
-    #   * `dec_tail_per_tail_page_us` - per-(workload, tail-page) extra
-    #     applied alongside ``dec_tail_extra_us``. Captures the
-    #     suffix-length-dependent overhead of the per-beam decode kernel:
-    #     more tail pages per beam means more page-table traversal, larger
-    #     online-merge state, and at long decode the kernel's launch
-    #     overhead is amortized over more useful work — so the picker's
-    #     constant DEC_TAIL slack mis-fits across regimes unless this
-    #     term is included. Multiplied by ``len(workloads)`` (=B) and the
-    #     mean per-beam tail-page count at the call site. Default 0;
-    #     tuned by autotune.py.
-    dec_tail_per_tail_page_us: float = 0.0
 
     # Decode-kernel per-(beam, kv-token) cost for the DEC_TAIL strategies.
     # Decode kernel is purpose-built for CTA_Q=1 and is bandwidth-bound
@@ -178,24 +142,6 @@ class Coefficients:
     # kernel. With the bs_kernel driver's plan_info cache the call is
     # essentially a kernel launch (~2 µs) per layer, no scheduling work.
     decode_launch_us: float = 2.0
-
-    # Bandwidth-efficiency floor for prefill tiles at low Q-utilization.
-    # The prefill kernel at T queries with packed=R<<T (e.g., per-beam
-    # tail at T=16, R=1) doesn't achieve peak HBM BW: per-tile launch
-    # overhead, suboptimal cache patterns, and wasted MMA all hurt.
-    # The DEC_TAIL strategy avoids this by routing the per-beam tail to
-    # the purpose-built decode kernel (CTA_Q=1 native).
-    #
-    # Per-level effective BW factor:
-    #   eff_factor = bw_efficiency_floor + (1 - bw_efficiency_floor) × util
-    #   where util = min(1.0, packed / T)
-    #   and effective BW = peak_BW × eff_factor.
-    #
-    # `bw_efficiency_floor=1.0` reproduces the legacy peak-BW model
-    # (no penalty). Lower values penalize low-utilization prefill tiles.
-    # Calibrated value on H100 (from bench_modes_single measurements at
-    # K=64/L_p=8K/B=32): roughly 0.6 — but device-specific, autotune.
-    bw_efficiency_floor: float = 1.0
 
     # Maximum cascade depth the picker enumerates as a candidate.
     # Default 3 reproduces legacy behavior (depth ∈ {2, 3}). Set higher
@@ -325,62 +271,17 @@ def _level_tiles_and_bytes(
     return total_t_large_tiles, total_t_small_tiles, bytes_loaded
 
 
-def _level_effective_bw_us(
+def _level_bw_us(
     levels: list[tuple[int, int, int, int]],
     c: Coefficients,
-    *,
-    pool_count: int,
-    t_large: int,
 ) -> float:
-    """Compute total effective-BW time across cascade levels.
-
-    Each level's bandwidth time is computed at *that level's* BW
-    efficiency, where efficiency depends on Q-utilization
-    (packed / T) per the prefill kernel's behavior. Levels with
-    high utilization (root level packed=K=T_large or higher) achieve
-    near-peak BW; levels with low utilization (per-beam tail at
-    T=16/packed=1) achieve `bw_efficiency_floor` × peak.
-
-    When `c.bw_efficiency_floor == 1.0`, this reduces exactly to
-    `total_bytes / B_hbm` (the legacy peak-BW model).
-    """
-    floor = c.bw_efficiency_floor
-    if floor >= 1.0:
-        # Fast path: legacy peak-BW model. Sum bytes, single divide.
-        total_bytes = sum(
-            g_count * kv_tokens * bytes_per_kv
-            for g_count, beams_per_g, kv_tokens, bytes_per_kv in levels
-            if kv_tokens > 0
-        )
-        return total_bytes / c.B_hbm
-
-    bw_us_total = 0.0
-    for g_count, beams_per_g, kv_tokens, bytes_per_kv in levels:
-        if kv_tokens == 0:
-            continue
-        packed = beams_per_g
-        # Determine the effective tile-T this level routes through.
-        if pool_count == 1:
-            eff_T = t_large
-        else:
-            eff_T = T_SMALL if packed <= T_SMALL else t_large
-        util = min(1.0, packed / eff_T) if eff_T > 0 else 1.0
-        # Apply the BW-efficiency penalty only at "per-beam-tail-like"
-        # levels: low utilization (packed << T) AND many tiles
-        # (g_count >= 8). The root level has 1 tile per prompt with high
-        # util — no penalty there. The per-beam tail has K small tiles
-        # per prompt, each loading its own KV from HBM with no L2 sharing
-        # — penalty applies. This matches the empirical observation that
-        # DEC_TAIL's purpose-built decode kernel beats prefill@T=16/R=1
-        # on the per-beam tail, while prefill@T=64 with packed=K at root
-        # achieves near-peak BW even at moderate utilization.
-        if util < 0.5 and g_count >= 8:
-            eff_factor = floor + (1.0 - floor) * util
-        else:
-            eff_factor = 1.0
-        level_bytes = g_count * kv_tokens * bytes_per_kv
-        bw_us_total += level_bytes / (c.B_hbm * eff_factor)
-    return bw_us_total
+    """Total HBM-bandwidth time across cascade levels: sum(bytes) / B_hbm."""
+    total_bytes = sum(
+        g_count * kv_tokens * bytes_per_kv
+        for g_count, beams_per_g, kv_tokens, bytes_per_kv in levels
+        if kv_tokens > 0
+    )
+    return total_bytes / c.B_hbm
 
 
 def _per_prompt_levels(w: WorkloadShape, depth: int) -> list[tuple[int, int, int, int]]:
@@ -433,6 +334,37 @@ def _per_prompt_levels(w: WorkloadShape, depth: int) -> list[tuple[int, int, int
     # Last level: K groups of 1 beam each.
     levels.append((w.K, 1, int(round(avg_suffix)), w.bytes_per_kv))
     return levels
+
+
+def _cascade_merge_us(
+    depth: int,
+    workloads: list[WorkloadShape],
+    c: Coefficients,
+) -> float:
+    """Cost of the (depth - 1) ``merge_state_in_place`` launches that
+    sit between cascade levels.
+
+    Both FUSED and DEC_TAIL cascades pay this — the fused-cascade
+    wrapper collapses prefill into one launch but leaves each merge as
+    a separate launch (see ``FusedMultiLevelCascadeAttentionWrapper``).
+    Merges are sequential (each depends on the prior level's output) so
+    cost is ``(depth - 1) × per_merge_us``, no wave division.
+
+    Per-merge cost is launch overhead + bandwidth. The bandwidth term
+    scales with the total query row count across the batch
+    (= sum_b K_b), because the kernel reads two
+    ``(rows, num_qo_heads, head_dim)`` tensors plus their softmax-state
+    counterparts and writes one of each. The per-row µs constant
+    ``merge_bw_us_per_row`` is calibrated against the specific
+    deployment's ``num_qo_heads × head_dim`` (see
+    ``calibrate.measure_merge_us``).
+    """
+    n_merges = max(0, depth - 1)
+    if n_merges == 0:
+        return 0.0
+    total_rows = sum(w.K for w in workloads)
+    per_merge = c.merge_launch_us + c.merge_bw_us_per_row * total_rows
+    return n_merges * per_merge
 
 
 def cost_per_beam_batch(workloads: list[WorkloadShape], c: Coefficients) -> float:
@@ -490,10 +422,7 @@ def cost_shared_batch(
                 f"levels on every prompt; one prompt has {n_have}"
             )
 
-    # Aggregate tile counts and (effective-BW) bandwidth time across all
-    # prompts. Note: bandwidth time is summed per level *with* per-level
-    # efficiency, so it cannot be reduced to a single bytes-aggregate
-    # divide once `bw_efficiency_floor < 1.0`. Tile counts still aggregate.
+    # Aggregate tile counts and bandwidth time across all prompts.
     total_large = 0
     total_small = 0
     bw_us = 0.0
@@ -504,9 +433,7 @@ def cost_shared_batch(
         )
         total_large += large
         total_small += small
-        bw_us += _level_effective_bw_us(
-            levels, c, pool_count=pool_count, t_large=t_large,
-        )
+        bw_us += _level_bw_us(levels, c)
     # Cross-batch wave count: critical for batched decoding — at B=1 the
     # per-beam tiles fit in 1 wave on H100; at B=8 they may need 4 waves
     # at T=64 (and fewer at T=16, which is what tips 2-pool to win).
@@ -517,17 +444,15 @@ def cost_shared_batch(
         + waves_small * c.per_tile_us[T_SMALL]
     )
 
-    # Launch / sync / merge terms have been removed from the model — for
-    # beam-search shapes the kernel work dwarfs them. SM utilization
-    # (the wave-count term above) is what drives the picker. The
-    # autotuned slack still distinguishes 1-pool vs 2-pool because pool
-    # routing has second-order effects (occupancy, sync stalls) the
-    # closed-form wave count doesn't capture.
-    extra_us = c.share_extra_us
-    if pool_count == 2:
-        extra_us += c.dual_pool_extra_us
+    # Cascade merge cost. The fused-cascade wrapper collapses prefill
+    # levels into ONE kernel launch but the merges are still separate
+    # ``merge_state_in_place`` launches (see flashinfer/cascade.py
+    # docstring on FusedMultiLevelCascadeAttentionWrapper). Depth-L has
+    # (L-1) merges that run sequentially — each depends on the prior
+    # level's output, so they can't overlap or be wave-divided.
+    merge_us = _cascade_merge_us(depth, workloads, c)
 
-    return bw_us + compute_us + extra_us
+    return bw_us + compute_us + merge_us
 
 
 def _per_prompt_levels_no_tail(
@@ -560,20 +485,32 @@ def cost_decode_tail_batch(
     """Cost of the per-beam-tail decode kernel for B prompts × K beams.
 
     All B*K beams contribute 1 query each against their per-beam tail
-    KV. Decode kernel has CTA_Q=1 so there's no tile padding. The
-    kernel is memory-bound at our shapes (small per-beam KV, single
-    query): MMA work overlaps with HBM reads, so cost is
-    ``max(bw_us, work_us) + decode_launch_us``, not the sum.
+    KV. Decode kernel has CTA_Q=1 so there's no tile padding — one CTA
+    per beam. The kernel is bandwidth-dominated at our shapes (small
+    per-beam KV, single query), and MMA work overlaps with HBM reads,
+    so wall time within a wave is ``max(bw_per_wave, work_per_wave)``.
+
+    Wave quantization on the compute side: with ``n_beams`` CTAs spread
+    across ``num_sms``, the kernel runs ``ceil(n_beams / num_sms)``
+    sequential waves. Each wave's compute is one CTA's tail work, so
+    total compute time = ``waves × mean_tail × decode_us_per_beam_kv_token``
+    — symmetric with how the prefill side wave-quantizes its tiles.
+    Bandwidth saturates HBM whenever there are enough active CTAs,
+    so the bw term stays as ``total_bytes / B_hbm`` (no wave factor).
     """
     total_kv_tokens = 0
     n_beams = 0
+    bytes_per_kv = 0
     for w in workloads:
         total_kv_tokens += sum(w.suffix_lens)
         n_beams += w.K
+        bytes_per_kv = w.bytes_per_kv  # all workloads share dtype/shape
     if n_beams == 0:
         return 0.0
-    bw_us = total_kv_tokens * w.bytes_per_kv / c.B_hbm
-    work_us = total_kv_tokens * c.decode_us_per_beam_kv_token
+    waves = max(1, _ceil_div(n_beams, c.num_sms))
+    mean_tail = total_kv_tokens / n_beams
+    bw_us   = total_kv_tokens * bytes_per_kv / c.B_hbm
+    work_us = waves * mean_tail * c.decode_us_per_beam_kv_token
     return c.decode_launch_us + max(bw_us, work_us)
 
 
@@ -609,8 +546,7 @@ def cost_dec_tail_batch(
             )
 
     # Prefix (+ intermediate) under prefill kernel, single pool, T=64.
-    # Use per-level effective BW (matches cost_shared_batch). The tail
-    # below uses the decode kernel which keeps peak BW.
+    # The tail below uses the decode kernel.
     total_large = 0
     bw_us = 0.0
     for w in workloads:
@@ -619,41 +555,22 @@ def cost_dec_tail_batch(
             levels, pool_count=1, t_large=64,
         )
         total_large += large
-        bw_us += _level_effective_bw_us(
-            levels, c, pool_count=1, t_large=64,
-        )
+        bw_us += _level_bw_us(levels, c)
     waves_large = max(1, _ceil_div(total_large, c.num_sms)) if total_large > 0 else 0
-    prefix_us = bw_us + waves_large * c.per_tile_us[64] + c.share_extra_us
+    prefix_us = bw_us + waves_large * c.per_tile_us[64]
 
     # Tail under decode kernel.
     tail_us = cost_decode_tail_batch(workloads, c)
 
-    # Merges: depth-1 boundaries (prefix→inter₁→…→tail).
-    n_merges = depth - 1
-    # Per-batch-element penalty for unmodeled DEC_TAIL overhead
-    # (autotuned). Two terms:
-    #   - constant `dec_tail_extra_us` per workload (captures per-prompt
-    #     prefix-prefill slack at mid-K)
-    #   - `dec_tail_per_tail_page_us × mean_tail_pages` per workload
-    #     (captures suffix_len-dependent per-beam-decode overhead — at
-    #     long decode, page-table traversal and online-merge state grow
-    #     and a single constant can't fit both short- and long-suffix
-    #     regimes).
-    page_size = 16
-    # mean tail-pages-per-beam across workloads, averaged over the
-    # workload's per-beam suffix lengths.
-    total_tail_pages = 0.0
-    n_beams = 0
-    for w in workloads:
-        for s in w.suffix_lens:
-            total_tail_pages += (s + page_size - 1) // page_size
-            n_beams += 1
-    mean_tail_pages = total_tail_pages / max(1, n_beams)
-    extra_us = len(workloads) * (
-        c.dec_tail_extra_us
-        + c.dec_tail_per_tail_page_us * mean_tail_pages
-    )
-    return prefix_us + tail_us + n_merges * c.merge_us + extra_us
+    # Cascade merge cost — same shape as FUSED at the same depth. The
+    # DEC_TAIL strategy has prefix→inter₁→…→tail boundaries, each one a
+    # serial ``merge_state_in_place`` launch. Both FUSED and DEC_TAIL
+    # incur (depth-1) merges and they cancel in the FUSED-vs-DEC_TAIL
+    # comparison at the same depth — but they don't cancel against
+    # PER_BEAM (which has zero merges) or across depths.
+    merge_us = _cascade_merge_us(depth, workloads, c)
+
+    return prefix_us + tail_us + merge_us
 
 
 def cost_per_beam(w: WorkloadShape, c: Coefficients) -> float:

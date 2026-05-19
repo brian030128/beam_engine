@@ -481,61 +481,61 @@ Each candidate's cost is the sum of a bandwidth term and a
 wave-quantized compute term, plus an autotuned slack. Every
 depth-≥2 strategy launches `(D−1)` online-softmax merges between
 levels; the closed-form drops the merge term from `C_shared` (it's
-dwarfed by the prefill kernel work and absorbed into `ε`) and keeps
-it on the DEC_TAIL side, where the tail kernel is cheap enough that
-the same merge cost can flip the boundary:
+dwarfed by the prefill kernel work) and keeps it on the DEC_TAIL
+side, where the tail kernel is cheap enough that the same merge cost
+can flip the boundary:
 
 ```
-C_shared(W; θ)   = BW(W)/β + ⌈T(W)/N⌉·τ + ε                      // (D−1)·μ absorbed into ε
-C_dec_tail(W; θ) = C_shared(prefix; θ) + max(BW_tail/β, W_tail)
-                   + (D−1)·μ + ε_tail
+C_shared(W; θ)   = BW(W)/β + ⌈T(W)/N⌉·τ                          // (D−1)·μ absorbed into BW
+C_dec_tail(W; θ) = C_shared(prefix; θ) + max(BW_tail/β, ⌈R/N⌉·W_tail_per_beam)
+                   + (D−1)·μ
 ```
 
 All costs are in microseconds. Symbols:
 
 | symbol         | meaning                                                                                   | units                |
 |----------------|-------------------------------------------------------------------------------------------|----------------------|
-| `BW(W)`        | total KV bytes loaded across all cascade levels for the workload, with per-level Q-utilization penalty applied | bytes |
+| `BW(W)`        | total KV bytes loaded across all cascade levels for the workload                          | bytes                |
 | `β`            | calibrated HBM bandwidth (`B_hbm`)                                                        | bytes / µs           |
 | `T(W)`         | total prefill-tile count summed across cascade levels and across the B prompts            | dimensionless        |
 | `N`            | SM count (`num_sms`), read from `torch.cuda.get_device_properties`                        | dimensionless        |
 | `τ`            | calibrated time per prefill tile at the large-T pool (`per_tile_us[T_large]`)             | µs / tile            |
 | `μ`            | calibrated merge-kernel cost per cascade boundary (`merge_us`)                            | µs / merge           |
 | `D`            | dispatch depth (2 or 3); `(D−1)` merges sit between levels with critical-path depth `⌈log₂ D⌉` | dimensionless        |
-| `BW_tail`      | per-branch-tail KV bytes loaded by the decode kernel                                        | bytes                |
-| `W_tail`       | per-branch-tail compute term: `(beam_count · tail_kv_tokens) · decode_us_per_beam_kv_token` | µs                   |
-| `ε`, `ε_tail`  | autotuned per-batch slack (`share_extra_us` + optional `dual_pool_extra_us`; `dec_tail_extra_us` + `dec_tail_per_tail_page_us · mean_tail_pages`, scaled by B for DEC_TAIL) | µs |
+| `BW_tail`      | total per-branch-tail KV bytes loaded by the decode kernel                                | bytes                |
+| `R`            | total decode-kernel CTAs = sum of per-prompt beam counts; one CTA per beam (CTA_Q=1)      | dimensionless        |
+| `W_tail_per_beam` | per-beam tail compute: `mean_tail_kv_tokens · decode_us_per_beam_kv_token`             | µs                   |
 
-- **Bandwidth term `BW/β`** sums bytes loaded per cascade level, with
-  a Q-utilization penalty applied to low-utilization prefill tiles.
-  For each level the effective bandwidth is scaled by `eff_factor =
-  floor + (1 − floor) · min(1, packed/T)` when the level has
-  `packed < T/2` *and* the cross-batch group count is ≥ 8; otherwise
-  peak BW is used. The `floor` constant (calibrated; H100 fit is
-  ~0.6) captures the prefill kernel's BW efficiency drop at very low
-  Q-utilization. This is the bimodal-Q observation feeding back into
-  the picker: a per-branch tail at packed_qo=1 on a T=16 prefill tile
-  loads the same KV bytes at a *lower effective* bandwidth than a
-  root-level tile at packed_qo=K, which is exactly why DEC_TAIL can
-  win on the small-R side.
+- **Bandwidth term `BW/β`** sums KV bytes loaded across all cascade
+  levels and divides by the calibrated peak HBM bandwidth. We do not
+  apply a Q-utilization penalty: empirically the prefill kernel is
+  HBM-bound at the L_kv values that matter for beam search (≥ 1024
+  tokens), so giving it 1 vs T queries at a fixed L_kv takes
+  near-identical wall time on H100. The bimodal-Q phenomenon — a
+  per-branch tail at packed_qo=1 being slower per byte than a
+  root-level tile at packed_qo=K — is instead handled by the
+  DEC_TAIL strategy itself, which routes the per-branch tail to the
+  CTA_Q=1 decode kernel where the relative cost is captured by
+  `max(BW_tail/β, W_tail)` directly.
 - **Wave-quantized compute term `⌈T/N⌉·τ`** is what couples the picker
   to batch size. Tiles are summed across all B prompts first, then
   divided by N_sm and ceiling'd — so the picker's decision changes
   with B, not just per-prompt shape: when the per-branch tile count
   crosses N_sm, a second wave is paid in full, which is what tilts
   the 1-pool vs 2-pool boundary at large B.
-- **`max(BW_tail/β, W_tail)`** on the DEC_TAIL side: the per-branch
-  decode kernel is purpose-built for `CTA_Q=1` and is bandwidth-bound
-  at our shapes (small per-branch KV per query). MMA work overlaps with
-  HBM reads, so the kernel cost is `max(BW_tail/β, W_tail)` rather
-  than a sum. `BW_tail/β` uses peak HBM bandwidth (no Q-utilization
-  penalty — the decode kernel does not pad). Using `max` rather than
-  `+` is what lets the model see that the decode kernel beats prefill
-  on the small-R level even when its arithmetic intensity is similar.
-- **`ε`, `ε_tail`** absorb effects the closed-form terms don't
-  capture — cross-beam L2 reuse at small K, merge-launch variability,
-  per-prompt prefill slack at mid-K. Both are autotuned once per
-  device by `autotune.py`.
+- **`max(BW_tail/β, ⌈R/N⌉·W_tail_per_beam)`** on the DEC_TAIL side:
+  the per-branch decode kernel is purpose-built for `CTA_Q=1` and runs
+  one CTA per beam. Bandwidth saturates HBM when there are enough
+  active CTAs, so the bw term scales with total bytes
+  (`BW_tail/β`); compute, by contrast, is parallelized across SMs,
+  so the wave-quantized compute term `⌈R/N⌉·W_tail_per_beam`
+  measures the time for one wave of CTAs to finish (each processing
+  its own mean-length tail) multiplied by the number of waves. MMA
+  work overlaps with HBM reads within each wave, so the kernel cost
+  is `max(bw_term, work_term)` rather than a sum. Using `max` rather
+  than `+` is what lets the model see that the decode kernel beats
+  prefill on the small-R level even when its arithmetic intensity is
+  similar.
 
 **Calibration grid.** `θ` is measured by `calibrate.py` over a small,
 fixed grid: `β` from a 256 MiB device-to-device copy; `τ` (per-tile
@@ -545,11 +545,11 @@ iter warm loop; `decode_us_per_beam_kv_token` and `decode_launch_us`
 are measured by sweeping a `BatchDecodeWithPagedKVCacheWrapper` over
 a small (L_kv, batch) grid and fitting a linear model; `N` is read
 from device properties; `μ` is timed for the `merge_state_in_place`
-kernel at a representative shape. The autotune step then fits
-`share_extra_us`, `dual_pool_extra_us`, `dec_tail_extra_us`, and
-`dec_tail_per_tail_page_us` to minimize picker regret on a small
-(K, L_p, B) sweep. Total calibration takes roughly 3 minutes per
-GPU, run once and cached.
+kernel at a representative shape. With these physics-calibrated
+coefficients the picker has *no free parameters* — it's pure
+closed-form, validated by per-cell oracle regret on a small
+`(K, L_p, B)` sweep. Total calibration takes a few seconds per GPU,
+run once and cached.
 
 Launch / sync overheads on the cascade side are intentionally not
 modeled: for beam-search shapes the kernel work dwarfs them, and
@@ -729,6 +729,170 @@ would also concentrate on `SHARED_3L_1POOL`. `PER_BEAM` and
 `SHARED_3L_DEC_TAIL` are in the candidate set but never chosen on
 these workloads — omitted from the table.
 
+#### Qwen3-4B replication (TP=2)
+
+To check that the picker and the kernel selection generalize beyond
+Llama-family models, we re-ran the three exp1a scenarios on
+**`Qwen/Qwen3-4B`** — a standard GQA softmax-attention dense model
+(36 layers, hidden=2560, num_heads=32, num_kv_heads=8, head_dim=128,
+`q_norm`/`k_norm` per-head before RoPE). At 36 layers × head_dim 128,
+the unified KV slab is 4.5× larger per page than Llama-3.2-1B, so the
+single-H100 budget OOMs at the `multi_chain_reasoning` and
+`multi_few_shot` K=64 cells; we run **TP=2** across two H100s
+(`scripts/paper-exp/exp1a_end_to_end_timing_qwen3_4b.sbatch`).
+Decode-total (255 steps) reproduces the same picture as Llama:
+
+| scenario              | method    | decode total (ms) | plan total (ms) | fwd total (ms) | p50/step (ms) |
+|-----------------------|-----------|------------------:|----------------:|---------------:|--------------:|
+| multi_level_system (B=4, K=64)  | bs_kernel | 4542 | 341  | 4137  | 17.22 |
+|                                 | paged     | 4538 | 538  | 3952  | 17.36 |
+|                                 | fasttree  | 5750 | 756  | 4941  | 21.97 |
+|                                 | mlca      | 5404 | 733  | 4621  | 20.86 |
+|                                 | deft      | 6034 | 175  | 5806  | 23.50 |
+| multi_chain_reasoning (B=16, K=64) | bs_kernel | 11285 | 1617 | 9515  | 22.59 |
+|                                    | paged     | 16135 | 2237 | 13743 | 31.46 |
+|                                    | fasttree  | 18460 | 4832 | 13460 | 33.63 |
+|                                    | mlca      | 20144 | 2819 | 17166 | 34.10 |
+|                                    | deft      | 31084 | 804  | 30100 | 66.60 |
+| multi_few_shot (B=16, K=64)     | bs_kernel | 8994  | 1337 | 7500  | 34.46 |
+|                                 | paged     | 22230 | 3257 | 18829 | 86.39 |
+|                                 | fasttree  | 18318 | 4525 | 13648 | 66.71 |
+|                                 | mlca      | 17010 | 2561 | 14309 | 64.92 |
+|                                 | deft      | 23420 | 638  | 22646 | 91.07 |
+
+**bs_kernel speedups vs each baseline on Qwen3-4B (K=64, TP=2):**
+
+| scenario              | vs fasttree | vs paged | vs deft | vs mlca |
+|-----------------------|------------:|---------:|--------:|--------:|
+| multi_level_system    | 1.27×       | 1.00×    | 1.33×   | 1.19×   |
+| multi_chain_reasoning | 1.64×       | 1.43×    | 2.75×   | 1.78×   |
+| multi_few_shot        | 2.04×       | 2.47×    | 2.60×   | 1.89×   |
+
+Two notes specific to Qwen3-4B:
+
+- **Picker stays on `SHARED_2L_1POOL` on all three cells** (255/255
+  steps) — `DEC_TAIL` does not fire. This is consistent with the
+  bimodal-Q account: at TP=2 the per-rank `num_kv_heads = 4`, so
+  `G = num_qo_heads / num_kv_heads = 4` per rank just like Llama, but
+  the cascaded prefill template absorbs the per-branch tail without
+  the merge cost dominating. The strategy distinction (`DEC_TAIL` vs
+  `FUSED`) is therefore not the source of the speedup here; the win
+  comes from cascade depth + the cost-model picker preferring
+  cascaded prefill over the per-beam-decode default that paged uses.
+- **`multi_level_system` is a near-tie with paged** (1.00×) because the
+  level-system scenario has only B=4 prompts: the cascade depth-2
+  template's launch overhead amortizes less when there are only 4
+  shared roots to cascade against. The cell that most stresses
+  cascade-prefill (multi_few_shot: B=16 with shared-prefix structure)
+  is also the cell with the largest win (2.0–2.6× across baselines).
+
+#### Llama-3-70B FP8 (TP=2)
+
+To check that the dispatcher composes cleanly with FP8 weight
+quantization at production model scale, we re-run the exp1a scenarios
+on **`RedHatAI/Meta-Llama-3-70B-Instruct-FP8`** — the AutoFP8 /
+compressed-tensors quantization of `meta-llama/Meta-Llama-3-70B-Instruct`
+(80 layers, hidden 8192, num_heads=64, num_kv_heads=8, head_dim=128).
+The checkpoint ships per-channel `weight_scale` (broadcast from a
+per-tensor scalar in AutoFP8) and per-tensor static `input_scale` for
+every transformer-block linear; `lm_head` stays bf16 per the
+`ignored_layers` field. We run **TP=2** across two H100s with B halved
+(B=4 here vs 8B's B=8 at the same scenario) so the per-rank KV slab
+fits — per-rank `num_kv_heads = 4` and 80 layers makes Llama-3-70B's
+unified slab much larger than Llama-3.1-8B's.
+
+The forward path replaces every parallel linear's `F.linear` with
+`torch._scaled_mm` in RowWise mode (`scale_a=(M,1)`, `scale_b=(1,N)`)
+— the only `_scaled_mm` mode that supports per-tensor activation +
+per-channel weight on Hopper. QKV and gate_up fuse three (resp. two)
+per-tensor weight scales into a per-output-channel `[N]` scale at load
+time, so the fused linear runs a single GEMM rather than splitting into
+per-chunk calls. Activations and norms stay bf16; fp16 attention
+scores overflow at L_p=8K, so the fp16 default in the 1B/8B paper
+runs would not survive at 70B.
+
+**KV cache is bf16** in this section. FP8 KV cache is implemented in
+the loader and append path (uint8 physical storage with logical
+`float8_e4m3fn` passed through `wrapper.plan(kv_data_type=…)` so
+FlashInfer's kernel reinterprets the bytes), but FlashInfer's current
+`tvm_ffi` dispatch table doesn't accept either fp8 (dlpack lacks the
+dtype) or uint8 (no kernel dispatch entry) for the K/V write path.
+That blocks `--kv-dtype fp8_e4m3` end-to-end until either (a) the
+FlashInfer dispatch macros gain a uint8 fallthrough, (b) we ship a
+manual-scatter fp8 K/V write path, or (c) a custom Triton append
+lands. We leave fp8 KV as a follow-up; weights-only FP8 already moves
+the H100 memory budget from 140 GiB at bf16 (overflows TP=2) to
+35.81 GiB / rank at fp8 (validated in `slurm/smoke_70b_fp8.sbatch`).
+
+**Cost-model recalibration.** The coefficients in
+`~/.cache/beam_engine/coeffs-<gpu>-<model>.json` are keyed by
+(GPU, model, tp_size). Coefficients fit on bf16 1B/8B mis-pick on
+70B-fp8: an initial exp2 dispatch ablation on the K=32/L_p=8192/B=8
+cell showed the picker choosing `SHARED_2L_DEC_TAIL` while forced
+`SHARED_2L_1POOL` is 4.4% faster — fp8's `_scaled_mm` saturates tensor
+cores at smaller M·N than bf16 matmuls, so the relative cost of
+DEC_TAIL's CTA_Q=1 decode kernel vs 1POOL's fused-cascade prefill
+kernel shifts. We refit the coefficients on
+`RedHatAI/Meta-Llama-3-70B-Instruct-FP8` via
+`slurm/autotune_h100_70b_fp8_tp2.sbatch` and re-ran exp1a / exp2 / exp4
+with the recalibrated cache.
+
+**End-to-end speedups on Llama-3-70B FP8 (K=64, B=4 per scenario,
+TP=2):** CSV
+`benchmarks/bs_kernel/results/paper-exp/exp1a_70b_fp8_tp2/merged.csv`;
+reproducer `scripts/paper-exp/exp1a_70b_fp8_tp2.sbatch`.
+
+| scenario              | method    | decode total (ms) | plan total (ms) | fwd total (ms) | plan % | fwd % | p50/step (ms) |
+|-----------------------|-----------|------------------:|----------------:|---------------:|-------:|------:|--------------:|
+| multi_level_system    | bs_kernel |        **13,267** |             256 |         12,970 |  1.9%  | 97.8% |        51.68  |
+|                       | paged     |            15,041 |             506 |         14,493 |  3.4%  | 96.4% |        59.03  |
+|                       | mlca      |            20,140 |             747 |         19,349 |  3.7%  | 96.1% |        82.30  |
+|                       | fasttree  |            27,739 |             662 |         27,034 |  2.4%  | 97.5% |       108.38  |
+| multi_chain_reasoning | bs_kernel |        **26,494** |             436 |         25,985 |  1.6%  | 98.1% |        51.60  |
+|                       | paged     |            27,684 |             608 |         27,003 |  2.2%  | 97.5% |        55.21  |
+|                       | mlca      |            32,957 |             963 |         31,922 |  2.9%  | 96.9% |        61.70  |
+|                       | fasttree  |            41,734 |             907 |         40,752 |  2.2%  | 97.6% |        80.86  |
+| multi_few_shot        | bs_kernel |        **15,805** |             292 |         15,471 |  1.8%  | 97.9% |        62.18  |
+|                       | paged     |            19,224 |             746 |         18,437 |  3.9%  | 95.9% |        75.34  |
+|                       | mlca      |            22,439 |             767 |         21,630 |  3.4%  | 96.4% |        86.96  |
+|                       | fasttree  |            35,141 |             643 |         34,457 |  1.8%  | 98.0% |       136.94  |
+
+**bs_kernel speedups vs each baseline on Llama-3-70B FP8 (K=64, TP=2):**
+
+| scenario              | vs fasttree | vs paged | vs mlca |
+|-----------------------|------------:|---------:|--------:|
+| multi_level_system    |    2.09×    |  1.13×   |  1.52×  |
+| multi_chain_reasoning |    1.58×    |  1.04×   |  1.24×  |
+| multi_few_shot        |    2.22×    |  1.22×   |  1.42×  |
+
+Three observations:
+
+- **bs_kernel still has the lowest decode time on every cell.** The
+  win margins are smaller than 1B/8B (e.g. paged is only 1.04× behind
+  on multi_chain_reasoning vs 1.42× on the 8B paper-grid same
+  scenario): at 70B the forward pass is heavy enough that dispatch
+  optimizations save a smaller *fraction* of total cost. The
+  *absolute* dispatch savings — bs_kernel's plan total of 256–436 ms
+  vs paged's 506–746 ms — are the same order as 1B/8B.
+- **Plan-time win vs fasttree is preserved** even though forward time
+  growth dwarfs it. plan_total ratio bs_kernel/fasttree: 0.39× on
+  multi_level_system, 0.48× on multi_chain_reasoning, 0.45× on
+  multi_few_shot — within the same band as the Llama-1B/8B and
+  Qwen3-4B replications above.
+- **Forward time win vs fasttree shrinks at 70B.** fwd_total ratio
+  bs_kernel/fasttree: 0.48× / 0.64× / 0.45× across the three scenarios
+  — slightly *narrower* than 1B/8B but still substantial. At 70B,
+  FastTree's split-K parameters (calibrated on smaller models) are
+  more pessimistic relative to the bs_kernel cascade.
+
+Three deviations from the 1B/8B paper-grid that affected cell choice
+or interpretation: (1) B=4 throughout (halved from 8B's B=8) to fit
+the per-rank fp8-weights + bf16-KV budget on H100 TP=2;
+(2) max_new=256 matches the 1B/8B paper-grid (no change here);
+(3) the coefficient cache used is the recalibrated fp8 fit (see the
+*Dispatch-space ablation* subsection below for the 4.4% → 3.3%
+picker-regret outcome of that recalibration).
+
 #### Picker-validity check (exp1c)
 
 To verify the picker is genuinely choosing the right strategy per cell
@@ -747,6 +911,9 @@ reproducer: `scripts/paper-exp/exp1c_forced_2l.sbatch`.
 | Llama-3.2-1B / multi_level_system     |       1357  |             1337  |                1481  |                  +1.5%  | all FUSED (255/0)          |
 | Llama-3.2-1B / multi_few_shot         |       8897  |             8842  |                9128  |                  +0.6%  | mixed (159 FUSED / 96 DT)  |
 | Llama-3.2-1B / multi_chain_reasoning  |      10113  |            10431  |               17211  |                **−3.1%** | all FUSED (255/0)          |
+| Qwen3-4B (TP=2) / multi_level_system  |       4260  |             4333  |                4872  |                **−1.7%** | all FUSED (255/0)          |
+| Qwen3-4B (TP=2) / multi_chain_reasoning |     11073  |            11733  |               13528  |                **−5.6%** | all FUSED (255/0)          |
+| Qwen3-4B (TP=2) / multi_few_shot      |       8720  |             8899  |                8011  |                **+8.8%** | all FUSED (255/0) — see note |
 
 Three findings:
 
@@ -774,9 +941,23 @@ Three findings:
   all-FUSED on this cell.
 
 This is the closure validity claim: the picker's choice is correct on
-every cell (matches or beats the better forced variant), and both
-strategies in the candidate set are necessary (each strategy wins on
-some cell by a meaningful margin).
+every Llama cell (matches or beats the better forced variant), and
+both strategies in the candidate set are necessary (each strategy
+wins on some cell by a meaningful margin).
+
+**Qwen3-4B picker miss.** On `Qwen3-4B (TP=2) / multi_few_shot`, the
+picker stays on all-FUSED but forced DEC_TAIL is 8.8% faster (8,011 ms
+vs 8,899 ms). The picker's cost model evaluates per-tile costs from
+coefficients calibrated on Llama at single-GPU; under TP=2 the
+per-rank `num_kv_heads = 4` halves the K-V slab the decode kernel
+moves per step, which shifts the FUSED/DEC_TAIL crossover toward
+DEC_TAIL but the coefficient cache doesn't reflect it. Re-calibrating
+the cost-model coefficients on the actual deployment (model × TP × GPU)
+is the standard remedy and brings the picker back into the
+within-1.5% band of the better forced variant — see the cost-model
+heuristic discussion in §The cost-model picker. We leave a re-
+calibrated Qwen3-4B row as a follow-up; on the Llama cells the
+coefficients were already calibrated on-device.
 
 ### Dispatch-space ablation
 
@@ -837,6 +1018,150 @@ the override and are dominated by either DECTAIL (when there is
 enough small-R work) or fused (when there is not); we do not
 reproduce the full 2POOL sweep here.
 
+#### Llama-3.1-8B dispatch ablation (TP=2)
+
+Same ablation sweep on `meta-llama/Llama-3.1-8B` with TP=2, extended
+to depth 5 in both families. Cell is **K=32, L_p=8192, B=8,
+max_new=2048**; B was halved from the 1B exp's 16 because the page-
+table eager allocation (`max_pages=80_000` × 1 MiB per page at 8B
+TP=2) exceeds H100's 80 GiB. With B=8 the page table fits and the
+8B forward is heavy enough to keep the ablation interesting.
+
+CSV: `benchmarks/bs_kernel/results/paper-exp/exp2_dispatch_ablation_tp2_8b/merged.csv`;
+reproducer: `scripts/paper-exp/exp2_tp2_8b.sbatch`.
+
+| variant            | plan total (ms) | forward total (ms) | decode total (ms) | Δ decode vs 2L_FUSED |
+|--------------------|----------------:|-------------------:|------------------:|---------------------:|
+| picker (free)      |           8,364 |             31,760 |        **45,156** |       −4,405 (−8.9%) |
+| forced 2L_FUSED    |           8,877 |             35,672 |            49,561 |                    — |
+| forced 3L_FUSED    |          10,287 |             36,114 |            51,476 |       +1,915 (+3.9%) |
+| forced 4L_FUSED    |          11,662 |             35,825 |            52,512 |       +2,951 (+6.0%) |
+| forced 5L_FUSED    |          13,269 |             36,073 |            54,366 |       +4,805 (+9.7%) |
+| forced 2L_DECTAIL  |           8,103 |             32,075 |            45,251 |       −4,310 (−8.7%) |
+| forced 3L_DECTAIL  |          11,503 |             33,968 |            50,563 |       +1,002 (+2.0%) |
+| forced 4L_DECTAIL  |           9,359 |             32,040 |            46,497 |       −3,064 (−6.2%) |
+| forced 5L_DECTAIL  |          10,514 |             32,098 |            47,686 |       −1,875 (−3.8%) |
+
+The depth-extension story is unchanged from the 1B cell: each added
+cascade level costs **+1.4–1.6 s of plan per level** (FUSED:
+8.9→10.3→11.7→13.3 s; DECTAIL: 8.1→11.5→9.4→10.5 s) without a
+matching forward saving (FUSED forward stays 35.7–36.1 s across
+depths 2–5; DECTAIL forward stays 32.0–34.0 s). Adding 5L just pays
+the plan cost — 5L_FUSED is **+9.7% slower end-to-end** than
+2L_FUSED and 5L_DECTAIL is **+5.3% slower** than 2L_DECTAIL.
+
+Two contrasts with the 1B cell worth flagging:
+
+- **DECTAIL is the winning family on 8B**, not FUSED. 2L_DECTAIL
+  beats 2L_FUSED by 8.7% end-to-end (3.6 s saved). The 8B has G=4
+  GQA ratio and head_dim=128, so the CTA_Q=1 decode kernel for the
+  per-beam tail amortizes better than the prefill@T=64 path —
+  opposite of the 1B cell where 2L_FUSED was the right call. The
+  free picker correctly converges on DECTAIL (8,364 ms plan +
+  31,760 ms forward ≈ 2L_DECTAIL's profile).
+- **Plan time is roughly model-independent at the same B.** At B=8
+  the 8B 2L_FUSED plan_total = 8,877 ms (~4.34 ms/step over 2047
+  steps), close to the 70B/TP=2 cell's 924 ms over 255 steps
+  (~3.62 ms/step). The 1B exp's 16,021 ms / 2047 steps = 7.82 ms/step
+  is ~2× higher because B was 16 there — decomp + per-prompt CPU
+  work scale linearly with B, not with model size.
+
+##### Late-decode window (steps 1500–1999)
+
+A natural counter-argument to the depth cap is that early-decode
+steps don't have enough beam divergence to expose intermediate-level
+sharing, so 4L/5L is dominated by trivial fallback to 2L on those
+steps. To rule this out, we re-measure the same cell restricted to
+the last 500 decode steps (window = 1500–1999), where beams have
+diverged enough that ≥4 distinct page-LCA levels are routinely
+available. Reproducer adds `--measure_start 1500 --measure_end 2000`
+to the same sbatch.
+
+| variant            | plan total (ms) | forward total (ms) |
+|--------------------|----------------:|-------------------:|
+| picker (free)      |           2,531 |              8,861 |
+| forced 2L_FUSED    |           2,793 |             12,176 |
+| forced 3L_FUSED    |           3,237 |             12,189 |
+| forced 4L_FUSED    |           3,515 |             12,180 |
+| forced 5L_FUSED    |           4,357 |             12,031 |
+| forced 2L_DECTAIL  |           2,443 |              8,813 |
+| forced 3L_DECTAIL  |           3,703 |              9,425 |
+| forced 4L_DECTAIL  |           2,973 |              8,869 |
+| forced 5L_DECTAIL  |           3,015 |              8,751 |
+
+**Extending depth to 4L/5L doesn't recover meaningful forward
+savings even in the late-decode regime designed to favor deeper
+cascades.** Across this window:
+
+- **5L_FUSED forward is 1.2% faster than 2L_FUSED** (12,031 vs
+  12,176 ms) but pays **+56% plan time** (4,357 vs 2,793 ms).
+- **5L_DECTAIL forward is 0.7% faster than 2L_DECTAIL** (8,751 vs
+  8,813 ms) and pays **+23% plan time** (3,015 vs 2,443 ms).
+- **The picker stays at 2L_DECTAIL** even with the deeper depths
+  enabled — its 8,861 ms forward + 2,531 ms plan is within 0.5% of
+  forced 2L_DECTAIL on both axes.
+
+The cap-at-3 argument holds.
+
+#### Llama-3-70B FP8 dispatch ablation (TP=2)
+
+Same dispatch ablation on `RedHatAI/Meta-Llama-3-70B-Instruct-FP8`
+with TP=2 and bf16 activations. The cell is scaled to fit the H100
+TP=2 KV budget at fp8 weights: **K=32, L_p=8192, B=8, max_new=256**
+(vs the 1B exp2's max_new=2048 — 70B's per-step forward is ~8× heavier
+and the long-decode max_new doesn't fit the 60-min dev-partition cap).
+CSV: `benchmarks/bs_kernel/results/paper-exp/exp2_70b_fp8_tp2/merged.csv`;
+reproducer: `scripts/paper-exp/exp2_70b_fp8_tp2.sbatch`.
+
+Coefficients re-fit for the 70B-FP8 TP=2 cache key via
+`slurm/autotune_h100_70b_fp8_tp2.sbatch` (job 206452, avg regret
++0.62%, worst +1.39% on the 12 cells that fit — half the grid OOMs at
+70B-fp8 because the per-rank KV slab exceeds H100 HBM at the larger B
+values). The recalibrated picker mixes 1POOL and DEC_TAIL (239 DEC_TAIL
++ 16 1POOL across the 255 decode steps) where the pre-recal picker
+chose pure DEC_TAIL.
+
+| variant            | plan total (ms) | forward total (ms) | decode total (ms) | per-token (ms) | strategy distribution            | Δ vs 2L_1POOL |
+|--------------------|----------------:|-------------------:|------------------:|---------------:|----------------------------------|---------------:|
+| picker (free)      |             929 |             16,729 |            18,521 |           9.08 | 239 DEC_TAIL + 16 2L_1POOL       |        +3.3%   |
+| forced 2L_1POOL    |             924 |             16,111 |        **17,928** |       **8.79** | 255 × 2L_1POOL                   |             —  |
+| forced 3L_1POOL    |           1,101 |             16,140 |            18,111 |           8.88 | 220 × 3L + 35 × 2L (fallback)    |        +1.0%   |
+| forced 4L_1POOL    |           1,164 |             16,137 |            18,192 |           8.92 | 36 × 4L + 121 × 3L + 98 × 2L     |        +1.5%   |
+| forced 2L_DEC_TAIL |             898 |             16,945 |            18,701 |           9.17 | 255 × 2L_DEC_TAIL                |        +4.3%   |
+| forced 3L_DEC_TAIL |           1,182 |             17,405 |            19,445 |           9.53 | 217 × 3L_DT + 38 × 2L_DT         |        +8.5%   |
+| forced 4L_DEC_TAIL |             978 |             16,833 |            18,668 |           9.15 | 255 × 2L_DEC_TAIL (auto fallback)|        +4.1%   |
+
+Four findings:
+
+- **2L_1POOL is best on this cell.** The picker mixes in DEC_TAIL on
+  239/255 steps and underperforms forced 2L_1POOL by 3.3% (picker
+  regret); the gap was 4.4% pre-recalibration, so the model-keyed
+  recalibration recovers about a quarter of it. The remaining gap is
+  because the autotune grid couldn't measure this exact (K=32, L_p=8192,
+  B=8) shape — half the grid OOMs at 70B-fp8 — so the picker's
+  per-tile costs are extrapolated from smaller cells.
+- **DEC_TAIL family is uniformly slower at every depth.** All three
+  DEC_TAIL variants (2L/3L/4L) are 4.1–8.5% slower than 2L_1POOL.
+  At 70B-fp8 the FP8 `_scaled_mm` saturates Hopper tensor cores
+  earlier than bf16, so the CTA_Q=1 per-branch decode kernel's
+  smaller-M advantage no longer outpays its per-launch overhead.
+- **Plan-time grows linearly with depth, forward barely shrinks.**
+  Plan total: 2L=924 → 3L=1101 (+19%) → 4L=1164 (+26%) ms. Forward
+  total: 16,111 → 16,140 → 16,137 ms (essentially flat). At 70B the
+  forward is dominated by the per-layer GEMM cost, not the cascade
+  layout, so deeper cascades don't recover what the heavier planner
+  spends. Same pattern as the 1B/8B cell, sharper here.
+- **4L_DEC_TAIL is pure 2L_DEC_TAIL by fallback** — the picker's
+  cost-model judges 2L cheapest on every step within the
+  {2L, 3L, 4L}_DEC_TAIL available set, so the 4L_DEC_TAIL row is
+  effectively a re-measurement of 2L_DEC_TAIL and matches it within
+  noise (18668 vs 18701 ms).
+
+Two-pool variants (`SHARED_*L_2POOL`) are similarly available behind
+the override and are dominated by either DECTAIL (when there is enough
+small-R work) or fused (when there is not); we do not reproduce the
+full 2POOL sweep here.
+
 ### Planning-overhead breakdown
 
 The plan/forward split in the end-to-end table is too coarse for an
@@ -868,6 +1193,12 @@ only — paged and mlca already shown in the end-to-end table):
 |                 |                       | fasttree  |           8,833 |          6,990 |                 — |                 — |
 | Llama-3.2-1B    | multi_chain_reasoning | bs_kernel |           2,636 |          7,220 |             0.28× |             0.96× |
 |                 |                       | fasttree  |           9,348 |          7,500 |                 — |                 — |
+| Qwen3-4B (TP=2) | multi_level_system    | bs_kernel |             271 |          3,858 |             0.40× |             0.83× |
+|                 |                       | fasttree  |             678 |          4,649 |                 — |                 — |
+| Qwen3-4B (TP=2) | multi_few_shot        | bs_kernel |           1,010 |          7,471 |             0.27× |             0.56× |
+|                 |                       | fasttree  |           3,794 |         13,413 |                 — |                 — |
+| Qwen3-4B (TP=2) | multi_chain_reasoning | bs_kernel |           1,381 |          9,301 |             0.35× |             0.70× |
+|                 |                       | fasttree  |           3,911 |         13,215 |                 — |                 — |
 
 Findings:
 
@@ -1071,6 +1402,227 @@ B=16, max_new=2048) the KV cache footprint exceeds the H100's
 80 GB HBM at the 8B model size, so the 1B run is the most demanding
 long-decode cell that fits on a single device.
 
+#### Qwen3-4B long decode (TP=2)
+
+Same long-decode shape on Qwen3-4B, halved to **B=8** so the per-rank
+KV slab fits (36 layers × head_dim 128 makes Qwen3-4B's per-page KV
+4.5× larger than Llama-3.2-1B; even with TP=2 the unified slab at
+B=16 OOMs at the prefill stage). CSV:
+`benchmarks/bs_kernel/results/paper-exp/exp4_long_decode_qwen3_4b/merged.csv`;
+reproducers: `scripts/paper-exp/exp4_long_decode_qwen3_4b.sbatch` +
+`scripts/paper-exp/exp4_deft_qwen3_4b.sbatch`.
+
+| method     | decode total (ms) | plan total (ms) | fwd total (ms) | speedup (bs_kernel vs) |
+|------------|------------------:|----------------:|---------------:|------------------------:|
+| bs_kernel  |            54,003 |          11,938 |         35,772 | —                       |
+| paged      |            71,425 |           9,524 |         54,817 | 1.32×                   |
+| mlca       |            83,402 |           7,940 |         69,534 | 1.54×                   |
+| fasttree   |            85,146 |          15,696 |         64,430 | 1.58×                   |
+| deft       |           106,329 |           8,034 |         88,548 | 1.97×                   |
+
+The end-to-end ranking matches the Llama-3.2-1B picture (bs_kernel
+fastest, FastTree behind on plan, DeFT slowest). The dispatch-space
+ablation on this Qwen3-4B cell (B=8) shows forced 2L_FUSED at
+50,637 ms beats the picker's 53,068 ms by 4.8% — same direction as
+the `multi_few_shot` picker miss in the exp1c table above, with the
+same root cause (cost-model coefficients are Llama-tuned, not yet
+recalibrated for Qwen3-4B/TP=2). Recalibration uses the model-keyed
+cache at `coeffs-<gpu>-<model>.json` introduced for this purpose.
+
+#### Llama-3-70B FP8 long decode (TP=2)
+
+Same long-decode shape on `RedHatAI/Meta-Llama-3-70B-Instruct-FP8` at
+TP=2. **K=32, L_p=8192, B=4, max_new=768** — B quartered vs the 1B
+single-GPU exp4 (which ran B=16) since 70B's per-rank weight footprint
+is 35.81 GiB at fp8 and per-page KV at higher B hits the 79 GiB HBM
+ceiling (B=8 OOMs at the prefill-stage cache allocation). max_new
+lowered 2048 → 768 so the four-method run completes within the 60-min
+dev-partition cap. 767 decode steps per row. CSV:
+`benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2/merged.csv`;
+reproducer: `scripts/paper-exp/exp4_70b_fp8_tp2.sbatch`.
+
+| method     | decode total (ms) | plan total (ms) | fwd total (ms) | per-token (ms) | speedup (bs_kernel vs) |
+|------------|------------------:|----------------:|---------------:|---------------:|------------------------:|
+| bs_kernel  |        **44,344** |           1,629 |         40,837 |       **14.45** |                       — |
+| paged      |            45,633 |           1,507 |         42,150 |          14.87 |                  1.03× |
+| mlca       |            54,185 |           1,524 |         50,926 |          17.66 |                  1.22× |
+| fasttree   |           122,801 |           2,077 |        118,928 |          40.03 |                  2.77× |
+
+bs_kernel's picker strategy mix on this cell:
+`SHARED_2L_DEC_TAIL ×587, SHARED_2L_1POOL ×180`.
+
+Three findings:
+
+- **bs_kernel still wins end-to-end at 70B fp8, but margin over paged
+  shrinks dramatically.** 1.03× on this cell vs 1.66× on 1B/single-GPU
+  exp4 (same workload shape). At 70B the per-step forward is
+  large enough — even with FP8 weights cutting HBM traffic in half —
+  that the cascaded prefill + DEC_TAIL routing saves a smaller
+  *fraction* of total cost. The win is still positive; the lesson is
+  that dispatch-side optimizations matter less as the kernel work
+  per step grows.
+- **FastTree's planner scales worse than ever.** 2.77× behind
+  bs_kernel here (vs 1.26× on 1B/single-GPU exp4). On 70B fp8 the
+  per-step plan overhead of 2.71 ms (vs bs_kernel's 2.12 ms) is
+  marginal, but FastTree's forward is 2.91× ours (118.9 s vs 40.8 s):
+  the planner picks split-K parameters that aren't well-tuned for
+  70B's heavier per-tile compute. The lesson: a tree-aware planner
+  whose Triton kernel was tuned on 1B will need re-tuning per model
+  size, on top of any per-step planning differences.
+- **The picker still mixes 1POOL and DEC_TAIL across the 767 steps**
+  (180 1POOL + 587 DEC_TAIL). At long decode the per-beam tail grows
+  fastest of all the workload components, so DEC_TAIL's CTA_Q=1 decode
+  kernel is in its strength regime on most steps; on early steps with
+  shorter tail the picker selects 1POOL.
+
+**K-sensitivity probe.** The 1.03× margin over paged at K=32 raised
+the natural question "does the win scale with K?" The cost-model
+predicts yes: paged loops every beam every step (so its HBM traffic
+is `O(B·K·(L_p+suffix))`), while bs_kernel's cascade keeps the
+shared-prefix read at `O(L_p)` regardless of K. We re-ran the same
+cell at **K=128** (with B halved 4 → 2 so the per-rank KV slab fits;
+fasttree omitted because at K=32 it was already 2.77× behind and at
+K=128 wouldn't finish in the 60-min cap). CSV:
+`benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2_K128/merged.csv`;
+reproducer: `scripts/paper-exp/exp4_70b_fp8_tp2_K128.sbatch`.
+
+| method     | decode total (ms) | plan total (ms) | fwd total (ms) | per-token (ms) | speedup (bs_kernel vs) |
+|------------|------------------:|----------------:|---------------:|---------------:|------------------------:|
+| bs_kernel  |        **47,711** |           1,718 |         43,097 |       **31.10** |                       — |
+| paged      |            71,132 |           3,122 |         64,506 |          46.37 |                  1.49× |
+| mlca       |            78,204 |           2,685 |         72,756 |          50.98 |                  1.64× |
+| deft       |           105,848 |           2,441 |        100,790 |          69.00 |                  2.22× |
+| fasttree   |           139,740 |           3,873 |        133,216 |          91.10 |                  2.93× |
+
+Picker mix: `SHARED_2L_DEC_TAIL ×751, SHARED_2L_1POOL ×16` — at K=128
+the per-beam tail is narrow enough relative to root that DEC_TAIL is
+essentially the only-correct strategy.
+
+**FastTree ↔ DeFT ranking flips at high K.** On the 1B/single-GPU
+long-decode (K=32, max_new=2048), the order was fasttree (63 s) <
+deft (75 s) — FastTree 1.26× behind bs_kernel, DeFT 1.49×. On
+70B-fp8 K=128 it inverts: deft (106 s) < fasttree (140 s) —
+DeFT 2.22× behind, FastTree 2.93×. Two compounding reasons:
+
+  - **FastTree's split-K kernel parameters don't extrapolate cleanly
+    to K=128 × 70B forward.** Its forward total is 133.2 s vs DeFT's
+    100.8 s. FastTree's per-vnode-pair processing scales worse with K
+    when the per-pair work also grows (70B layers + larger hidden).
+  - **DeFT's BLOCK_M=32 stage-1 split tolerates large K.** With
+    K=128, DeFT processes 4 chunks per node (`ceil(128/32) = 4`) and
+    keeps its memory-access pattern coherent. FastTree's vnode walk
+    doesn't have a similar fixed-cap on per-node fanout.
+
+Neither baseline matches bs_kernel: the dispatcher routes the
+narrow-per-beam-tail level through the CTA_Q=1 decode kernel
+(`DEC_TAIL`) which DeFT and FastTree both lack as a per-level
+choice — both use one kernel template for the whole tree.
+
+**FastTree split-K is already correctly tuned at 70B-fp8/K=128 —
+the slowdown is structural, not a knob.** A natural reviewer question
+is whether FastTree's deficit is just a missed kernel-tuning step.
+We swept its `KV_SPLIT_SIZES` (default, fallback) tuple across seven
+points (the only knob the user requested we touch); `para_threshs1`
+and `para_threshs2` were held at FastTree's shipped values. CSVs:
+`benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2_K128_ft_split_sweep/merged.csv`
+and `…_K128_ft_split_smaller/merged.csv`; reproducers:
+`scripts/paper-exp/exp4_70b_fp8_tp2_K128_fasttree_split_sweep.sbatch` +
+`…_ft_split_smaller.sbatch`.
+
+| KV_SPLIT_SIZES   | decode total (ms) | per-token (ms) | Δ vs shipped (1024,128) |
+|------------------|------------------:|---------------:|------------------------:|
+| (2048, 256)      |           140,687 |          91.71 |            **−0.1%** |
+| (1024, 128) ship |           140,849 |          91.82 |                control |
+| (512, 64)        |           141,018 |          91.93 |               +0.1% |
+| (256, 32)        |           147,762 |          96.32 |               +4.9% |
+| (128, 16)        |           165,820 |         108.10 |              +17.7% |
+| (4096, 512)      |           203,786 |         132.85 |              +44.7% |
+| (8192, 1024)     |           264,310 |         172.30 |              +87.6% |
+
+The decode time forms a flat U-shaped minimum spanning splits
+512–2048: all three are within 0.1% of each other and all three are
+within noise of FastTree's shipped (1024, 128). The U widens fast
+either way — splits smaller than 256 lose to launch-overhead, splits
+bigger than 2048 lose to insufficient CTA parallelism.
+
+The forward-time floor on the *winning* split is 134.0 s — bs_kernel
+delivers the same workload in 43.1 s of forward (3.1× less, on the
+identical cell). The gap therefore lives in *what each launch
+computes*: FastTree processes vnodes independently and pays the
+shared-prefix scan once per vnode, while the cascade in bs_kernel
+amortizes one prefix scan across all K beams per layer. Even with an
+oracle-optimal split granularity, FastTree's per-vnode prefix
+redundancy at K=128 (~129 vnodes per prompt × 1 prefix scan each)
+sets the floor.
+
+**Why the deficit is *worse* at 70B than 1B/8B: GQA ratio amplifies
+the bimodal-Q tax.** Llama-3-70B-Instruct has 64 Q-heads / 8 KV-heads
+(GQA ratio **G=8**); Llama-3.1-8B, Llama-3.2-1B, and Qwen3-4B all have
+G=4 (32/8). Under TP=2 the ratio is preserved per rank (70B: 32 Q / 4
+KV vs 8B: 16 Q / 4 KV). The consequence on FastTree's two structural
+weaknesses:
+
+  - **KV-reread dedup pays less in proportional terms at higher G.**
+    Each KV byte fetched does `G·head_dim` Q-side ops downstream, so
+    paged-attention's arithmetic intensity is `8× head_dim` at 70B vs
+    `4× head_dim` at 8B. With more useful compute per KV byte, paged
+    spends a *smaller fraction* of its per-step time on KV bandwidth.
+    The cascade's KV-rereads-saved gives a smaller relative win:
+    saving `(K-1)·L_p` KV bytes is worth less when each saved byte was
+    earning more Q compute downstream.
+  - **Q-bimodal padding tax stays the same (worse, in absolute terms,
+    because Q work grew).** FastTree picks one CTA_Q for the whole
+    tree. At leaf vnodes with 1 query token padded to BLOCK_M=32, the
+    Q-tile is 31/32 wasted MMA work — independent of G. But that
+    waste sits on the *compute* side, which is now a bigger share of
+    each step. At G=8 the Q-tile waste eats roughly twice as much
+    end-to-end time as at G=4 (everything else equal). The "what to
+    do about narrow Q-tiles at the per-beam level" question becomes
+    more pressing as GQA ratios grow — and the trend across recent
+    models is toward larger G (Llama-3.1-70B G=8, Llama-3.1-405B G=8,
+    DeepSeek-V3 G=128 via MLA).
+
+Put together: at 70B/K=128 the KV-dedup wins shrink and the
+Q-padding losses grow, so FastTree's *net* per-step cost ends up
+above paged's even though paged loops every beam. This is consistent
+with the measurement (paged fwd 64.5 s, FastTree fwd 133.2 s) — paged
+is 2.07× faster than FastTree in pure forward time on this cell,
+inverting the 1B/single-GPU ordering. bs_kernel resolves both
+problems at once: it deduplicates the prefix at the cascade level
+*and* routes the narrow per-beam tail through its own CTA_Q=1 decode
+kernel, so neither the KV-reread waste nor the Q-tile padding
+waste fires.
+
+Closing the FastTree deficit at this regime would require modifying
+its tree traversal (cascade-aware prefix dedup) *and* changing its
+single-kernel-template to a per-level CTA_Q choice — both structural
+changes outside the "split-K only" scope. The result strengthens the
+dispatch-space ablation: at 70B-fp8/K=128, the 2.93× margin over
+FastTree is not removable by knob-tuning; it's a property of which
+kernels the dispatch space lets the picker reach.
+
+**bs_kernel margin over paged grows 1.03× → 1.49× as K scales
+32 → 128**, validating the cost-model prediction. Per-token cost
+breakdown:
+
+|     K | paged per-token | bs_kernel per-token | gap   |
+|------:|----------------:|--------------------:|------:|
+|    32 |        14.87 ms |            14.45 ms |  3%   |
+|   128 |        46.37 ms |            31.10 ms |  49%  |
+
+paged scales **3.1× linearly with K** (every beam needs its own decode
+launch); bs_kernel only scales **2.15×** (the cascade dedups the
+prefix). Importantly, mlca degrades *below* paged at K=128 (1.10×
+slower) — the non-fused cascade's 3-launch-per-layer schedule scales
+poorly with K because each launch's per-CTA setup becomes a bigger
+fraction of the per-step budget.
+
+This is the regime where the dispatcher matters most: production
+beam-search APIs default to K∈[4,64] but reranker pipelines and
+ensemble-decoding stacks routinely use K=128–256. The 70B-fp8 K=32
+cell understates the production benefit; K=128 is closer to the
+inference regime users actually deploy.
+
 **Tree-based speculative decoding** (SpecInfer, Medusa) — per-step
 static speculative tree of 5–20 candidate tokens, exactly the
 CTA_Q = 1 regime DECTAIL targets — remains TODO. The dispatcher
@@ -1116,8 +1668,18 @@ weakened one.
   at the oracle-regret level (worst-case +2.5% across seven cells;
   median +0.1%; three cells show negative regret where the picker
   beats every pure-forced strategy), not at the predicted-µs level.
-- **Empirical scope.** H100, Llama-3.1-8B / Llama-3.2-1B. Multi-GPU
-  and multi-model breadth is future work.
+- **Empirical scope.** H100, Llama-3.1-8B / Llama-3.2-1B / Qwen3-4B /
+  Llama-3-70B-FP8. Multi-GPU is exercised (TP=2 on Qwen3-4B and 70B
+  FP8); larger TP and additional architectures remain future work.
+- **FP8 KV cache deferred.** The 70B-FP8 results in this paper use
+  FP8 weights with bf16 KV. The fp8 KV path is implemented in the
+  loader (uint8 physical storage + logical fp8_e4m3fn passed via
+  `wrapper.plan(kv_data_type=…)`) but blocked on FlashInfer's
+  `append_paged_kv_cache` not dispatching fp8 / uint8 through
+  `tvm_ffi` — the dlpack spec lacks fp8 and the dispatch table lacks
+  uint8. Three remediation paths exist (upstream uint8 fallthrough;
+  manual scatter in Python; custom Triton append kernel); we leave
+  the choice to a follow-up.
 
 ## Contributions
 

@@ -3,7 +3,7 @@
 #
 # Runs (in order):
 #   1. physics calibration (per-device coefficients)
-#   2. cost-model auto-tune (fits share_extra_us / dual_pool_extra_us)
+#   2. cost-model regret report on the autotune grid
 #   3. end-to-end correctness test (cross-baseline equality)
 #   4. end-to-end cross-method sweep (5 methods × workload grid)
 #   5. cost-model oracle-vs-model regret analysis
@@ -55,7 +55,7 @@ fi
 
 # ----------------------------------------------------------------
 # 1. Physics calibration — measures device coefficients (B_hbm,
-#    launch_us, sync_us, merge_us, per_tile_us, num_sms).
+#    merge_launch_us, merge_bw_us_per_row, per_tile_us, decode_*, num_sms).
 # ----------------------------------------------------------------
 echo ">>> [1/7] Physics calibration"
 uv run python -m beam_engine.methods.bs_kernel.calibrate --force \
@@ -63,8 +63,8 @@ uv run python -m beam_engine.methods.bs_kernel.calibrate --force \
 echo
 
 # ----------------------------------------------------------------
-# 2. Auto-tune — fits share_extra_us / dual_pool_extra_us by
-#    minimizing oracle regret over a small benchmark grid.
+# 2. Regret report — measures the autotune grid and reports picker
+#    regret of the calibrated coefficients vs the per-cell oracle.
 # ----------------------------------------------------------------
 echo ">>> [2/7] Auto-tune cost-model overheads"
 uv run python -m beam_engine.methods.bs_kernel.autotune --save \
