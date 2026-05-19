@@ -91,8 +91,8 @@ per-branch tail.
 
 The dispatcher uses a **calibrated cost model** to choose among these
 strategies at every decoding step. The model accounts for KV
-bandwidth, query-tile utilization, wave-quantized prefill work,
-decode-tail cost, and merge overhead. Since the candidate set is
+bandwidth, wave-quantized prefill compute, wave-quantized decode-tail
+compute (with HBM overlap), and merge overhead. Since the candidate set is
 fixed and the exposed cascade depth is capped, planning time is
 linear in batch size and beam width rather than in the full number of
 nodes in the input tree. This gives the system enough flexibility to
@@ -477,88 +477,89 @@ constants — independent of the workload's KV-sharing tree shape.
 Implementation in `src/beam_engine/methods/bs_kernel/cost_model.py`;
 entry point is `pick_strategy_batch` at line 701.
 
-Each candidate's cost is the sum of a bandwidth term and a
-wave-quantized compute term, plus an autotuned slack. Every
-depth-≥2 strategy launches `(D−1)` online-softmax merges between
-levels; the closed-form drops the merge term from `C_shared` (it's
-dwarfed by the prefill kernel work) and keeps it on the DEC_TAIL
-side, where the tail kernel is cheap enough that the same merge cost
-can flip the boundary:
+Each candidate's cost is a sum of a bandwidth term and a
+wave-quantized compute term; the picker has **no free parameters**
+beyond physics-calibrated constants. Every depth-≥2 strategy
+launches `(D−1)` online-softmax merges between levels; the
+closed-form drops the merge term from `C_fused` (it's dwarfed by
+the prefill kernel work) and keeps it on the DEC_TAIL side, where
+the tail kernel is cheap enough that the same merge cost can flip
+the boundary:
 
 ```
-C_shared(W; θ)   = BW(W)/β + ⌈T(W)/N⌉·τ                          // (D−1)·μ absorbed into BW
-C_dec_tail(W; θ) = C_shared(prefix; θ) + max(BW_tail/β, ⌈R/N⌉·W_tail_per_beam)
-                   + (D−1)·μ
+C_fused(s; θ)    = B_s / β + ⌈M_s / N_SM⌉ · τ                           // (D−1)·μ dwarfed by prefill
+C_dec_tail(s; θ) = C_fused(prefix; θ) + max(B_tail/β, ⌈R/N_SM⌉·τ_tail) + (D−1)·μ
+                                                  ^^^^^^^^^^^^^^^^^^^
+                                                  wave-quantized compute (= U_tail)
 ```
 
-All costs are in microseconds. Symbols:
+with `τ_tail = L̄_tail · ρ_d`. All costs are in microseconds. Symbols:
 
 | symbol         | meaning                                                                                   | units                |
 |----------------|-------------------------------------------------------------------------------------------|----------------------|
-| `BW(W)`        | total KV bytes loaded across all cascade levels for the workload                          | bytes                |
+| `B_s`          | total KV bytes loaded across all cascade levels for strategy `s`                          | bytes                |
 | `β`            | calibrated HBM bandwidth (`B_hbm`)                                                        | bytes / µs           |
-| `T(W)`         | total prefill-tile count summed across cascade levels and across the B prompts            | dimensionless        |
-| `N`            | SM count (`num_sms`), read from `torch.cuda.get_device_properties`                        | dimensionless        |
+| `M_s`          | total prefill-tile count summed across cascade levels and across the B prompts            | dimensionless        |
+| `N_SM`         | SM count (`num_sms`), read from `torch.cuda.get_device_properties`                        | dimensionless        |
 | `τ`            | calibrated time per prefill tile at the large-T pool (`per_tile_us[T_large]`)             | µs / tile            |
-| `μ`            | calibrated merge-kernel cost per cascade boundary (`merge_us`)                            | µs / merge           |
-| `D`            | dispatch depth (2 or 3); `(D−1)` merges sit between levels with critical-path depth `⌈log₂ D⌉` | dimensionless        |
-| `BW_tail`      | total per-branch-tail KV bytes loaded by the decode kernel                                | bytes                |
-| `R`            | total decode-kernel CTAs = sum of per-prompt beam counts; one CTA per beam (CTA_Q=1)      | dimensionless        |
-| `W_tail_per_beam` | per-beam tail compute: `mean_tail_kv_tokens · decode_us_per_beam_kv_token`             | µs                   |
+| `μ`            | calibrated merge cost per cascade boundary: `μ = μ_L + μ_B · R` where `μ_L = merge_launch_us`, `μ_B = merge_bw_us_per_row` | µs / merge |
+| `D`            | dispatch depth (2 or 3); `(D−1)` merges sit between levels with critical-path depth `⌈log₂ D⌉` | dimensionless |
+| `B_tail`       | total per-branch-tail KV bytes loaded by the decode kernel                                | bytes                |
+| `R`            | total decode-kernel CTAs = total beam count = `Σ_b K_b`; one CTA per beam (CTA_Q=1)       | dimensionless        |
+| `L̄_tail`     | mean per-beam tail length (KV tokens), `L̄_tail = (Σ_{b,j} L_{b,j}) / R`                 | tokens / beam        |
+| `ρ_d`          | calibrated per-(beam, KV-token) decode cost (`decode_us_per_beam_kv_token`)               | µs / token           |
+| `τ_tail`       | per-CTA wall time on the decode side, `τ_tail = L̄_tail · ρ_d`                            | µs / CTA             |
 
-- **Bandwidth term `BW/β`** sums KV bytes loaded across all cascade
-  levels and divides by the calibrated peak HBM bandwidth. We do not
-  apply a Q-utilization penalty: empirically the prefill kernel is
-  HBM-bound at the L_kv values that matter for beam search (≥ 1024
-  tokens), so giving it 1 vs T queries at a fixed L_kv takes
-  near-identical wall time on H100. The bimodal-Q phenomenon — a
-  per-branch tail at packed_qo=1 being slower per byte than a
-  root-level tile at packed_qo=K — is instead handled by the
-  DEC_TAIL strategy itself, which routes the per-branch tail to the
-  CTA_Q=1 decode kernel where the relative cost is captured by
-  `max(BW_tail/β, W_tail)` directly.
-- **Wave-quantized compute term `⌈T/N⌉·τ`** is what couples the picker
-  to batch size. Tiles are summed across all B prompts first, then
-  divided by N_sm and ceiling'd — so the picker's decision changes
-  with B, not just per-prompt shape: when the per-branch tile count
-  crosses N_sm, a second wave is paid in full, which is what tilts
-  the 1-pool vs 2-pool boundary at large B.
-- **`max(BW_tail/β, ⌈R/N⌉·W_tail_per_beam)`** on the DEC_TAIL side:
-  the per-branch decode kernel is purpose-built for `CTA_Q=1` and runs
-  one CTA per beam. Bandwidth saturates HBM when there are enough
-  active CTAs, so the bw term scales with total bytes
-  (`BW_tail/β`); compute, by contrast, is parallelized across SMs,
-  so the wave-quantized compute term `⌈R/N⌉·W_tail_per_beam`
-  measures the time for one wave of CTAs to finish (each processing
-  its own mean-length tail) multiplied by the number of waves. MMA
-  work overlaps with HBM reads within each wave, so the kernel cost
-  is `max(bw_term, work_term)` rather than a sum. Using `max` rather
-  than `+` is what lets the model see that the decode kernel beats
-  prefill on the small-R level even when its arithmetic intensity is
-  similar.
+- **Bandwidth term `B_s / β`** sums KV bytes loaded across all
+  cascade levels and divides by the calibrated peak HBM bandwidth.
+  We do not apply a Q-utilization penalty on this term: empirically
+  the prefill kernel is HBM-bound at the L_kv values that matter for
+  beam search (≥ 1024 tokens), so 1 vs T queries at a fixed L_kv
+  takes near-identical wall time on H100. The bimodal-Q phenomenon
+  — a per-branch tail at packed_qo=1 being slower per byte than a
+  root-level tile at packed_qo=K — is handled *structurally* by the
+  DEC_TAIL strategy, which routes the per-branch tail to the
+  purpose-built CTA_Q=1 decode kernel and prices it via
+  `max(B_tail/β, U_tail)`.
+- **Wave-quantized prefill compute `⌈M_s / N_SM⌉ · τ`** is what
+  couples the picker to batch size. Tiles are summed across all B
+  prompts first, then divided by `N_SM` and ceiling'd — so the
+  picker's decision changes with B, not just per-prompt shape: when
+  the per-branch tile count crosses `N_SM`, a second wave is paid in
+  full, which is what tilts the 1-pool vs 2-pool boundary at large B.
+- **`max(B_tail/β, U_tail)`** on the DEC_TAIL side, where
+  `U_tail = ⌈R / N_SM⌉ · τ_tail` is the wave-quantized compute term:
+  the decode kernel runs `R` CTAs (one per beam) in `⌈R / N_SM⌉`
+  sequential waves, each wave taking per-CTA wall time
+  `τ_tail = L̄_tail · ρ_d`. The bandwidth term `B_tail / β` saturates
+  HBM whenever there are enough active CTAs and so is not
+  wave-quantized. MMA work overlaps with HBM reads within the
+  decode kernel, so the two terms combine via `max` rather than `+`
+  — this is what lets the model see that the decode kernel beats
+  prefill on the per-branch tail even when its arithmetic intensity
+  is similar. On H100 + fp16/bf16 KV every cell we evaluate satisfies
+  `B_tail/β > U_tail`, so DEC_TAIL is bandwidth-bound in practice;
+  the `max(·,·)` form correctly extrapolates to smaller KV dtypes
+  (fp8, int4) and higher-flop-to-bw GPUs where `U_tail` would win.
 
-**Calibration grid.** `θ` is measured by `calibrate.py` over a small,
-fixed grid: `β` from a 256 MiB device-to-device copy; `τ` (per-tile
-time) is measured at each `T ∈ {16, 64, 128}` by firing a
-single-tile prefill against a fixed L_kv, page_size=16, in a 100-
-iter warm loop; `decode_us_per_beam_kv_token` and `decode_launch_us`
-are measured by sweeping a `BatchDecodeWithPagedKVCacheWrapper` over
-a small (L_kv, batch) grid and fitting a linear model; `N` is read
-from device properties; `μ` is timed for the `merge_state_in_place`
-kernel at a representative shape. With these physics-calibrated
-coefficients the picker has *no free parameters* — it's pure
-closed-form, validated by per-cell oracle regret on a small
-`(K, L_p, B)` sweep. Total calibration takes a few seconds per GPU,
-run once and cached.
+**Calibration grid.** `θ` is measured by `calibrate.py`:
+`β` from a 256 MiB device-to-device copy; `τ` (per-tile prefill
+time) at each `T ∈ {16, 64, 128}` from a single-tile prefill against
+a fixed L_kv in a 50-iter warm loop; `ρ_d` and the per-merge slopes
+(`μ_L`, `μ_B`) from short OLS fits over per-call wall-times sampled
+across a small `(L_kv, batch)` grid; `N_SM` is read from device
+properties. Total calibration takes seconds per GPU, run once and
+cached. The picker is then pure closed-form over `θ`, validated by
+per-cell oracle regret on a small `(K, L_p, B)` sweep.
 
-Launch / sync overheads on the cascade side are intentionally not
+Launch / sync overheads on the prefill kernel are intentionally not
 modeled: for beam-search shapes the kernel work dwarfs them, and
 including them adds noise to the picker without changing the argmin.
 FUSED and DEC_TAIL pay the same `(D−1)` online-softmax merges; the
-DEC_TAIL expression keeps the merge term because its tail kernel is
-small enough that the merge cost can flip the boundary, while on
-FUSED the same merge cost sits well below the prefill kernel work
-and is absorbed into `ε`.
+DEC_TAIL expression keeps the merge term explicit because its tail
+kernel is small enough that the merge cost can flip the boundary,
+while on FUSED the same merge cost sits well below the prefill
+kernel work.
 
 Two notes on the cost model:
 
@@ -832,8 +833,8 @@ cell showed the picker choosing `SHARED_2L_DEC_TAIL` while forced
 `SHARED_2L_1POOL` is 4.4% faster — fp8's `_scaled_mm` saturates tensor
 cores at smaller M·N than bf16 matmuls, so the relative cost of
 DEC_TAIL's CTA_Q=1 decode kernel vs 1POOL's fused-cascade prefill
-kernel shifts. We refit the coefficients on
-`RedHatAI/Meta-Llama-3-70B-Instruct-FP8` via
+kernel shifts. We refit the physics coefficients (`β`, `τ`, `ρ_d`,
+`μ_L`, `μ_B`) on `RedHatAI/Meta-Llama-3-70B-Instruct-FP8` via
 `slurm/autotune_h100_70b_fp8_tp2.sbatch` and re-ran exp1a / exp2 / exp4
 with the recalibrated cache.
 
@@ -1113,7 +1114,7 @@ and the long-decode max_new doesn't fit the 60-min dev-partition cap).
 CSV: `benchmarks/bs_kernel/results/paper-exp/exp2_70b_fp8_tp2/merged.csv`;
 reproducer: `scripts/paper-exp/exp2_70b_fp8_tp2.sbatch`.
 
-Coefficients re-fit for the 70B-FP8 TP=2 cache key via
+Physics coefficients re-fit for the 70B-FP8 TP=2 cache key via
 `slurm/autotune_h100_70b_fp8_tp2.sbatch` (job 206452, avg regret
 +0.62%, worst +1.39% on the 12 cells that fit — half the grid OOMs at
 70B-fp8 because the per-rank KV slab exceeds H100 HBM at the larger B
@@ -1137,9 +1138,9 @@ Four findings:
   239/255 steps and underperforms forced 2L_1POOL by 3.3% (picker
   regret); the gap was 4.4% pre-recalibration, so the model-keyed
   recalibration recovers about a quarter of it. The remaining gap is
-  because the autotune grid couldn't measure this exact (K=32, L_p=8192,
-  B=8) shape — half the grid OOMs at 70B-fp8 — so the picker's
-  per-tile costs are extrapolated from smaller cells.
+  because the calibration grid couldn't measure this exact (K=32,
+  L_p=8192, B=8) shape — half the grid OOMs at 70B-fp8 — so the
+  picker's per-tile costs are extrapolated from smaller cells.
 - **DEC_TAIL family is uniformly slower at every depth.** All three
   DEC_TAIL variants (2L/3L/4L) are 4.1–8.5% slower than 2L_1POOL.
   At 70B-fp8 the FP8 `_scaled_mm` saturates Hopper tensor cores
