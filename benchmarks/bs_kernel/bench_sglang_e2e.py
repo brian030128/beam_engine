@@ -35,18 +35,30 @@ from beam_engine.baselines.deft import DeftBackend
 from beam_engine.baselines.fasttree import FastTreeBackend
 from beam_engine.baselines.mlca import MlcaBackend
 from beam_engine.baselines.paged import PagedBackend
+from beam_engine.distributed import (
+    destroy_tp,
+    get_tp_rank,
+    get_tp_world_size,
+    init_tp,
+)
 from beam_engine.methods.bs_kernel.calibrate import load_or_defaults
 from beam_engine.methods.bs_kernel.cost_model import Strategy
 from beam_engine.methods.bs_kernel.driver import BsKernelBackend
-from beam_engine.models.modeling_llama import LlamaForCausalLM
+from beam_engine.models import load_model_for_causal_lm
 from beam_engine.tree_driver import tree_batch_decode
 
 from sglang_workloads import SCENARIO_BUILDERS, build_multi_chain_reasoning_stage2
 
 
 MODEL_NAME = os.environ.get("BE_MODEL", "meta-llama/Llama-3.2-1B")
+# Bound to ``cuda:LOCAL_RANK`` inside ``main`` once init_tp() runs. Plain
+# ``cuda`` is fine for single-GPU runs (no torchrun → LOCAL_RANK unset).
 DEVICE = "cuda"
-DTYPE = torch.float16
+# Compute dtype env-driven so 70B-fp8 cells (which need bf16 activations
+# to avoid fp16 attention-score overflow at long L_p) don't have to
+# fork the bench. Default fp16 matches the historic 1B / 8B paper runs.
+_BE_DTYPE = os.environ.get("BE_DTYPE", "fp16").lower()
+DTYPE = {"fp16": torch.float16, "bf16": torch.bfloat16}[_BE_DTYPE]
 
 
 # bs_kernel forced-strategy aliases for picker-vs-kernel ablation.
@@ -63,10 +75,10 @@ _BSK_FORCED: dict[str, Strategy] = {
 
 def _make_backend(name: str):
     if name == "bs_kernel":
-        coeff = load_or_defaults(torch.device(DEVICE))
+        coeff = load_or_defaults(torch.device(DEVICE), MODEL_NAME, tp_size=get_tp_world_size())
         return BsKernelBackend(coefficients=coeff)
     if name in _BSK_FORCED:
-        coeff = load_or_defaults(torch.device(DEVICE))
+        coeff = load_or_defaults(torch.device(DEVICE), MODEL_NAME, tp_size=get_tp_world_size())
         return BsKernelBackend(
             coefficients=coeff,
             available_strategies={_BSK_FORCED[name]},
@@ -153,15 +165,39 @@ def _merge_timings(t1: dict, t2: dict) -> dict:
 
 def _run_one(
     model, config, spec, method_name: str, max_new: int,
-    *, two_stage_spec=None, tokenizer=None,
+    *, two_stage_spec=None, tokenizer=None, scenario_name: str = "",
 ) -> tuple[Row, list[float]]:
     backend = _make_backend(method_name)
+    _kv_dtype_env = os.environ.get("BE_KV_DTYPE", "").lower()
+    _kv_dtype = {
+        "": None, "fp16": torch.float16, "bf16": torch.bfloat16,
+        "fp8": torch.float8_e4m3fn, "fp8_e4m3": torch.float8_e4m3fn,
+    }.get(_kv_dtype_env)
     result = tree_batch_decode(
         model, config, spec, max_new,
         backend=backend,
         return_timings=True,
         return_phase_timings=True,
+        dtype=DTYPE,
+        kv_dtype=_kv_dtype,
     )
+    # Optional beam dump for cross-method equality checks
+    # (BE_DUMP_BEAMS_DIR=<dir> → writes <dir>/<scenario>_<method>.json with
+    # leaf_token_ids). Only rank-0 writes under torchrun.
+    _dump_dir = os.environ.get("BE_DUMP_BEAMS_DIR", "")
+    if _dump_dir and (not torch.distributed.is_initialized()
+                      or torch.distributed.get_rank() == 0):
+        import json
+        os.makedirs(_dump_dir, exist_ok=True)
+        tag = scenario_name or f"B{spec.B}K{spec.K}"
+        path = os.path.join(_dump_dir, f"{tag}__{method_name}.json")
+        with open(path, "w") as f:
+            json.dump({
+                "scenario": scenario_name,
+                "method": method_name,
+                "B": spec.B, "K": spec.K,
+                "leaf_token_ids": result.leaf_token_ids,
+            }, f)
     # Dump fasttree plan-trace if FT_TRACE_PLAN=1 (this path bypasses the
     # standalone ``fasttree.beam_search`` wrapper that normally dumps).
     if method_name == "fasttree" and os.environ.get("FT_TRACE_PLAN", "0") != "0":
@@ -198,6 +234,8 @@ def _run_one(
             backend=backend2,
             return_timings=True,
             return_phase_timings=True,
+            dtype=DTYPE,
+            kv_dtype=_kv_dtype,
         )
         t = _merge_timings(t, result2.timings)
     decode_steps = t["decode_step_ms"]
@@ -290,25 +328,45 @@ def main():
              "segments for multi_document. Each scenario keeps its "
              "natural (B, K) unless overridden.",
     )
+    ap.add_argument(
+        "--no-stage2", action="store_true",
+        help="Disable the multi_chain_reasoning stage-2 majority-vote "
+             "decode. Useful for picker-vs-forced ablations where the "
+             "K=1 stage-2 muddies the per-strategy comparison.",
+    )
     args = ap.parse_args()
     if args.k_override:
         k_overrides: list[int | None] = [int(x) for x in args.k_override.split(",")]
     else:
         k_overrides = [None]
 
-    print(f"model: {MODEL_NAME}")
-    print(f"scenarios: {args.scenarios}")
-    print(f"methods:   {args.methods}")
-    print(f"max_new:   {args.max_new}, repeat: {args.repeat}\n")
+    # Bind to the per-rank device under torchrun; a no-op for single-GPU
+    # invocation (init_tp short-circuits when WORLD_SIZE=1).
+    init_tp()
+    tp_rank = get_tp_rank()
+    tp_size = get_tp_world_size()
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    global DEVICE
+    DEVICE = f"cuda:{local_rank}" if tp_size > 1 else "cuda"
+    is_rank0 = tp_rank == 0
 
-    print("Loading tokenizer + model...")
+    def _say(*a, **kw):
+        if is_rank0:
+            print(*a, **kw)
+
+    _say(f"model: {MODEL_NAME}  (tp_size={tp_size})")
+    _say(f"scenarios: {args.scenarios}")
+    _say(f"methods:   {args.methods}")
+    _say(f"max_new:   {args.max_new}, repeat: {args.repeat}\n")
+
+    _say("Loading tokenizer + model...")
     tok = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = LlamaForCausalLM.from_pretrained(MODEL_NAME, dtype=DTYPE, device=DEVICE)
+    model = load_model_for_causal_lm(MODEL_NAME, dtype=DTYPE, device=DEVICE)
     config = model.config
-    print("Model loaded.\n")
+    _say("Model loaded.\n")
 
-    print(f"k_overrides: {k_overrides}")
-    print("Building TreeSpecs (this tokenizes the inputs)...")
+    _say(f"k_overrides: {k_overrides}")
+    _say("Building TreeSpecs (this tokenizes the inputs)...")
     # specs keyed by (scenario_name, k_override)
     specs: dict[tuple[str, int | None], object] = {}
     stage2_specs: dict[tuple[str, int | None], object] = {}
@@ -325,13 +383,13 @@ def main():
                 len(g.private_prefix_ids_per_leaf[0]) for g in spec.groups
             ) / spec.B
             ko_tag = "natural" if k_override is None else f"K={k_override}"
-            print(
+            _say(
                 f"  {name:<24} [{ko_tag:<8}] B={spec.B:<3d} K={spec.K:<3d} "
                 f"L_shared~{int(L_s_mean):<5d} L_priv~{int(L_p_mean):<5d} "
                 f"n_leaves={spec.n_leaves}"
             )
             # Optional stage-2 spec for paper-exact multi_chain_reasoning.
-            if args.paper_exact and name == "multi_chain_reasoning":
+            if args.paper_exact and name == "multi_chain_reasoning" and not args.no_stage2:
                 s2 = build_multi_chain_reasoning_stage2(
                     tok, stage1_chain_len=args.max_new,
                     b_override=args.b_override,
@@ -340,11 +398,11 @@ def main():
                 s2.validate()
                 stage2_specs[(name, k_override)] = s2
                 L_s2 = sum(len(g.shared_prefix_ids) for g in s2.groups) / s2.B
-                print(
+                _say(
                     f"  {name + ' (stage2)':<24} [{ko_tag:<8}] B={s2.B:<3d} K={s2.K:<3d} "
                     f"L_shared~{int(L_s2):<5d} L_priv~    0 n_leaves={s2.n_leaves}"
                 )
-    print()
+    _say("")
 
     rows: list[Row] = []
     per_scenario_summary: list[str] = []
@@ -352,7 +410,7 @@ def main():
         for sname in args.scenarios:
             spec = specs[(sname, k_override)]
             ko_tag = "natural" if k_override is None else f"K={k_override}"
-            print(f"--- {sname} [{ko_tag}] ---")
+            _say(f"--- {sname} [{ko_tag}] ---")
             per_method_best: dict[str, float] = {}
             for mname in args.methods:
                 iters = args.repeat + (1 if args.warmup else 0)
@@ -364,19 +422,20 @@ def main():
                         t0 = time.perf_counter()
                         row, _decode = _run_one(
                             model, config, spec, mname, args.max_new,
+                            scenario_name=sname,
                             two_stage_spec=stage2_specs.get((sname, k_override)),
                             tokenizer=tok,
                         )
                         wall = time.perf_counter() - t0
                     except Exception as e:
-                        print(f"  {mname:<12} r={r}  FAILED: {type(e).__name__}: {e}")
+                        _say(f"  {mname:<12} r={r}  FAILED: {type(e).__name__}: {e}")
                         gc.collect()
                         torch.cuda.empty_cache()
                         break
                     gc.collect()
                     torch.cuda.empty_cache()
                     if args.warmup and r == 0:
-                        print(f"  {mname:<12} warmup  wall={wall:5.1f}s  decode_total={row.decode_total_ms:7.1f}ms")
+                        _say(f"  {mname:<12} warmup  wall={wall:5.1f}s  decode_total={row.decode_total_ms:7.1f}ms")
                         continue
                     effective_r = r - (1 if args.warmup else 0)
                     row.scenario = sname
@@ -388,7 +447,7 @@ def main():
                     total_ms = (
                         row.prefill_shared_ms + row.prefill_private_ms + row.decode_total_ms
                     )
-                    print(
+                    _say(
                         f"  {mname:<12} r={effective_r}  "
                         f"prefill={row.prefill_shared_ms + row.prefill_private_ms:7.1f}ms  "
                         f"decode={row.decode_total_ms:7.1f}ms  "
@@ -405,55 +464,59 @@ def main():
                     f"{m}={t:.1f}" for m, t in ranking
                 )
                 per_scenario_summary.append(f"{sname:<24} [{ko_tag:<8}] {line}")
-                print(line)
-            print()
+                _say(line)
+            _say("")
 
-    # CSV out.
-    out = args.out
-    if out is None:
-        results_dir = Path(__file__).parent / "results"
-        results_dir.mkdir(parents=True, exist_ok=True)
-        gpu = torch.cuda.get_device_name().replace(" ", "_")
-        ts = time.strftime("%Y%m%d-%H%M%S")
-        out = results_dir / f"bench_sglang_e2e-{gpu}-{ts}.csv"
-    out = Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "scenario", "k_override", "method", "repeat",
-            "n_leaves", "prefill_shared_ms", "prefill_private_ms",
-            "decode_total_ms", "decode_p50_ms", "decode_p99_ms",
-            "n_decode_steps",
-            "plan_mean_ms", "plan_p50_ms", "plan_p99_ms", "plan_total_ms",
-            "forward_mean_ms", "forward_p50_ms", "forward_p99_ms", "forward_total_ms",
-            "alloc_mean_ms", "alloc_total_ms",
-            "topk_mean_ms", "topk_total_ms",
-            "dispatch_total_ms",
-        ])
-        for r in rows:
+    # CSV out — only rank 0 writes; all ranks computed identical timings up
+    # to TP all-reduce noise, and the model state is rank-symmetric.
+    if is_rank0:
+        out = args.out
+        if out is None:
+            results_dir = Path(__file__).parent / "results"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            gpu = torch.cuda.get_device_name().replace(" ", "_")
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            out = results_dir / f"bench_sglang_e2e-{gpu}-{ts}.csv"
+        out = Path(out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("w", newline="") as f:
+            w = csv.writer(f)
             w.writerow([
-                r.scenario, r.k_override, r.method, r.repeat_idx,
-                r.n_leaves,
-                f"{r.prefill_shared_ms:.4f}",
-                f"{r.prefill_private_ms:.4f}",
-                f"{r.decode_total_ms:.4f}",
-                f"{r.decode_p50_ms:.4f}",
-                f"{r.decode_p99_ms:.4f}",
-                r.n_decode_steps,
-                f"{r.plan_mean_ms:.4f}", f"{r.plan_p50_ms:.4f}",
-                f"{r.plan_p99_ms:.4f}",  f"{r.plan_total_ms:.4f}",
-                f"{r.forward_mean_ms:.4f}", f"{r.forward_p50_ms:.4f}",
-                f"{r.forward_p99_ms:.4f}",  f"{r.forward_total_ms:.4f}",
-                f"{r.alloc_mean_ms:.4f}",   f"{r.alloc_total_ms:.4f}",
-                f"{r.topk_mean_ms:.4f}",    f"{r.topk_total_ms:.4f}",
-                f"{r.dispatch_total_ms:.4f}",
+                "scenario", "k_override", "method", "repeat",
+                "n_leaves", "prefill_shared_ms", "prefill_private_ms",
+                "decode_total_ms", "decode_p50_ms", "decode_p99_ms",
+                "n_decode_steps",
+                "plan_mean_ms", "plan_p50_ms", "plan_p99_ms", "plan_total_ms",
+                "forward_mean_ms", "forward_p50_ms", "forward_p99_ms", "forward_total_ms",
+                "alloc_mean_ms", "alloc_total_ms",
+                "topk_mean_ms", "topk_total_ms",
+                "dispatch_total_ms",
             ])
-    print(f"\nwrote {len(rows)} rows to {out}\n")
+            for r in rows:
+                w.writerow([
+                    r.scenario, r.k_override, r.method, r.repeat_idx,
+                    r.n_leaves,
+                    f"{r.prefill_shared_ms:.4f}",
+                    f"{r.prefill_private_ms:.4f}",
+                    f"{r.decode_total_ms:.4f}",
+                    f"{r.decode_p50_ms:.4f}",
+                    f"{r.decode_p99_ms:.4f}",
+                    r.n_decode_steps,
+                    f"{r.plan_mean_ms:.4f}", f"{r.plan_p50_ms:.4f}",
+                    f"{r.plan_p99_ms:.4f}",  f"{r.plan_total_ms:.4f}",
+                    f"{r.forward_mean_ms:.4f}", f"{r.forward_p50_ms:.4f}",
+                    f"{r.forward_p99_ms:.4f}",  f"{r.forward_total_ms:.4f}",
+                    f"{r.alloc_mean_ms:.4f}",   f"{r.alloc_total_ms:.4f}",
+                    f"{r.topk_mean_ms:.4f}",    f"{r.topk_total_ms:.4f}",
+                    f"{r.dispatch_total_ms:.4f}",
+                ])
+        print(f"\nwrote {len(rows)} rows to {out}\n")
 
-    print("=== summary (best decode_total per method, ms) ===")
-    for line in per_scenario_summary:
-        print(line)
+        print("=== summary (best decode_total per method, ms) ===")
+        for line in per_scenario_summary:
+            print(line)
+
+    destroy_tp()
 
 
 if __name__ == "__main__":

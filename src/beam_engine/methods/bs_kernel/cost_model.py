@@ -13,15 +13,20 @@ All cost expressions yield estimated per-layer wall time in microseconds.
 The driver picks the minimum-cost strategy each step and dispatches the
 matching wrapper call.
 
-Cost terms in the current model:
-  * HBM bandwidth         (bytes_loaded / B_hbm)
-  * SM-occupancy compute  (waves × per_tile_us[T])
-  * Cascade merge cost    ((depth−1) × (merge_launch_us + merge_bw_us_per_row × rows))
-  * Decode-kernel cost    (decode_launch_us + max(bw_us, work_us))
+Cost terms (paper-spec; see docs/paper_story.md §The cost-model picker):
+  * Fused:    C_fused = B_s/β + ⌈M_s/N_SM⌉·τ + ⌈log₂ D_s⌉·µ
+  * Dec-tail: C_dt    = C_prefix + ν_decode
+                     + max(B_tail/β, ⌈R·⌈L̄/CTA_K⌉/N_SM⌉·τ_tail_elem)
+              where R = Σ_b K_b (total decode-kernel CTAs),
+              τ_tail_elem = ρ_d · cta_tile_kv_decode, and ν_decode
+              is the calibrated per-call decode-kernel launch cost
+              (the extra launch DEC_TAIL pays over FUSED).
 
-Generic launch / sync overheads are intentionally *not* modeled: for
-beam-search workloads the per-step kernel work dwarfs those constant
-terms, so the picker is dominated by SM utilization.
+Generic launch / sync overheads, the per-wave overhead floor, and the
+prefill per-tile L_kv slope are intentionally *not* modeled in this
+simplified form: for beam-search workloads the picker is dominated by
+SM-occupancy waves on the prefill side and by bandwidth on the
+decode-tail side, so the argmin is stable under those simplifications.
 
 Coefficients (`Coefficients`) come from per-device calibration
 (see `calibrate.py`); on first use, fall back to plausible RTX-class
@@ -89,6 +94,16 @@ def _strategy_for(depth: int, family: str, pool_count: int) -> Strategy:
 T_LARGE_CHOICES = (64, 128)
 T_SMALL = 16
 
+# Reference L_kv values for the per-tile calibration probes.
+# - LONG is used to fit the L_kv slope (per_tile_per_kv_us).
+# - REF is the "calibration baseline" embedded in ``per_tile_us``.
+# - TINY is used by the multi-tile probe to isolate per-wave scheduling
+#   overhead from bandwidth. page_size=16 is the minimum FlashInfer
+#   supports for paged KV, so the tile reads almost no HBM.
+PER_TILE_L_KV_TINY = 16
+PER_TILE_L_KV_REF = 1024
+PER_TILE_L_KV_LONG = 8192
+
 
 @dataclass
 class Coefficients:
@@ -118,10 +133,44 @@ class Coefficients:
 
     # Per-tile time table (µs per CTA-tile).
     # Indexed by T_large ∈ T_LARGE_CHOICES + the small tile T_SMALL.
+    # The value is the cost at L_kv = PER_TILE_L_KV_REF tokens; for
+    # other L_kv the cost is computed by ``_tile_cost`` below using the
+    # linear slope ``per_tile_per_kv_us`` (defaults to 0, i.e. constant
+    # cost, for backward compatibility).
     per_tile_us: dict[int, float] = field(default_factory=lambda: {
         16: 0.6,
         64: 1.4,
         128: 2.4,
+    })
+    # Per-(KV token) slope of the prefill tile cost, fit from a two-point
+    # probe at L_kv ∈ {PER_TILE_L_KV_REF, PER_TILE_L_KV_LONG}. Default 0
+    # preserves the original constant-cost behavior; ``calibrate.py``
+    # overwrites with the actual slope when the long-L_kv probe runs.
+    per_tile_per_kv_us: dict[int, float] = field(default_factory=lambda: {
+        16: 0.0,
+        64: 0.0,
+        128: 0.0,
+    })
+    # Per-call prefill kernel launch overhead. The fused-cascade wrapper
+    # is ONE kernel launch regardless of cascade depth or wave count, so
+    # this is added ONCE in the cost expression — not multiplied by wave
+    # count. Fit from the multi-tile probe: at fixed L_kv, time vs wave
+    # count is linear with intercept = launch and slope = per-wave cost.
+    # Default 0 only takes effect when the slope is 0 (legacy caches),
+    # in which case the cost expression falls back to ``waves ×
+    # per_tile_us[T]`` with the launch baked into per_tile_us — see
+    # ``_compute_us_from_tile_groups`` below.
+    prefill_launch_us: float = 0.0
+    # Per-wave additive overhead — paid for every wave even when the
+    # wave's compute is small. Captures kernel-internal per-wave
+    # scheduling cost that the slope×L_kv compute term misses. Fit from
+    # the multi-tile probe: per_wave_overhead = (multi_tile_time -
+    # single_tile_time) / (waves_2 - waves_1) - slope × L_kv. Indexed
+    # by T (small variation across T expected).
+    per_wave_overhead_us: dict[int, float] = field(default_factory=lambda: {
+        16: 0.0,
+        64: 0.0,
+        128: 0.0,
     })
 
     # ------------------------------------------------------------------
@@ -151,6 +200,20 @@ class Coefficients:
     # actual intermediate-level count, so this is an upper bound, not
     # a forced depth.
     max_dispatch_depth: int = 3
+
+    # FlashInfer prefill kernel's KV tile dimension (CTA_TILE_KV =
+    # NUM_MMA_KV × NUM_WARPS_KV × 16). For CTA_TILE_Q ∈ {64, 128} with
+    # NUM_WARPS_KV=1, dispatched values are {16, 32, 64, 128}. The cost
+    # model uses this to count elemental (CTA_TILE_Q × CTA_TILE_KV ×
+    # head_dim) sub-tiles inside each Q-tile: M_s = Σ tiles_q ×
+    # ⌈L_kv / cta_tile_kv⌉. This is what KV split parallelizes across
+    # SMs at runtime; counting sub-tiles before the ⌈·/N_SM⌉ ceiling
+    # captures the parallelism the scheduler can extract.
+    cta_tile_kv: int = 64
+    # Decode kernel's KV chunk size — much smaller than prefill's
+    # because the decode kernel is CTA_Q=1 and iterates KV in
+    # vec_size-multiples (typically 8 tokens for fp16/head_dim=128/GQA).
+    cta_tile_kv_decode: int = 8
 
     @classmethod
     def defaults(cls) -> "Coefficients":
@@ -238,6 +301,104 @@ def _ceil_div(a: int, b: int) -> int:
 
 def _bytes_to_us(n_bytes: int, c: Coefficients) -> float:
     return n_bytes / c.B_hbm
+
+
+def _tile_compute_us(T: int, L_kv: int, c: Coefficients) -> float:
+    """Pure per-tile *compute* time (excludes one-shot kernel launch).
+
+    With the L_kv slope calibrated, the per-tile cost is split into:
+      * a constant launch overhead — paid ONCE per kernel call (added
+        separately by ``_compute_us_from_tile_groups`` when the slope
+        is set)
+      * a per-tile compute term proportional to ``L_kv``
+
+    The legacy ``per_tile_us[T]`` is the SUM of the two at L_kv_REF.
+    Subtracting the launch intercept leaves the pure-compute term.
+    """
+    slope = c.per_tile_per_kv_us.get(T, 0.0)
+    if slope == 0.0:
+        # Legacy cache (no L_kv probe yet): per_tile_us is the full
+        # constant-cost stand-in. Caller (_compute_us_from_tile_groups)
+        # multiplies it by wave count and adds no separate launch — same
+        # behavior as before the L_kv refactor.
+        return c.per_tile_us.get(T, 0.0)
+    # Pure compute = slope × L_kv (intercept is the launch overhead,
+    # added once per call by the caller). Clamped to non-negative.
+    return max(0.0, slope * L_kv)
+
+
+def _tile_breakdown(
+    levels: list[tuple[int, int, int, int]],
+    *,
+    pool_count: int,
+    t_large: int,
+) -> dict[tuple[int, int], int]:
+    """Map ``(T, L_kv)`` → total tile count across the given cascade
+    levels for a single prompt. Used by ``_compute_us_from_tile_groups``
+    to aggregate across prompts and compute per-group wave time with
+    L_kv-aware tile costs.
+    """
+    out: dict[tuple[int, int], int] = {}
+    for g_count, beams_per_g, kv_tokens, _bpkv in levels:
+        if kv_tokens == 0:
+            continue
+        if pool_count == 1:
+            T = t_large
+        else:
+            T = T_SMALL if beams_per_g <= T_SMALL else t_large
+        tiles_per_group = max(1, _ceil_div(beams_per_g, T))
+        n = g_count * tiles_per_group
+        key = (T, kv_tokens)
+        out[key] = out.get(key, 0) + n
+    return out
+
+
+def _compute_us_from_tile_groups(
+    groups: dict[tuple[int, int], int],
+    c: Coefficients,
+) -> float:
+    """Total compute time across (T, L_kv) tile groups for one kernel call.
+
+    Two regimes:
+      * **Slope set** (post-L_kv-calibration): cost =
+        ``prefill_launch_us`` + Σ ``waves × slope[T] × L_kv``. The launch
+        overhead is paid ONCE per call (the fused-cascade kernel is a
+        single launch), and each (T, L_kv) tile group's pure compute
+        scales with L_kv per token. This avoids the inflated B=1
+        prediction the wave-multiplied form gave (where wrapper
+        overhead bundled into per_tile_us was paid `waves` times).
+      * **Slope all zero** (legacy cache): cost =
+        Σ ``waves × per_tile_us[T]``. Matches the pre-refactor formula
+        with launch baked into per_tile_us. No separate launch term.
+    """
+    has_slope = any(
+        c.per_tile_per_kv_us.get(T, 0.0) > 0.0
+        for (T, _) in groups.keys()
+    )
+    if not has_slope:
+        total = 0.0
+        for (T, L_kv), n_tiles in groups.items():
+            if n_tiles <= 0:
+                continue
+            waves = max(1, _ceil_div(n_tiles, c.num_sms))
+            total += waves * c.per_tile_us.get(T, 0.0)
+        return total
+    # Slope-based formula: launch once + per-wave (overhead + L_kv compute).
+    # Per-wave time = max(per_wave_overhead[T], slope * L_kv) — the wave
+    # can't run faster than its setup overhead, and at long L_kv the
+    # compute dominates. Each wave still pays its setup even if its
+    # tiles scan very short KV (the kernel-internal scheduling cost is
+    # real — see picker B=8 mispick if this term is omitted).
+    total = c.prefill_launch_us
+    for (T, L_kv), n_tiles in groups.items():
+        if n_tiles <= 0:
+            continue
+        waves = max(1, _ceil_div(n_tiles, c.num_sms))
+        overhead = c.per_wave_overhead_us.get(T, 0.0)
+        compute = _tile_compute_us(T, L_kv, c)
+        per_wave = max(overhead, compute)
+        total += waves * per_wave
+    return total
 
 
 def _level_tiles_and_bytes(
@@ -422,35 +583,45 @@ def cost_shared_batch(
                 f"levels on every prompt; one prompt has {n_have}"
             )
 
-    # Aggregate tile counts and bandwidth time across all prompts.
-    total_large = 0
-    total_small = 0
+    # Paper formula: C_fused = B_s/β + ⌈M_s/N_SM⌉·τ + ⌈log₂ D_s⌉·µ
+    #
+    #   B_s = total bytes loaded across all cascade levels of every prompt.
+    #   M_s = total elemental (CTA_TILE_Q × CTA_TILE_KV) sub-tile count
+    #         across all cascade levels of every prompt:
+    #             M_s = Σ_levels g_count · ⌈packed_qo/T⌉ · ⌈L_kv/CTA_K⌉
+    #         The inner ⌈L_kv/CTA_K⌉ factor accounts for the per-CTA KV
+    #         iteration (NUM_MMA_KV chunks) and for KV split — both
+    #         describe the same parallelism the kernel exposes across SMs.
+    #   τ   = calibrated time per elemental sub-tile (derived from the
+    #         L_kv slope calibration: τ_elem = per_tile_per_kv_us[T] ·
+    #         CTA_K is the per-CTA_K-token compute cost at tile_q=T).
+    #   D_s = cascade depth. Merges sit at depth boundaries but can be
+    #         reduced in a balanced tree of depth ⌈log₂ D⌉.
+    M_s = 0
     bw_us = 0.0
     for w in workloads:
         levels = _per_prompt_levels(w, depth)
-        large, small, _b = _level_tiles_and_bytes(
+        per_prompt = _tile_breakdown(
             levels, pool_count=pool_count, t_large=t_large,
         )
-        total_large += large
-        total_small += small
+        # Multiply each Q-tile group by its KV-chunk count ⌈L_kv/CTA_K⌉.
+        for (T, L_kv), n_q_tiles in per_prompt.items():
+            kv_chunks = max(1, _ceil_div(L_kv, c.cta_tile_kv))
+            M_s += n_q_tiles * kv_chunks
         bw_us += _level_bw_us(levels, c)
-    # Cross-batch wave count: critical for batched decoding — at B=1 the
-    # per-beam tiles fit in 1 wave on H100; at B=8 they may need 4 waves
-    # at T=64 (and fewer at T=16, which is what tips 2-pool to win).
-    waves_large = max(1, _ceil_div(total_large, c.num_sms)) if total_large > 0 else 0
-    waves_small = max(1, _ceil_div(total_small, c.num_sms)) if total_small > 0 else 0
-    compute_us = (
-        waves_large * c.per_tile_us[t_large]
-        + waves_small * c.per_tile_us[T_SMALL]
-    )
-
-    # Cascade merge cost. The fused-cascade wrapper collapses prefill
-    # levels into ONE kernel launch but the merges are still separate
-    # ``merge_state_in_place`` launches (see flashinfer/cascade.py
-    # docstring on FusedMultiLevelCascadeAttentionWrapper). Depth-L has
-    # (L-1) merges that run sequentially — each depends on the prior
-    # level's output, so they can't overlap or be wave-divided.
-    merge_us = _cascade_merge_us(depth, workloads, c)
+    # τ_elem from the L_kv slope (µs per token), scaled by CTA_K:
+    # per_tile_per_kv_us is the per-token compute cost at tile_q=T,
+    # so per-elemental-sub-tile cost = slope · cta_tile_kv.
+    slope = c.per_tile_per_kv_us.get(t_large, 0.0)
+    if slope > 0:
+        tau_elem = slope * c.cta_tile_kv
+    else:
+        # Legacy cache without the L_kv probe: fall back to per_tile_us
+        # interpreted at the calibration's reference L_kv.
+        tau_elem = c.per_tile_us.get(t_large, 0.0) * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
+    compute_us = _ceil_div(M_s, c.num_sms) * tau_elem
+    merge_rounds = int(math.ceil(math.log2(max(2, depth))))
+    merge_us = merge_rounds * c.merge_launch_us
 
     return bw_us + compute_us + merge_us
 
@@ -482,21 +653,27 @@ def _per_prompt_levels_no_tail(
 def cost_decode_tail_batch(
     workloads: list[WorkloadShape], c: Coefficients,
 ) -> float:
-    """Cost of the per-beam-tail decode kernel for B prompts × K beams.
+    """Tail term: decode_launch_us + max(B_tail/β, ⌈R·⌈L̄_tail/CTA_K⌉/N_SM⌉·τ_tail_elem).
 
-    All B*K beams contribute 1 query each against their per-beam tail
-    KV. Decode kernel has CTA_Q=1 so there's no tile padding — one CTA
-    per beam. The kernel is bandwidth-dominated at our shapes (small
-    per-beam KV, single query), and MMA work overlaps with HBM reads,
-    so wall time within a wave is ``max(bw_per_wave, work_per_wave)``.
+    R = Σ_b K_b is the total decode-kernel CTA count (one CTA per beam,
+    CTA_Q=1). Each CTA iterates over its tail KV in chunks of CTA_K
+    tokens (cta_tile_kv_decode), giving ⌈L̄_tail/CTA_K⌉ elemental
+    sub-tiles per CTA. KV split distributes those sub-tiles across SMs,
+    so the wave-quantized compute term divides total sub-tiles by N_SM.
 
-    Wave quantization on the compute side: with ``n_beams`` CTAs spread
-    across ``num_sms``, the kernel runs ``ceil(n_beams / num_sms)``
-    sequential waves. Each wave's compute is one CTA's tail work, so
-    total compute time = ``waves × mean_tail × decode_us_per_beam_kv_token``
-    — symmetric with how the prefill side wave-quantizes its tiles.
-    Bandwidth saturates HBM whenever there are enough active CTAs,
-    so the bw term stays as ``total_bytes / B_hbm`` (no wave factor).
+    τ_tail_elem = decode_us_per_beam_kv_token · CTA_K is the per-elemental
+    sub-tile cost (derived from the per-(beam, KV-token) calibration).
+
+    Bandwidth and compute overlap inside the kernel (the decode kernel
+    is BW-bound at our shapes), so the two terms combine via max.
+
+    The extra ``decode_launch_us`` term accounts for the extra kernel
+    launch DEC_TAIL pays over FUSED: FUSED fires one fused-cascade
+    prefill (+ merges), DEC_TAIL fires one prefill-on-prefix AND a
+    separate decode kernel for the tail. Without this term the picker
+    misses the FUSED-vs-DECTAIL crossover at small-B / long-L_p where
+    both strategies are bandwidth-bound on the prefix and the extra
+    launch is the only distinguishing cost.
     """
     total_kv_tokens = 0
     n_beams = 0
@@ -507,10 +684,14 @@ def cost_decode_tail_batch(
         bytes_per_kv = w.bytes_per_kv  # all workloads share dtype/shape
     if n_beams == 0:
         return 0.0
-    waves = max(1, _ceil_div(n_beams, c.num_sms))
     mean_tail = total_kv_tokens / n_beams
-    bw_us   = total_kv_tokens * bytes_per_kv / c.B_hbm
-    work_us = waves * mean_tail * c.decode_us_per_beam_kv_token
+    bw_us = total_kv_tokens * bytes_per_kv / c.B_hbm
+    # Elemental sub-tile count for the decode kernel.
+    kv_chunks_per_cta = max(1, _ceil_div(int(round(mean_tail)), c.cta_tile_kv_decode))
+    M_s_tail = n_beams * kv_chunks_per_cta
+    waves = max(1, _ceil_div(M_s_tail, c.num_sms))
+    tau_tail_elem = c.decode_us_per_beam_kv_token * c.cta_tile_kv_decode
+    work_us = waves * tau_tail_elem
     return c.decode_launch_us + max(bw_us, work_us)
 
 
@@ -545,32 +726,34 @@ def cost_dec_tail_batch(
                 f"levels on every prompt; one prompt has {n_have}"
             )
 
-    # Prefix (+ intermediate) under prefill kernel, single pool, T=64.
-    # The tail below uses the decode kernel.
-    total_large = 0
+    # Paper formula: C_dt = C_prefix + max(B_tail/β, ⌈R·⌈L̄/CTA_K⌉/N_SM⌉·τ_tail_elem)
+    # where C_prefix is the FUSED cost applied to prefix-only cascade
+    # levels (root + intermediates, no per-beam tail level). C_prefix
+    # uses the same elemental sub-tile counting as cost_shared_batch
+    # and carries the ⌈log₂ D⌉·µ merge term.
+    M_prefix = 0
     bw_us = 0.0
     for w in workloads:
         levels = _per_prompt_levels_no_tail(w, depth)
-        large, _small, _b = _level_tiles_and_bytes(
-            levels, pool_count=1, t_large=64,
-        )
-        total_large += large
+        per_prompt = _tile_breakdown(levels, pool_count=1, t_large=64)
+        for (T, L_kv), n_q_tiles in per_prompt.items():
+            kv_chunks = max(1, _ceil_div(L_kv, c.cta_tile_kv))
+            M_prefix += n_q_tiles * kv_chunks
         bw_us += _level_bw_us(levels, c)
-    waves_large = max(1, _ceil_div(total_large, c.num_sms)) if total_large > 0 else 0
-    prefix_us = bw_us + waves_large * c.per_tile_us[64]
+    slope = c.per_tile_per_kv_us.get(64, 0.0)
+    if slope > 0:
+        tau_elem = slope * c.cta_tile_kv
+    else:
+        tau_elem = c.per_tile_us.get(64, 0.0) * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
+    prefix_compute_us = _ceil_div(M_prefix, c.num_sms) * tau_elem
+    merge_rounds = int(math.ceil(math.log2(max(2, depth))))
+    merge_us = merge_rounds * c.merge_launch_us
+    prefix_us = bw_us + prefix_compute_us + merge_us
 
-    # Tail under decode kernel.
+    # Tail under decode kernel — max(bw, wave-quantized elemental compute).
     tail_us = cost_decode_tail_batch(workloads, c)
 
-    # Cascade merge cost — same shape as FUSED at the same depth. The
-    # DEC_TAIL strategy has prefix→inter₁→…→tail boundaries, each one a
-    # serial ``merge_state_in_place`` launch. Both FUSED and DEC_TAIL
-    # incur (depth-1) merges and they cancel in the FUSED-vs-DEC_TAIL
-    # comparison at the same depth — but they don't cancel against
-    # PER_BEAM (which has zero merges) or across depths.
-    merge_us = _cascade_merge_us(depth, workloads, c)
-
-    return prefix_us + tail_us + merge_us
+    return prefix_us + tail_us
 
 
 def cost_per_beam(w: WorkloadShape, c: Coefficients) -> float:
