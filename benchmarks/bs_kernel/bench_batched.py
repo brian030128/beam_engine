@@ -58,6 +58,7 @@ def _bs_kernel_force_2l1p(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    dtype: torch.dtype = torch.float16,
     kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_2L_1POOL — adaptive_pool's strategy
@@ -67,6 +68,7 @@ def _bs_kernel_force_2l1p(
         return_timings=return_timings,
         return_phase_timings=return_phase_timings,
         max_num_pages=max_num_pages,
+        dtype=dtype,
         kv_dtype=kv_dtype,
         available_strategies={Strategy.SHARED_2L_1POOL},
     )
@@ -76,6 +78,7 @@ def _bs_kernel_force_2l_dec_tail(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    dtype: torch.dtype = torch.float16,
     kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_2L_DEC_TAIL — shared prefix prefill +
@@ -86,6 +89,7 @@ def _bs_kernel_force_2l_dec_tail(
         return_timings=return_timings,
         return_phase_timings=return_phase_timings,
         max_num_pages=max_num_pages,
+        dtype=dtype,
         kv_dtype=kv_dtype,
         available_strategies={Strategy.SHARED_2L_DEC_TAIL},
     )
@@ -95,6 +99,7 @@ def _bs_kernel_force_3l1p(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    dtype: torch.dtype = torch.float16,
     kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_3L_1POOL — fused 3-level cascade prefill
@@ -106,6 +111,7 @@ def _bs_kernel_force_3l1p(
         return_timings=return_timings,
         return_phase_timings=return_phase_timings,
         max_num_pages=max_num_pages,
+        dtype=dtype,
         kv_dtype=kv_dtype,
         available_strategies={Strategy.SHARED_3L_1POOL},
     )
@@ -115,6 +121,7 @@ def _bs_kernel_force_3l_dec_tail(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    dtype: torch.dtype = torch.float16,
     kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_3L_DEC_TAIL. When a step's workload
@@ -126,6 +133,7 @@ def _bs_kernel_force_3l_dec_tail(
         return_timings=return_timings,
         return_phase_timings=return_phase_timings,
         max_num_pages=max_num_pages,
+        dtype=dtype,
         kv_dtype=kv_dtype,
         available_strategies={Strategy.SHARED_3L_DEC_TAIL},
     )
@@ -135,6 +143,7 @@ def _bs_kernel_force_4l1p(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    dtype: torch.dtype = torch.float16,
     kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_4L_1POOL. Requires
@@ -152,6 +161,7 @@ def _bs_kernel_force_4l1p(
         max_num_pages=max_num_pages,
         max_cascade_levels=4,
         coefficients=coeffs,
+        dtype=dtype,
         kv_dtype=kv_dtype,
         available_strategies={
             Strategy.SHARED_4L_1POOL,
@@ -165,6 +175,7 @@ def _bs_kernel_force_4l_dec_tail(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    dtype: torch.dtype = torch.float16,
     kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_4L_DEC_TAIL with shallower fallbacks."""
@@ -178,6 +189,7 @@ def _bs_kernel_force_4l_dec_tail(
         max_num_pages=max_num_pages,
         max_cascade_levels=4,
         coefficients=coeffs,
+        dtype=dtype,
         kv_dtype=kv_dtype,
         available_strategies={
             Strategy.SHARED_4L_DEC_TAIL,
@@ -348,6 +360,13 @@ def run_one(
 
     if KV_DTYPE is not None and "kv_dtype" in sig.parameters:
         extra_kwargs["kv_dtype"] = KV_DTYPE
+
+    # Compute dtype: backends default to fp16; if BE_DTYPE picks something
+    # else (bf16 for Llama-3-70B-FP8), the prefill_wrapper.plan was given
+    # q_data_type=fp16 but the model emits q at bf16 → dtype mismatch at
+    # run(). Pass dtype explicitly when the backend signature accepts it.
+    if "dtype" in sig.parameters:
+        extra_kwargs["dtype"] = DTYPE
 
     try:
         beams, timings = method_fn(
