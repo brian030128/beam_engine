@@ -49,6 +49,7 @@ import torch.nn.functional as F
 from flashinfer import BatchPrefillWithPagedKVCacheWrapper
 
 from .decoding import PrefillSelect, standard_prefill_select
+from .distributed import get_tp_world_size
 from .methods.adaptive_pool import Beam, _PrefillCtx
 from .page_driver import PageDecodeBackend
 from .page_table import PageTable
@@ -156,8 +157,9 @@ def tree_batch_decode(
         for k in ("alloc_ms", "plan_ms", "forward_ms", "topk_ms"):
             timings[k] = []
 
-    num_qo_heads = config.num_attention_heads
-    num_kv_heads = config.num_key_value_heads
+    tp_size = get_tp_world_size()
+    num_qo_heads = config.num_attention_heads // tp_size
+    num_kv_heads = config.num_key_value_heads // tp_size
     head_dim = config.head_dim
     num_layers = config.num_hidden_layers
 

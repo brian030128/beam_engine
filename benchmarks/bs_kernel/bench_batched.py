@@ -37,6 +37,7 @@ from transformers import AutoTokenizer
 from beam_engine.baselines import dbs, deft, fasttree, mlca, paged, tree
 from beam_engine.methods import adaptive_pool, bs_kernel
 from beam_engine.methods.bs_kernel.cost_model import Strategy
+from beam_engine.models import load_model_for_causal_lm
 from beam_engine.models.modeling_llama import LlamaForCausalLM
 
 
@@ -405,7 +406,7 @@ def main():
 
     print("Loading tokenizer + model...")
     tok = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = LlamaForCausalLM.from_pretrained(MODEL_NAME, dtype=DTYPE, device=DEVICE)
+    model = load_model_for_causal_lm(MODEL_NAME, dtype=DTYPE, device=DEVICE)
     config = model.config
     print("Model loaded.\n")
 

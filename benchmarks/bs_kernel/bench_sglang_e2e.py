@@ -179,7 +179,6 @@ def _run_one(
         return_timings=True,
         return_phase_timings=True,
         dtype=DTYPE,
-        kv_dtype=_kv_dtype,
     )
     # Optional beam dump for cross-method equality checks
     # (BE_DUMP_BEAMS_DIR=<dir> → writes <dir>/<scenario>_<method>.json with
@@ -428,7 +427,10 @@ def main():
                         )
                         wall = time.perf_counter() - t0
                     except Exception as e:
+                        import traceback as _tb
                         _say(f"  {mname:<12} r={r}  FAILED: {type(e).__name__}: {e}")
+                        if os.environ.get("BE_TRACEBACK_ON_FAIL", "0") != "0":
+                            _say(_tb.format_exc())
                         gc.collect()
                         torch.cuda.empty_cache()
                         break
