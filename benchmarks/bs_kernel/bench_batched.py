@@ -44,13 +44,21 @@ from beam_engine.models.modeling_llama import LlamaForCausalLM
 import os as _os
 MODEL_NAME = _os.environ.get("BE_MODEL", "meta-llama/Llama-3.2-1B")
 DEVICE = "cuda"
-DTYPE = torch.float16
+_BE_DTYPE = _os.environ.get("BE_DTYPE", "fp16").lower()
+DTYPE = {"fp16": torch.float16, "bf16": torch.bfloat16}[_BE_DTYPE]
+# Optional fp8-KV storage (Llama-3-70B-FP8 with fp8 KV path).
+_BE_KV_DTYPE = _os.environ.get("BE_KV_DTYPE", "").lower()
+KV_DTYPE: torch.dtype | None = {
+    "": None, "fp16": torch.float16, "bf16": torch.bfloat16,
+    "fp8": torch.float8_e4m3fn, "fp8_e4m3": torch.float8_e4m3fn,
+}[_BE_KV_DTYPE]
 
 
 def _bs_kernel_force_2l1p(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_2L_1POOL — adaptive_pool's strategy
     dispatched through bs_kernel's driver path."""
@@ -59,6 +67,7 @@ def _bs_kernel_force_2l1p(
         return_timings=return_timings,
         return_phase_timings=return_phase_timings,
         max_num_pages=max_num_pages,
+        kv_dtype=kv_dtype,
         available_strategies={Strategy.SHARED_2L_1POOL},
     )
 
@@ -67,6 +76,7 @@ def _bs_kernel_force_2l_dec_tail(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_2L_DEC_TAIL — shared prefix prefill +
     CTA_Q=1 decode kernel for per-beam tail + merge_state_in_place.
@@ -76,6 +86,7 @@ def _bs_kernel_force_2l_dec_tail(
         return_timings=return_timings,
         return_phase_timings=return_phase_timings,
         max_num_pages=max_num_pages,
+        kv_dtype=kv_dtype,
         available_strategies={Strategy.SHARED_2L_DEC_TAIL},
     )
 
@@ -84,6 +95,7 @@ def _bs_kernel_force_3l1p(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_3L_1POOL — fused 3-level cascade prefill
     (prefix + intermediate + per-beam tail) on the prefill kernel path
@@ -94,6 +106,7 @@ def _bs_kernel_force_3l1p(
         return_timings=return_timings,
         return_phase_timings=return_phase_timings,
         max_num_pages=max_num_pages,
+        kv_dtype=kv_dtype,
         available_strategies={Strategy.SHARED_3L_1POOL},
     )
 
@@ -102,6 +115,7 @@ def _bs_kernel_force_3l_dec_tail(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_3L_DEC_TAIL. When a step's workload
     doesn't support depth=3 (no intermediate-level structure), the
@@ -112,6 +126,7 @@ def _bs_kernel_force_3l_dec_tail(
         return_timings=return_timings,
         return_phase_timings=return_phase_timings,
         max_num_pages=max_num_pages,
+        kv_dtype=kv_dtype,
         available_strategies={Strategy.SHARED_3L_DEC_TAIL},
     )
 
@@ -120,6 +135,7 @@ def _bs_kernel_force_4l1p(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_4L_1POOL. Requires
     ``max_cascade_levels=4`` (wrapper allocation) and
@@ -136,6 +152,7 @@ def _bs_kernel_force_4l1p(
         max_num_pages=max_num_pages,
         max_cascade_levels=4,
         coefficients=coeffs,
+        kv_dtype=kv_dtype,
         available_strategies={
             Strategy.SHARED_4L_1POOL,
             Strategy.SHARED_3L_1POOL,
@@ -148,6 +165,7 @@ def _bs_kernel_force_4l_dec_tail(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
     return_phase_timings: bool = False,
+    kv_dtype: torch.dtype | None = None,
 ):
     """bs_kernel pinned to SHARED_4L_DEC_TAIL with shallower fallbacks."""
     from beam_engine.methods.bs_kernel.calibrate import load_or_defaults
@@ -160,6 +178,7 @@ def _bs_kernel_force_4l_dec_tail(
         max_num_pages=max_num_pages,
         max_cascade_levels=4,
         coefficients=coeffs,
+        kv_dtype=kv_dtype,
         available_strategies={
             Strategy.SHARED_4L_DEC_TAIL,
             Strategy.SHARED_3L_DEC_TAIL,
@@ -326,6 +345,9 @@ def run_one(
 
     if "return_phase_timings" in sig.parameters:
         extra_kwargs["return_phase_timings"] = True
+
+    if KV_DTYPE is not None and "kv_dtype" in sig.parameters:
+        extra_kwargs["kv_dtype"] = KV_DTYPE
 
     try:
         beams, timings = method_fn(

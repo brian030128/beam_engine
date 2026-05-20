@@ -126,6 +126,7 @@ def tree_batch_decode(
     max_cascade_levels: int = 4,
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
+    kv_dtype: torch.dtype | None = None,
     return_timings: bool = False,
     return_phase_timings: bool = False,
     return_picks: bool = False,
@@ -133,9 +134,16 @@ def tree_batch_decode(
 ) -> TreeDecodeResult:
     """Run prefill (multi-stage) + greedy decode on an SGLang-style tree.
 
+    ``kv_dtype`` controls the on-device KV-cache storage dtype (page-table
+    slab + the ``kv_data_type`` passed into flashinfer wrapper plans). When
+    None, mirrors ``dtype``. Pass ``torch.float8_e4m3fn`` for the
+    Llama-3-70B-FP8 fp8-KV path.
+
     Returns a ``TreeDecodeResult`` whose ``leaf_token_ids`` is laid out
     row-major over (group, leaf-within-group): index ``b*K + k``.
     """
+    if kv_dtype is None:
+        kv_dtype = dtype
     spec.validate()
     B = spec.B
     K = spec.K
@@ -181,7 +189,7 @@ def tree_batch_decode(
         head_num=num_kv_heads,
         head_dim=head_dim,
         device=device,
-        store_dtype=dtype,
+        store_dtype=kv_dtype,
     )
 
     workspace_buffer = torch.empty(
@@ -245,6 +253,8 @@ def tree_batch_decode(
         head_dim_qk=head_dim,
         page_size=ps,
         causal=True,
+        q_data_type=dtype,
+        kv_data_type=kv_dtype,
     )
     pre_ctx = _PrefillCtx(
         page_table=page_table,
@@ -372,6 +382,8 @@ def tree_batch_decode(
             head_dim_qk=head_dim,
             page_size=ps,
             causal=True,
+            q_data_type=dtype,
+            kv_data_type=kv_dtype,
         )
         pre_ctx2 = _PrefillCtx(
             page_table=page_table,

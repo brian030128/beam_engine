@@ -402,16 +402,19 @@ class _BsKernelWrappers(WrapperBundle):
     for the non-fused MLCA path (``cascade_dual_wrappers[d]``).
 
     For DEC_TAIL strategies the prefix + (optional) intermediate levels
-    go through the per-level entries in ``dec_tail_prefill_wrappers``
-    (length ``D_max - 1``: index 0 = prefix, index >=1 = intermediate
-    level), and the tail goes through ``decode_wrapper`` (shared with
-    PER_BEAM).
+    go through a single ``FusedMultiLevelCascadeAttentionWrapper`` per
+    dispatch depth (``dec_tail_cascade_wrappers[d]``, ``num_levels=d-1``
+    — covers the prefill levels only, excluding the per-beam tail which
+    runs through ``decode_wrapper``). Empirically the cascade wrapper
+    is 5× faster than per-level ``BatchPrefillWithPagedKVCacheWrapper``
+    on long-prefix workloads; see ``docs/cost_model_issues.md`` and
+    ``scripts/paper-exp/probe_prefix_wrappers.py``.
     """
     __slots__ = (
         "decode_wrapper",
         "cascade_wrappers",
         "cascade_dual_wrappers",
-        "dec_tail_prefill_wrappers",
+        "dec_tail_cascade_wrappers",
         "max_depth",
     )
 
@@ -547,16 +550,23 @@ class BsKernelBackend:
                 kv_layout="NHD",
             )
         wb.max_depth = max_cascade_levels
-        # Per-level prefill wrappers for the front half of DEC_TAIL.
-        # Index 0 = prefix (root) prefill; indices 1..max-2 are
-        # intermediate-level prefills. Re-planned per step against the
-        # appropriate level's (qo, kv) arrays.
-        wb.dec_tail_prefill_wrappers = [
-            BatchPrefillWithPagedKVCacheWrapper(
-                workspace_buffer, kv_layout="NHD",
+        # DEC_TAIL prefill: one FusedMultiLevelCascadeAttentionWrapper
+        # per dispatch depth, configured for (depth - 1) prefill levels
+        # (prefix + intermediates; per-beam tail goes through
+        # ``decode_wrapper``). The cascade wrapper is ~5× faster than
+        # the per-level ``BatchPrefillWithPagedKVCacheWrapper`` on
+        # long-prefix workloads (probe at
+        # ``scripts/paper-exp/probe_prefix_wrappers.py``).
+        wb.dec_tail_cascade_wrappers = {}
+        for d in range(2, max_cascade_levels + 1):
+            n_prefill = d - 1
+            wb.dec_tail_cascade_wrappers[d] = FusedMultiLevelCascadeAttentionWrapper(
+                num_levels=n_prefill,
+                float_workspace_buffer=workspace_buffer,
+                kv_layout="NHD",
+                device=device,
+                max_levels=max_cascade_levels,
             )
-            for _ in range(max_cascade_levels - 1)
-        ]
         return wb
 
     def plan_decode_step(
@@ -733,6 +743,8 @@ class BsKernelBackend:
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
                 page_size=ps,
+                q_data_type=dtype,
+                kv_data_type=page_table.store_dtype,
             )
             if trace_on:
                 torch.cuda.synchronize()
@@ -773,17 +785,19 @@ class BsKernelBackend:
             Strategy.SHARED_6L_DEC_TAIL,
         }
         if pick.strategy in _DEC_TAIL_STRATEGIES:
-            # ---- Plan prefix + intermediate prefills. ----
-            # The prefix (level 0) layout is determined entirely by
-            # per-prompt LCA depth (the prefix pages themselves are
-            # immutable), so when last_lca_per_prompt is unchanged AND
-            # we have no intermediates (depth=2), the prefix wrapper's
-            # plan from the previous step is still valid — skip the
-            # re-plan and the qo/kv array build.
+            # ---- Plan prefix + intermediate prefills via a single
+            # FusedMultiLevelCascadeAttentionWrapper(num_levels=depth-1).
+            # The cascade wrapper schedules all prefill levels in one
+            # kernel launch with the three-pool design that handles
+            # mixed CTA_TILE_Q across levels — ~5× faster than the
+            # per-level BatchPrefillWithPagedKVCacheWrapper path on
+            # long-prefix workloads (see probe_prefix_wrappers.py).
             #
-            # At depth>=3 the intermediate levels' layouts depend on
-            # per-step group structure, so we always re-plan all
-            # levels.
+            # The prefix (level 0) layout is determined entirely by
+            # per-prompt LCA depth (immutable prefix pages), so when
+            # last_lca_per_prompt is unchanged AND depth=2 (no
+            # intermediates), the cascade wrapper's plan from the
+            # previous step is still valid — skip the re-plan.
             cur_lcas = list(last_lca_per_prompt)
             n_prefill_levels = dispatch_depth - 1  # all levels except per-beam
             need_replan = (
@@ -791,7 +805,7 @@ class BsKernelBackend:
                 or self._planned_prefix_lca != cur_lcas
                 or dispatch_depth >= 3
             )
-            inter_wrappers: list = []  # filled with one wrapper per inter level
+            cascade_wrapper = wrappers.dec_tail_cascade_wrappers[dispatch_depth]
             if need_replan:
                 qo_arr, kvp_arr, kvi_arr, kvl_arr, _, _ = (
                     _pack_batched_cascade_arrays_any_depth(
@@ -799,39 +813,23 @@ class BsKernelBackend:
                         n_levels=dispatch_depth,
                     )
                 )
-                # Plan all prefill levels [0 .. dispatch_depth-2].
-                # The shared-prefix (level 0) optionally takes a forced
-                # fixed_split_size from env (see prefix_fixed_split above)
-                # to push padded_batch_size above FlashInfer's H100 default
-                # at K=16/B≥4 shapes.
-                for li in range(n_prefill_levels):
-                    pw = wrappers.dec_tail_prefill_wrappers[li]
-                    plan_kwargs = dict(
-                        qo_indptr=qo_arr[li],
-                        paged_kv_indptr=kvp_arr[li],
-                        paged_kv_indices=kvi_arr[li],
-                        paged_kv_last_page_len=kvl_arr[li],
-                        num_qo_heads=num_qo_heads,
-                        num_kv_heads=num_kv_heads,
-                        head_dim_qk=head_dim,
-                        page_size=ps,
-                        causal=False,
-                        q_data_type=dtype,
-                        kv_data_type=dtype,
-                    )
-                    if li == 0 and prefix_fixed_split is not None:
-                        plan_kwargs["fixed_split_size"] = prefix_fixed_split
-                    pw.plan(**plan_kwargs)
-                # Levels 1..n_prefill_levels-1 are the intermediate
-                # wrappers passed to the merge context.
-                inter_wrappers = [
-                    wrappers.dec_tail_prefill_wrappers[li]
-                    for li in range(1, n_prefill_levels)
-                ]
+                # The last entry (index dispatch_depth-1) is the per-beam
+                # tail level — that goes through the decode kernel, not
+                # the cascade. Cascade plans levels [0 .. n_prefill_levels-1].
+                cascade_wrapper.plan(
+                    qo_indptr_arr=qo_arr[:n_prefill_levels],
+                    paged_kv_indptr_arr=kvp_arr[:n_prefill_levels],
+                    paged_kv_indices_arr=kvi_arr[:n_prefill_levels],
+                    paged_kv_last_page_len=kvl_arr[:n_prefill_levels],
+                    num_qo_heads=num_qo_heads,
+                    num_kv_heads=num_kv_heads,
+                    head_dim=head_dim,
+                    page_size=ps,
+                    causal=False,
+                    q_data_type=dtype,
+                    kv_data_type=page_table.store_dtype,
+                )
                 self._planned_prefix_lca = cur_lcas
-            else:
-                # Cache-hit (depth=2 only): no intermediates.
-                inter_wrappers = []
             if trace_on:
                 torch.cuda.synchronize()
                 _t_prefix_plan = time.perf_counter()
@@ -920,6 +918,8 @@ class BsKernelBackend:
                     num_kv_heads=num_kv_heads,
                     head_dim=head_dim,
                     page_size=ps,
+                    q_data_type=dtype,
+                    kv_data_type=page_table.store_dtype,
                 )
                 self._decode_plan_info_cached = (
                     wrappers.decode_wrapper._plan_info
@@ -940,9 +940,9 @@ class BsKernelBackend:
                 page_table=page_table,
                 write_pi=write_pi_t,
                 write_po=write_po_t,
-                prefix_wrapper=wrappers.dec_tail_prefill_wrappers[0],
+                prefix_wrapper=cascade_wrapper,
                 decode_wrapper=wrappers.decode_wrapper,
-                inter_wrappers=inter_wrappers,
+                inter_wrappers=[],
             )
             if trace_on:
                 self._plan_trace.append({
@@ -1047,7 +1047,7 @@ class BsKernelBackend:
                 page_size=ps,
                 causal=False,
                 q_data_type=dtype,
-                kv_data_type=dtype,
+                kv_data_type=page_table.store_dtype,
             )
         else:
             active_wrapper = wrappers.cascade_wrappers[dispatch_depth]
@@ -1078,7 +1078,7 @@ class BsKernelBackend:
                     page_size=ps,
                     causal=False,
                     q_data_type=dtype,
-                    kv_data_type=dtype,
+                    kv_data_type=page_table.store_dtype,
                     force_cta_tile_q=force_t,
                 )
                 self._shared_plan_cache[id(active_wrapper)] = (
@@ -1159,6 +1159,7 @@ def beam_search(
     max_cascade_levels: int = 3,
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
+    kv_dtype: torch.dtype | None = None,
     return_timings: bool = False,
     return_phase_timings: bool = False,
     coefficients: Coefficients | None = None,
@@ -1201,6 +1202,7 @@ def beam_search(
         max_cascade_levels=max_cascade_levels,
         device=device,
         dtype=dtype,
+        kv_dtype=kv_dtype,
         return_timings=return_timings,
         return_phase_timings=return_phase_timings,
         return_picks=return_picks,

@@ -200,6 +200,7 @@ def beam_search(
     max_cascade_levels: int = 4,
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
+    kv_dtype: torch.dtype | None = None,
     return_timings: bool = False,
     return_phase_timings: bool = False,
     return_picks: bool = False,
@@ -218,6 +219,8 @@ def beam_search(
     Per-method behavior is parameterized by ``backend`` (a
     ``PageDecodeBackend`` implementation). See module docstring.
     """
+    if kv_dtype is None:
+        kv_dtype = dtype
     timings = {"prefill_ms": 0.0, "decode_step_ms": []}
     if return_phase_timings:
         for k in ("cow_ms", "plan_ms", "forward_ms", "topk_ms", "fork_ms"):
@@ -260,7 +263,7 @@ def beam_search(
         head_num=num_kv_heads,
         head_dim=head_dim,
         device=torch.device(device),
-        store_dtype=dtype,
+        store_dtype=kv_dtype,
     )
 
     workspace_buffer = torch.empty(
@@ -319,6 +322,8 @@ def beam_search(
         head_dim_qk=head_dim,
         page_size=ps,
         causal=True,
+        q_data_type=dtype,
+        kv_data_type=kv_dtype,
     )
     pre_ctx = _PrefillCtx(
         page_table=page_table,

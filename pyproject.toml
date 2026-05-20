@@ -12,6 +12,11 @@ dependencies = [
     "safetensors",
     "huggingface_hub",
     "numpy",
+    # Adds torch-side DLPack exchange API used by tvm_ffi's typed-FFI bridge,
+    # which flashinfer's append_paged_kv_cache and attention kernels go
+    # through. Required to dispatch on float8_e4m3 (the fp8-KV path on
+    # Llama-3-70B-FP8); torch 2.9 doesn't ship the C exchange API natively.
+    "torch-c-dlpack-ext>=0.1.5",
 ]
 
 [tool.uv]

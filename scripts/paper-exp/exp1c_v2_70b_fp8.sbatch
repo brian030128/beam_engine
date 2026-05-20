@@ -39,8 +39,8 @@ export HF_TOKEN="${HF_TOKEN:-}"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export BE_MODEL="RedHatAI/Meta-Llama-3-70B-Instruct-FP8"
 export BE_DTYPE=bf16
+export BE_KV_DTYPE=fp8_e4m3   # fp8 KV cache via tvm_ffi/torch-c-dlpack-ext.
 export BS_KERNEL_TRACE_PLAN=1
-# KV stays bf16 per docs/paper_story.md ("FP8 KV cache deferred").
 
 MODEL_TAG="Llama-3-70B-FP8"
 OUT_DIR="benchmarks/bs_kernel/results/paper-exp/exp1c_v2/${MODEL_TAG}"
@@ -49,7 +49,7 @@ LOG="$OUT_DIR/run.log"
 
 {
     echo "=== exp1c_v2 ${MODEL_TAG} started $(date -Iseconds) ==="
-    echo "model:    $BE_MODEL  (tp=2, dtype=$BE_DTYPE, kv=bf16)"
+    echo "model:    $BE_MODEL  (tp=2, dtype=$BE_DTYPE, kv=$BE_KV_DTYPE)"
     echo "GPUs:     $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1) × 2"
     echo
 } | tee "$LOG"

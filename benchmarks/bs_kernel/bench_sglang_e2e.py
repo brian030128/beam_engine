@@ -179,6 +179,7 @@ def _run_one(
         return_timings=True,
         return_phase_timings=True,
         dtype=DTYPE,
+        kv_dtype=_kv_dtype,
     )
     # Optional beam dump for cross-method equality checks
     # (BE_DUMP_BEAMS_DIR=<dir> → writes <dir>/<scenario>_<method>.json with

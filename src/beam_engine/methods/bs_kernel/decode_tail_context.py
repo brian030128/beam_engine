@@ -30,24 +30,28 @@ DEC_TAIL_KERNEL_TRACE: list[dict] = []
 
 @dataclass
 class DecodeTailCascadeContext(AttentionContext):
-    """Hybrid prefill-cascade-prefix + decode-tail context.
+    """Hybrid cascade-prefix + decode-tail context.
 
-    ``prefix_wrapper`` runs B groups of K queries against the shared
-    prefix KV (level 0). ``inter_wrappers`` runs the optional
-    intermediate levels (one wrapper per intermediate level, length
-    ``depth - 2``). ``decode_wrapper`` runs B*K beams × 1 query against
-    per-beam tail KV. All ``depth`` outputs are merged via
+    ``prefix_wrapper`` is a ``FusedMultiLevelCascadeAttentionWrapper``
+    at ``num_levels = dispatch_depth - 1`` that handles the shared
+    prefix (level 0) and any intermediate sharing levels in one fused
+    call. ``decode_wrapper`` runs B*K beams × 1 query against per-beam
+    tail KV. The two partial outputs are combined via a single
     ``merge_state_in_place``.
 
     K/V append goes to the per-beam tail page (one per beam, in the
     same cascade order as the wrappers' plans).
+
+    ``inter_wrappers`` is retained as an unused field for backward
+    compatibility; the cascade wrapper now folds intermediate levels
+    internally.
     """
     page_table: PageTable
     write_pi: torch.Tensor   # [B*K] int32 — per-beam tail page idx for K/V write
     write_po: torch.Tensor   # [B*K] int32 — offset within tail page
-    prefix_wrapper: BatchPrefillWithPagedKVCacheWrapper
+    prefix_wrapper: object   # FusedMultiLevelCascadeAttentionWrapper
     decode_wrapper: BatchDecodeWithPagedKVCacheWrapper
-    inter_wrappers: list = field(default_factory=list)
+    inter_wrappers: list = field(default_factory=list)  # unused; see docstring
     _write_helper_indptr: torch.Tensor | None = field(default=None, repr=False)
 
     def attend(self, q, k, v, layer_idx):
@@ -57,8 +61,15 @@ class DecodeTailCascadeContext(AttentionContext):
         kv_cache = self.page_table.kv_cache_at_layer[layer_idx]
         kv_tuple = (kv_cache[0], kv_cache[1])
 
-        k_3d = k.view(-1, num_kv_heads, head_dim)
-        v_3d = v.view(-1, num_kv_heads, head_dim)
+        k_3d = k.reshape(-1, num_kv_heads, head_dim)
+        v_3d = v.reshape(-1, num_kv_heads, head_dim)
+        # Match storage dtype on append when KV cache is stored narrower
+        # than the activation dtype (fp8 KV / bf16 compute on
+        # Llama-3-70B-FP8). The attention kernel handles fp8→compute
+        # dequant on read internally.
+        if k_3d.dtype != kv_cache.dtype:
+            k_3d = k_3d.to(kv_cache.dtype)
+            v_3d = v_3d.to(kv_cache.dtype)
         nnz = k_3d.shape[0]
         device = k_3d.device
         if (
@@ -91,17 +102,20 @@ class DecodeTailCascadeContext(AttentionContext):
         if trace:
             e_append.record()
 
-        q_3d = q.view(-1, num_heads, head_dim)
+        q_3d = q.reshape(-1, num_heads, head_dim)
 
         # Run all sub-attentions with return_lse=True. Tail's output is
-        # the in-place merge accumulator; prefix and intermediate are
-        # folded in.
+        # the in-place merge accumulator; prefix (which is the cascade
+        # wrapper covering prefix + intermediates) folds into the tail.
         out_tail, lse_tail = self.decode_wrapper.run(
             q_3d, kv_tuple, return_lse=True,
         )
         if trace:
             e_tail.record()
 
+        # ``prefix_wrapper`` is FusedMultiLevelCascadeAttentionWrapper at
+        # num_levels = dispatch_depth - 1, so it already produces the
+        # merged (prefix + intermediates) attention output in one call.
         out_pre, lse_pre = self.prefix_wrapper.run(
             q_3d, kv_tuple, return_lse=True,
         )
@@ -109,11 +123,6 @@ class DecodeTailCascadeContext(AttentionContext):
             e_prefix.record()
 
         merge_state_in_place(out_tail, lse_tail, out_pre, lse_pre)
-        for inter_w in self.inter_wrappers:
-            out_int, lse_int = inter_w.run(
-                q_3d, kv_tuple, return_lse=True,
-            )
-            merge_state_in_place(out_tail, lse_tail, out_int, lse_int)
         if trace:
             e_merge.record()
             torch.cuda.synchronize()

@@ -88,8 +88,11 @@ class _PrefillCtx(AttentionContext):
         num_heads = q.shape[-1] // head_dim
         kv_cache = self.page_table.kv_cache_at_layer[layer_idx]
 
-        k_3d = k.view(-1, num_kv_heads, head_dim)
-        v_3d = v.view(-1, num_kv_heads, head_dim)
+        k_3d = k.reshape(-1, num_kv_heads, head_dim)
+        v_3d = v.reshape(-1, num_kv_heads, head_dim)
+        if k_3d.dtype != kv_cache.dtype:
+            k_3d = k_3d.to(kv_cache.dtype)
+            v_3d = v_3d.to(kv_cache.dtype)
         nnz = k_3d.shape[0]
         device = k_3d.device
         if (
@@ -112,7 +115,7 @@ class _PrefillCtx(AttentionContext):
             kv_last_page_len=self.kv_page_offsets,
             kv_layout="NHD",
         )
-        q_3d = q.view(-1, num_heads, head_dim)
+        q_3d = q.reshape(-1, num_heads, head_dim)
         out = self.wrapper.run(q_3d, (kv_cache[0], kv_cache[1]))
         return out.reshape(*q.shape[:-1], num_heads * head_dim)
 
@@ -136,8 +139,11 @@ class AdaptivePoolContext(AttentionContext):
         num_heads = q.shape[-1] // head_dim
         kv_cache = self.page_table.kv_cache_at_layer[layer_idx]
 
-        k_3d = k.view(-1, num_kv_heads, head_dim)
-        v_3d = v.view(-1, num_kv_heads, head_dim)
+        k_3d = k.reshape(-1, num_kv_heads, head_dim)
+        v_3d = v.reshape(-1, num_kv_heads, head_dim)
+        if k_3d.dtype != kv_cache.dtype:
+            k_3d = k_3d.to(kv_cache.dtype)
+            v_3d = v_3d.to(kv_cache.dtype)
         nnz = k_3d.shape[0]
         device = k_3d.device
         if (
@@ -174,7 +180,7 @@ class AdaptivePoolContext(AttentionContext):
         if trace:
             e_append.record()
 
-        q_3d = q.view(-1, num_heads, head_dim)
+        q_3d = q.reshape(-1, num_heads, head_dim)
         out = self.wrapper.run(q_3d, (kv_cache[0], kv_cache[1]))
         if trace:
             e_run.record()
@@ -679,7 +685,7 @@ class AdaptivePoolBackend:
             page_size=ps,
             causal=False,
             q_data_type=dtype,
-            kv_data_type=dtype,
+            kv_data_type=page_table.store_dtype,
         )
 
         write_pi_list = []

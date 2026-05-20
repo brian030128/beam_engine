@@ -77,8 +77,16 @@ class PagedAttentionContext(AttentionContext):
         # contiguous slabs without an unbind+strided view.
         kv_tuple = (kv_cache[0], kv_cache[1])
 
-        k_3d = k.view(-1, num_kv_heads, head_dim)
-        v_3d = v.view(-1, num_kv_heads, head_dim)
+        k_3d = k.reshape(-1, num_kv_heads, head_dim)
+        v_3d = v.reshape(-1, num_kv_heads, head_dim)
+        # If KV cache is stored at a narrower dtype than the activation
+        # dtype (fp8 KV with bf16 compute on Llama-3-70B-FP8), cast the
+        # appended K/V into the storage dtype. The attention kernel
+        # handles the fp8→bf16 dequant on read internally (planned with
+        # kv_data_type=fp8).
+        if k_3d.dtype != kv_cache.dtype:
+            k_3d = k_3d.to(kv_cache.dtype)
+            v_3d = v_3d.to(kv_cache.dtype)
         batch_indices, kv_indptr = self._get_kv_write_helpers(k_3d.shape[0], k_3d.device)
         flashinfer.page.append_paged_kv_cache(
             append_key=k_3d,
@@ -92,7 +100,7 @@ class PagedAttentionContext(AttentionContext):
             kv_layout="NHD",
         )
 
-        q_3d = q.view(-1, num_heads, head_dim)
+        q_3d = q.reshape(-1, num_heads, head_dim)
         if self.is_prefill:
             output = self.prefill_wrapper.run(q_3d, kv_tuple)
         else:
