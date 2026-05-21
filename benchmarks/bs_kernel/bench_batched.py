@@ -35,6 +35,12 @@ import torch
 from transformers import AutoTokenizer
 
 from beam_engine.baselines import dbs, deft, fasttree, mlca, paged, tree
+from beam_engine.distributed import (
+    destroy_tp,
+    get_tp_rank,
+    get_tp_world_size,
+    init_tp,
+)
 from beam_engine.methods import adaptive_pool, bs_kernel
 from beam_engine.methods.bs_kernel.cost_model import Strategy
 from beam_engine.models import load_model_for_causal_lm
@@ -43,6 +49,8 @@ from beam_engine.models.modeling_llama import LlamaForCausalLM
 
 import os as _os
 MODEL_NAME = _os.environ.get("BE_MODEL", "meta-llama/Llama-3.2-1B")
+# Bound to ``cuda:LOCAL_RANK`` inside ``main`` once init_tp() runs. Plain
+# ``cuda`` is fine for single-GPU runs (no torchrun → LOCAL_RANK unset).
 DEVICE = "cuda"
 _BE_DTYPE = _os.environ.get("BE_DTYPE", "fp16").lower()
 DTYPE = {"fp16": torch.float16, "bf16": torch.bfloat16}[_BE_DTYPE]
@@ -440,16 +448,33 @@ def main():
         print(f"no valid methods in {args.methods}; valid: {list(METHODS.keys())}", file=sys.stderr)
         sys.exit(2)
 
-    grid = [(K, L_p, B) for K in args.K for L_p in args.L_p for B in args.B]
-    print(f"grid: {len(grid)} (K,L_p,B) cells × {len(methods)} methods = {len(grid) * len(methods)} runs")
-    print(f"methods: {list(methods.keys())}")
-    print(f"max_new: {args.max_new}")
+    # Bind to the per-rank device under torchrun; a no-op for single-GPU
+    # invocation (init_tp short-circuits when WORLD_SIZE=1). Mirrors the
+    # bench_sglang_e2e.py setup so TP=2 cells (70B-fp8, B=8 beam_search)
+    # actually use 2 GPUs instead of stacking both ranks on cuda:0.
+    init_tp()
+    tp_rank = get_tp_rank()
+    tp_size = get_tp_world_size()
+    local_rank = int(_os.environ.get("LOCAL_RANK", "0"))
+    global DEVICE
+    DEVICE = f"cuda:{local_rank}" if tp_size > 1 else "cuda"
+    is_rank0 = tp_rank == 0
 
-    print("Loading tokenizer + model...")
+    def _say(*a, **kw):
+        if is_rank0:
+            print(*a, **kw)
+
+    grid = [(K, L_p, B) for K in args.K for L_p in args.L_p for B in args.B]
+    _say(f"grid: {len(grid)} (K,L_p,B) cells × {len(methods)} methods = {len(grid) * len(methods)} runs")
+    _say(f"methods: {list(methods.keys())}")
+    _say(f"max_new: {args.max_new}")
+    _say(f"tp_size: {tp_size}, device: {DEVICE}")
+
+    _say("Loading tokenizer + model...")
     tok = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = load_model_for_causal_lm(MODEL_NAME, dtype=DTYPE, device=DEVICE)
     config = model.config
-    print("Model loaded.\n")
+    _say("Model loaded.\n")
 
     # Pre-load real-world prompts once if --prompts-file is set; we
     # re-truncate per (K, L_p, B) cell below.
@@ -469,8 +494,8 @@ def main():
         if file_prompts_raw is not None:
             usable = [ids for ids in file_prompts_raw if len(ids) >= L_p]
             if len(usable) < B:
-                print(f"  WARNING: only {len(usable)} prompts ≥ {L_p} tokens; "
-                      f"need {B}. Skipping (K={K}, L_p={L_p}, B={B}).")
+                _say(f"  WARNING: only {len(usable)} prompts ≥ {L_p} tokens; "
+                     f"need {B}. Skipping (K={K}, L_p={L_p}, B={B}).")
                 continue
             prompts = [usable[i][:L_p] for i in range(B)]
         elif args.distinct:
@@ -482,7 +507,7 @@ def main():
             iters = 2 if args.warmup else 1
             for it in range(iters):
                 tag = "warmup " if (args.warmup and it == 0) else "       "
-                print(f"  {name:<14} {tag}K={K:<3d} L_p={L_p:<6d} B={B:<2d}", end=" ", flush=True)
+                _say(f"  {name:<14} {tag}K={K:<3d} L_p={L_p:<6d} B={B:<2d}", end=" ", flush=True)
                 t0 = time.perf_counter()
                 row = run_one(name, fn, model, config, prompts, K, args.max_new,
                               max_pages_override=args.max_pages)
@@ -492,13 +517,13 @@ def main():
                     break  # OOM / failure — don't bother retrying
                 # Discard warmup iteration's row.
                 if args.warmup and it == 0:
-                    print(
+                    _say(
                         f"discard          decode_total={row.decode_total_ms:7.1f}ms  "
                         f"({t1 - t0:5.1f}s wall)"
                     )
                 else:
                     rows.append(row)
-                    print(
+                    _say(
                         f"prefill={row.prefill_ms:7.1f}ms  "
                         f"decode_total={row.decode_total_ms:7.1f}ms  "
                         f"per_pt_token={row.decode_per_prompt_per_token_ms:6.2f}ms  "
@@ -506,6 +531,11 @@ def main():
                     )
                 torch.cuda.empty_cache()
 
+    # CSV is identical across ranks (same timing on each), so only rank 0
+    # writes it. Other ranks just clean up and exit.
+    if not is_rank0:
+        destroy_tp()
+        return
     out = args.out
     if out is None:
         results_dir = Path(__file__).parent / "results"
@@ -541,6 +571,7 @@ def main():
                 f"{r.fork_mean_ms:.4f}",    f"{r.fork_total_ms:.4f}",
             ])
     print(f"\nwrote {len(rows)} rows to {out}")
+    destroy_tp()
 
 
 if __name__ == "__main__":
