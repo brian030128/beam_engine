@@ -34,15 +34,32 @@ from ..distributed import (
     RowParallelLinear,
     get_tp_world_size,
 )
+from ..quantization import (
+    Fp8Config,
+    detect_quant_config,
+    fuse_fp8_gate_up_scales,
+    fuse_fp8_qkv_scales,
+    is_layer_ignored,
+)
 
 
 class LlamaMLP(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int, bias: bool = False):
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        bias: bool = False,
+        *,
+        quant: Fp8Config | None = None,
+    ):
         super().__init__()
         self.gate_up_proj = MergedColumnParallelLinear(
-            hidden_size, [intermediate_size, intermediate_size], bias=bias
+            hidden_size, [intermediate_size, intermediate_size], bias=bias,
+            quant=quant,
         )
-        self.down_proj = RowParallelLinear(intermediate_size, hidden_size, bias=bias)
+        self.down_proj = RowParallelLinear(
+            intermediate_size, hidden_size, bias=bias, quant=quant,
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         gate_up = self.gate_up_proj(x)
@@ -50,7 +67,13 @@ class LlamaMLP(nn.Module):
 
 
 class LlamaAttention(nn.Module):
-    def __init__(self, config: LlamaConfig, layer_idx: int):
+    def __init__(
+        self,
+        config: LlamaConfig,
+        layer_idx: int,
+        *,
+        quant: Fp8Config | None = None,
+    ):
         super().__init__()
         tp_size = get_tp_world_size()
         self.hidden_size = config.hidden_size
@@ -78,9 +101,11 @@ class LlamaAttention(nn.Module):
             self.num_heads_total,
             self.num_kv_heads_total,
             bias=bias,
+            quant=quant,
         )
         self.o_proj = RowParallelLinear(
-            self.num_heads_total * self.head_dim, self.hidden_size, bias=bias
+            self.num_heads_total * self.head_dim, self.hidden_size, bias=bias,
+            quant=quant,
         )
 
         # RoPE runs on the per-rank head slice — the kernel just needs the
@@ -109,13 +134,20 @@ class LlamaAttention(nn.Module):
 
 
 class LlamaDecoderLayer(nn.Module):
-    def __init__(self, config: LlamaConfig, layer_idx: int):
+    def __init__(
+        self,
+        config: LlamaConfig,
+        layer_idx: int,
+        *,
+        quant: Fp8Config | None = None,
+    ):
         super().__init__()
-        self.self_attn = LlamaAttention(config, layer_idx)
+        self.self_attn = LlamaAttention(config, layer_idx, quant=quant)
         self.mlp = LlamaMLP(
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             bias=getattr(config, "mlp_bias", False),
+            quant=quant,
         )
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -141,12 +173,18 @@ class LlamaDecoderLayer(nn.Module):
 
 
 class LlamaModel(nn.Module):
-    def __init__(self, config: LlamaConfig):
+    def __init__(
+        self,
+        config: LlamaConfig,
+        *,
+        quant: Fp8Config | None = None,
+    ):
         super().__init__()
         self.config = config
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList(
-            [LlamaDecoderLayer(config, i) for i in range(config.num_hidden_layers)]
+            [LlamaDecoderLayer(config, i, quant=quant)
+             for i in range(config.num_hidden_layers)]
         )
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
@@ -165,12 +203,20 @@ class LlamaModel(nn.Module):
 
 
 class LlamaForCausalLM(nn.Module):
-    def __init__(self, config: LlamaConfig):
+    def __init__(
+        self,
+        config: LlamaConfig,
+        *,
+        quant: Fp8Config | None = None,
+    ):
         super().__init__()
         self.config = config
-        self.model = LlamaModel(config)
-        # lm_head is replicated — small enough that the cost of sharding +
-        # all-gather outweighs the savings, and keeping it replicated lets
+        self.quant = quant
+        self.model = LlamaModel(config, quant=quant)
+        # lm_head is replicated and stays unquantized: AutoFP8 leaves
+        # lm_head in bf16 (it's in ``ignored_layers``), so we keep the
+        # standard nn.Linear here. The cost of sharding + all-gather
+        # would outweigh the savings, and keeping it replicated lets
         # every rank compute the same logits → identical CPU beam state
         # without an extra collective on the hot path.
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -197,25 +243,30 @@ class LlamaForCausalLM(nn.Module):
     ) -> "LlamaForCausalLM":
         config = LlamaConfig.from_pretrained(model_name)
 
-        with torch.device("meta"):
-            model = cls(config)
-
         model_dir = snapshot_download(
             model_name,
             allow_patterns=["*.safetensors", "*.json"],
         )
+        quant = detect_quant_config(model_dir)
+
+        with torch.device("meta"):
+            model = cls(config, quant=quant)
 
         safetensor_files = sorted(glob.glob(os.path.join(model_dir, "*.safetensors")))
         raw_state_dict: dict[str, torch.Tensor] = {}
         for f in safetensor_files:
             raw_state_dict.update(load_file(f, device="cpu"))
 
-        remapped = _remap_state_dict(raw_state_dict, config)
-
-        if "lm_head.weight" not in remapped and "model.embed_tokens.weight" in remapped:
-            remapped["lm_head.weight"] = remapped["model.embed_tokens.weight"]
-
-        _load_into_model(model, remapped, dtype=dtype, device=device)
+        if quant is not None:
+            remapped = _remap_state_dict_fp8(raw_state_dict, config)
+            if "lm_head.weight" not in remapped and "model.embed_tokens.weight" in remapped:
+                remapped["lm_head.weight"] = remapped["model.embed_tokens.weight"]
+            _load_into_model_fp8(model, remapped, quant, dtype=dtype, device=device)
+        else:
+            remapped = _remap_state_dict(raw_state_dict, config)
+            if "lm_head.weight" not in remapped and "model.embed_tokens.weight" in remapped:
+                remapped["lm_head.weight"] = remapped["model.embed_tokens.weight"]
+            _load_into_model(model, remapped, dtype=dtype, device=device)
         model.eval()
         return model
 
@@ -324,10 +375,82 @@ def _load_into_model(
 def _remap_state_dict(
     raw: dict[str, torch.Tensor], config: LlamaConfig
 ) -> dict[str, torch.Tensor]:
+    """Standard (unquantized) remap: fuses q/k/v → qkv_proj.weight and
+    gate/up → gate_up_proj.weight. For fp8 checkpoints use
+    ``_remap_state_dict_fp8`` instead — that one carries the per-tensor
+    scales alongside the weights."""
     remapped: dict[str, torch.Tensor] = {}
 
+    qkv_parts: dict[int, dict[str, torch.Tensor]] = {}
+    gate_up_parts: dict[int, dict[str, torch.Tensor]] = {}
+
+    for name, tensor in raw.items():
+        if "rotary_emb.inv_freq" in name:
+            continue
+        if "rotary_emb.cos_cached" in name or "rotary_emb.sin_cached" in name:
+            continue
+
+        matched = False
+        for proj in ("q_proj", "k_proj", "v_proj"):
+            key = f"self_attn.{proj}.weight"
+            if key in name:
+                layer_idx = _extract_layer_idx(name)
+                qkv_parts.setdefault(layer_idx, {})[proj] = tensor
+                matched = True
+                break
+        if matched:
+            continue
+
+        for proj in ("gate_proj", "up_proj"):
+            key = f"mlp.{proj}.weight"
+            if key in name:
+                layer_idx = _extract_layer_idx(name)
+                gate_up_parts.setdefault(layer_idx, {})[proj] = tensor
+                matched = True
+                break
+        if matched:
+            continue
+
+        remapped[name] = tensor
+
+    for layer_idx, parts in qkv_parts.items():
+        fused = torch.cat(
+            [parts["q_proj"], parts["k_proj"], parts["v_proj"]], dim=0,
+        )
+        remapped[f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"] = fused
+
+    for layer_idx, parts in gate_up_parts.items():
+        fused = torch.cat([parts["gate_proj"], parts["up_proj"]], dim=0)
+        remapped[f"model.layers.{layer_idx}.mlp.gate_up_proj.weight"] = fused
+
+    return remapped
+
+
+def _remap_state_dict_fp8(
+    raw: dict[str, torch.Tensor], config: LlamaConfig
+) -> dict[str, torch.Tensor]:
+    """Remap a compressed-tensors / AutoFP8 raw checkpoint.
+
+    Each fp8 linear ships ``weight``, ``weight_scale``, ``input_scale``.
+    For q/k/v and gate/up we fuse all three along dim 0, broadcasting
+    the per-tensor weight_scale of each chunk to a per-output-channel
+    vector before cat (so the fused linear carries a single per-channel
+    weight_scale matching the fused weight's row layout). The fused
+    input_scale is the max across the chunks — every chunk now shares
+    one activation scaling, so we pick the safest value.
+
+    Unquantized weights (norms, embeddings, lm_head) pass through
+    untouched. The lm_head is in AutoFP8's ``ignored_layers`` so it
+    stays as bf16/fp16 in the raw checkpoint.
+    """
+    remapped: dict[str, torch.Tensor] = {}
+
+    # Per layer, per suffix ∈ {weight, weight_scale, input_scale}: parts
+    # keyed by projection name.
     qkv_parts: dict[tuple[int, str], dict[str, torch.Tensor]] = {}
     gate_up_parts: dict[tuple[int, str], dict[str, torch.Tensor]] = {}
+    qkv_weight_shapes: dict[int, dict[str, tuple[int, ...]]] = {}
+    gate_up_weight_shapes: dict[int, dict[str, tuple[int, ...]]] = {}
 
     for name, tensor in raw.items():
         if "rotary_emb.inv_freq" in name:
@@ -338,43 +461,75 @@ def _remap_state_dict(
         matched = False
         for proj in ("q_proj", "k_proj", "v_proj"):
             key = f"self_attn.{proj}"
-            if key in name:
+            if f".{key}." in f".{name}.":
                 layer_idx = _extract_layer_idx(name)
                 suffix = name.rsplit(".", 1)[-1]
-                dict_key = (layer_idx, suffix)
-                if dict_key not in qkv_parts:
-                    qkv_parts[dict_key] = {}
-                qkv_parts[dict_key][proj] = tensor
+                qkv_parts.setdefault((layer_idx, suffix), {})[proj] = tensor
+                if suffix == "weight":
+                    qkv_weight_shapes.setdefault(layer_idx, {})[proj] = tuple(tensor.shape)
                 matched = True
                 break
-
         if matched:
             continue
 
         for proj in ("gate_proj", "up_proj"):
             key = f"mlp.{proj}"
-            if key in name:
+            if f".{key}." in f".{name}.":
                 layer_idx = _extract_layer_idx(name)
                 suffix = name.rsplit(".", 1)[-1]
-                dict_key = (layer_idx, suffix)
-                if dict_key not in gate_up_parts:
-                    gate_up_parts[dict_key] = {}
-                gate_up_parts[dict_key][proj] = tensor
+                gate_up_parts.setdefault((layer_idx, suffix), {})[proj] = tensor
+                if suffix == "weight":
+                    gate_up_weight_shapes.setdefault(layer_idx, {})[proj] = tuple(tensor.shape)
                 matched = True
                 break
-
         if matched:
             continue
 
         remapped[name] = tensor
 
     for (layer_idx, suffix), parts in qkv_parts.items():
-        fused = torch.cat([parts["q_proj"], parts["k_proj"], parts["v_proj"]], dim=0)
-        remapped[f"model.layers.{layer_idx}.self_attn.qkv_proj.{suffix}"] = fused
+        out_prefix = f"model.layers.{layer_idx}.self_attn.qkv_proj"
+        if suffix == "weight":
+            fused = torch.cat(
+                [parts["q_proj"], parts["k_proj"], parts["v_proj"]], dim=0,
+            )
+            remapped[f"{out_prefix}.weight"] = fused
+        elif suffix == "weight_scale":
+            shapes = qkv_weight_shapes[layer_idx]
+            q_size = shapes["q_proj"][0]
+            kv_size = shapes["k_proj"][0]
+            # k and v share the same size by construction.
+            fused = fuse_fp8_qkv_scales(
+                parts["q_proj"], parts["k_proj"], parts["v_proj"],
+                q_size=q_size, kv_size=kv_size,
+            )
+            remapped[f"{out_prefix}.weight_scale"] = fused
+        elif suffix == "input_scale":
+            # Per-tensor activation scale: take the max across q/k/v so
+            # the fused linear is safe under any input.
+            fused = torch.stack(
+                [parts[p].to(torch.float32).reshape(())
+                 for p in ("q_proj", "k_proj", "v_proj")]
+            ).max()
+            remapped[f"{out_prefix}.input_scale"] = fused
 
     for (layer_idx, suffix), parts in gate_up_parts.items():
-        fused = torch.cat([parts["gate_proj"], parts["up_proj"]], dim=0)
-        remapped[f"model.layers.{layer_idx}.mlp.gate_up_proj.{suffix}"] = fused
+        out_prefix = f"model.layers.{layer_idx}.mlp.gate_up_proj"
+        if suffix == "weight":
+            fused = torch.cat([parts["gate_proj"], parts["up_proj"]], dim=0)
+            remapped[f"{out_prefix}.weight"] = fused
+        elif suffix == "weight_scale":
+            chunk_size = gate_up_weight_shapes[layer_idx]["gate_proj"][0]
+            fused = fuse_fp8_gate_up_scales(
+                parts["gate_proj"], parts["up_proj"], chunk_size=chunk_size,
+            )
+            remapped[f"{out_prefix}.weight_scale"] = fused
+        elif suffix == "input_scale":
+            fused = torch.stack(
+                [parts[p].to(torch.float32).reshape(())
+                 for p in ("gate_proj", "up_proj")]
+            ).max()
+            remapped[f"{out_prefix}.input_scale"] = fused
 
     return remapped
 
@@ -385,3 +540,99 @@ def _extract_layer_idx(name: str) -> int:
         if part == "layers" and i + 1 < len(parts):
             return int(parts[i + 1])
     raise ValueError(f"Cannot extract layer index from: {name}")
+
+
+def _load_into_model_fp8(
+    model: nn.Module,
+    state_dict: dict[str, torch.Tensor],
+    quant: Fp8Config,
+    *,
+    dtype: torch.dtype,
+    device: str | torch.device,
+) -> None:
+    """Materialize an fp8 quantized model.
+
+    Per-parameter dtype rules:
+      - fp8 Linear ``.weight``: stays ``float8_e4m3fn``
+      - fp8 Linear ``.weight_scale`` / ``.input_scale``: ``float32``
+      - everything else (norms, embed, lm_head): compute ``dtype`` (bf16)
+
+    TP-aware loaders (weight_loader / weight_scale_loader /
+    input_scale_loader / bias_loader) handle per-rank slicing.
+    """
+    tp_layers = (
+        ColumnParallelLinear,
+        MergedColumnParallelLinear,
+        QKVParallelLinear,
+        RowParallelLinear,
+    )
+
+    tp_module_prefixes: dict[str, nn.Module] = {}
+    for full_name, module in model.named_modules():
+        if isinstance(module, tp_layers):
+            tp_module_prefixes[full_name] = module
+
+    def _owner_prefix(param_path: str) -> str | None:
+        for prefix in tp_module_prefixes:
+            if param_path.startswith(prefix + "."):
+                # The owner is the longest matching prefix; named_modules
+                # yields parents first so a Linear that contains no
+                # nested ParallelLinear won't be ambiguous here.
+                return prefix
+        return None
+
+    def _materialize(param_path: str, value: torch.Tensor) -> None:
+        parent_path, _, attr = param_path.rpartition(".")
+        parent: nn.Module = model.get_submodule(parent_path) if parent_path else model
+        existing = getattr(parent, attr)
+
+        owner_prefix = _owner_prefix(param_path)
+        if owner_prefix is not None and not is_layer_ignored(param_path, quant.ignored_layers):
+            tp_mod = tp_module_prefixes[owner_prefix]
+            target_param = getattr(tp_mod, attr)
+            # Allocate on-device with the per-partition shape + correct
+            # parameter dtype, then call the matching loader.
+            new_param = nn.Parameter(
+                torch.empty_like(target_param, device=device, dtype=target_param.dtype),
+                requires_grad=False,
+            )
+            setattr(tp_mod, attr, new_param)
+
+            if attr == "weight":
+                tp_mod.weight_loader(value)
+            elif attr == "bias":
+                tp_mod.bias_loader(value.to(dtype))
+            elif attr == "weight_scale":
+                tp_mod.weight_scale_loader(value)
+            elif attr == "input_scale":
+                tp_mod.input_scale_loader(value)
+            else:
+                raise RuntimeError(
+                    f"unexpected fp8 TP param attr {attr!r} at {param_path}"
+                )
+        else:
+            # Replicated parameter — full copy. ignored_layers (lm_head)
+            # also lands here; its raw safetensors weight is already
+            # bf16/fp16, just cast to compute dtype.
+            new_param = nn.Parameter(
+                value.to(device=device, dtype=dtype),
+                requires_grad=False,
+            )
+            setattr(parent, attr, new_param)
+
+    seen: set[str] = set()
+    all_params = list(model.named_parameters(remove_duplicate=False))
+    for path, _ in all_params:
+        if path not in state_dict:
+            raise KeyError(f"missing weight for {path}")
+        if path in seen:
+            continue
+        _materialize(path, state_dict[path])
+        seen.add(path)
+
+    if model.config.tie_word_embeddings:
+        model.lm_head.weight = model.model.embed_tokens.weight
+
+    leftover = set(state_dict) - seen
+    if leftover:
+        raise RuntimeError(f"unused fp8 weights: {sorted(leftover)}")

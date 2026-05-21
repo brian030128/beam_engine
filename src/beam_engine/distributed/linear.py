@@ -28,12 +28,13 @@ old beam_engine code byte-for-byte.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 import torch
 import torch.nn as nn
 
 from .parallel_state import get_tp_rank, get_tp_world_size, tp_all_reduce
+from ..quantization import Fp8Config, fp8_linear
 
 
 def _shard_along_dim(
@@ -62,6 +63,11 @@ class ColumnParallelLinear(nn.Module):
     ``RowParallelLinear`` consuming the output) are responsible for
     keeping the activation parallel across the TP group — there is no
     all-gather here.
+
+    When ``quant`` is set (fp8 checkpoint), the layer also holds a
+    per-output-channel ``weight_scale`` (sharded with the weight) and a
+    per-tensor ``input_scale`` (replicated). Forward dispatches through
+    ``fp8_linear`` instead of ``F.linear``.
     """
 
     def __init__(
@@ -69,6 +75,8 @@ class ColumnParallelLinear(nn.Module):
         in_features: int,
         out_features: int,
         bias: bool = False,
+        *,
+        quant: Optional[Fp8Config] = None,
     ):
         super().__init__()
         tp_size = get_tp_world_size()
@@ -79,9 +87,28 @@ class ColumnParallelLinear(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.out_features_per_partition = out_features // tp_size
-        self.weight = nn.Parameter(
-            torch.empty(self.out_features_per_partition, in_features)
-        )
+        self.quant = quant
+        if quant is not None:
+            self.weight = nn.Parameter(
+                torch.empty(
+                    self.out_features_per_partition,
+                    in_features,
+                    dtype=torch.float8_e4m3fn,
+                ),
+                requires_grad=False,
+            )
+            self.weight_scale = nn.Parameter(
+                torch.empty(self.out_features_per_partition, dtype=torch.float32),
+                requires_grad=False,
+            )
+            self.input_scale = nn.Parameter(
+                torch.empty((), dtype=torch.float32),
+                requires_grad=False,
+            )
+        else:
+            self.weight = nn.Parameter(
+                torch.empty(self.out_features_per_partition, in_features)
+            )
         if bias:
             self.bias = nn.Parameter(torch.empty(self.out_features_per_partition))
         else:
@@ -95,6 +122,19 @@ class ColumnParallelLinear(nn.Module):
         with torch.no_grad():
             self.weight.copy_(shard)
 
+    def weight_scale_loader(self, full: torch.Tensor) -> None:
+        """Per-output-channel scale: sharded along dim 0 (same as weight)."""
+        tp_size = get_tp_world_size()
+        tp_rank = get_tp_rank()
+        shard = _shard_along_dim(full, dim=0, tp_size=tp_size, tp_rank=tp_rank)
+        with torch.no_grad():
+            self.weight_scale.copy_(shard.to(torch.float32))
+
+    def input_scale_loader(self, full: torch.Tensor) -> None:
+        """Per-tensor activation scale: replicated across ranks."""
+        with torch.no_grad():
+            self.input_scale.copy_(full.to(torch.float32).reshape(()))
+
     def bias_loader(self, full: torch.Tensor) -> None:
         tp_size = get_tp_world_size()
         tp_rank = get_tp_rank()
@@ -103,6 +143,10 @@ class ColumnParallelLinear(nn.Module):
             self.bias.copy_(shard)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.quant is not None:
+            return fp8_linear(
+                x, self.weight, self.weight_scale, self.input_scale, self.bias,
+            )
         return torch.nn.functional.linear(x, self.weight, self.bias)
 
 
@@ -124,6 +168,8 @@ class MergedColumnParallelLinear(nn.Module):
         in_features: int,
         output_sizes: Sequence[int],
         bias: bool = False,
+        *,
+        quant: Optional[Fp8Config] = None,
     ):
         super().__init__()
         tp_size = get_tp_world_size()
@@ -136,18 +182,39 @@ class MergedColumnParallelLinear(nn.Module):
         self.output_sizes = list(output_sizes)
         self.output_sizes_per_partition = [o // tp_size for o in output_sizes]
         self.out_features_per_partition = sum(self.output_sizes_per_partition)
-        self.weight = nn.Parameter(
-            torch.empty(self.out_features_per_partition, in_features)
-        )
+        self.quant = quant
+        if quant is not None:
+            self.weight = nn.Parameter(
+                torch.empty(
+                    self.out_features_per_partition,
+                    in_features,
+                    dtype=torch.float8_e4m3fn,
+                ),
+                requires_grad=False,
+            )
+            self.weight_scale = nn.Parameter(
+                torch.empty(self.out_features_per_partition, dtype=torch.float32),
+                requires_grad=False,
+            )
+            self.input_scale = nn.Parameter(
+                torch.empty((), dtype=torch.float32),
+                requires_grad=False,
+            )
+        else:
+            self.weight = nn.Parameter(
+                torch.empty(self.out_features_per_partition, in_features)
+            )
         if bias:
             self.bias = nn.Parameter(torch.empty(self.out_features_per_partition))
         else:
             self.register_parameter("bias", None)
 
-    def weight_loader(self, full: torch.Tensor) -> None:
-        """``full`` is the fused ``[sum(output_sizes), in]`` tensor in the
-        same order as ``output_sizes``. We slice each chunk independently
-        and write them back-to-back into ``self.weight``."""
+    def _chunked_shard_copy(
+        self, dst: torch.Tensor, full: torch.Tensor
+    ) -> None:
+        """Apply this layer's chunk-by-chunk shard layout when copying
+        ``full`` (full unsharded tensor along dim 0, size ``sum(output_sizes)``)
+        into ``dst`` (per-rank tensor sized ``sum(output_sizes // tp_size)``)."""
         tp_size = get_tp_world_size()
         tp_rank = get_tp_rank()
         out_offset = 0
@@ -157,13 +224,31 @@ class MergedColumnParallelLinear(nn.Module):
                 chunk = full[out_offset : out_offset + chunk_size]
                 shard_size = chunk_size // tp_size
                 start = tp_rank * shard_size
-                self.weight[local_offset : local_offset + shard_size].copy_(
+                dst[local_offset : local_offset + shard_size].copy_(
                     chunk[start : start + shard_size]
                 )
                 out_offset += chunk_size
                 local_offset += shard_size
 
+    def weight_loader(self, full: torch.Tensor) -> None:
+        """``full`` is the fused ``[sum(output_sizes), in]`` tensor in the
+        same order as ``output_sizes``. We slice each chunk independently
+        and write them back-to-back into ``self.weight``."""
+        self._chunked_shard_copy(self.weight, full)
+
+    def weight_scale_loader(self, full: torch.Tensor) -> None:
+        """Per-output-channel scale shares the weight's chunk-by-chunk layout."""
+        self._chunked_shard_copy(self.weight_scale, full.to(torch.float32))
+
+    def input_scale_loader(self, full: torch.Tensor) -> None:
+        with torch.no_grad():
+            self.input_scale.copy_(full.to(torch.float32).reshape(()))
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.quant is not None:
+            return fp8_linear(
+                x, self.weight, self.weight_scale, self.input_scale, self.bias,
+            )
         return torch.nn.functional.linear(x, self.weight, self.bias)
 
 
@@ -192,6 +277,8 @@ class QKVParallelLinear(nn.Module):
         num_attention_heads: int,
         num_kv_heads: int,
         bias: bool = False,
+        *,
+        quant: Optional[Fp8Config] = None,
     ):
         super().__init__()
         tp_size = get_tp_world_size()
@@ -217,18 +304,38 @@ class QKVParallelLinear(nn.Module):
         self.kv_size = self.num_kv_heads_per_partition * head_dim
 
         self.out_features_per_partition = self.q_size + 2 * self.kv_size
-        self.weight = nn.Parameter(
-            torch.empty(self.out_features_per_partition, hidden_size)
-        )
+        self.quant = quant
+        if quant is not None:
+            self.weight = nn.Parameter(
+                torch.empty(
+                    self.out_features_per_partition,
+                    hidden_size,
+                    dtype=torch.float8_e4m3fn,
+                ),
+                requires_grad=False,
+            )
+            self.weight_scale = nn.Parameter(
+                torch.empty(self.out_features_per_partition, dtype=torch.float32),
+                requires_grad=False,
+            )
+            self.input_scale = nn.Parameter(
+                torch.empty((), dtype=torch.float32),
+                requires_grad=False,
+            )
+        else:
+            self.weight = nn.Parameter(
+                torch.empty(self.out_features_per_partition, hidden_size)
+            )
         if bias:
             self.bias = nn.Parameter(torch.empty(self.out_features_per_partition))
         else:
             self.register_parameter("bias", None)
 
-    def weight_loader(self, full: torch.Tensor) -> None:
-        """``full`` shape: ``[q_total + 2*kv_total, hidden]`` (already fused
-        by ``_remap_state_dict``). Each section is sharded along the
-        head-count axis with this rank's slice."""
+    def _qkv_shard_copy(
+        self, dst: torch.Tensor, full: torch.Tensor
+    ) -> None:
+        """Apply q/k/v shard layout: full is ``[q_total + 2*kv_total, ...]``,
+        dst is per-rank ``[q + kv + kv, ...]``."""
         tp_size = get_tp_world_size()
         tp_rank = get_tp_rank()
         q_full = full[: self.q_size_total]
@@ -240,15 +347,33 @@ class QKVParallelLinear(nn.Module):
             return t[start : start + shard_size]
 
         with torch.no_grad():
-            self.weight[: self.q_size].copy_(_slice(q_full, self.q_size))
-            self.weight[self.q_size : self.q_size + self.kv_size].copy_(
+            dst[: self.q_size].copy_(_slice(q_full, self.q_size))
+            dst[self.q_size : self.q_size + self.kv_size].copy_(
                 _slice(k_full, self.kv_size)
             )
-            self.weight[self.q_size + self.kv_size :].copy_(
+            dst[self.q_size + self.kv_size :].copy_(
                 _slice(v_full, self.kv_size)
             )
 
+    def weight_loader(self, full: torch.Tensor) -> None:
+        """``full`` shape: ``[q_total + 2*kv_total, hidden]`` (already fused
+        by ``_remap_state_dict``). Each section is sharded along the
+        head-count axis with this rank's slice."""
+        self._qkv_shard_copy(self.weight, full)
+
+    def weight_scale_loader(self, full: torch.Tensor) -> None:
+        """Per-output-channel scale, same q/k/v shard layout as weight."""
+        self._qkv_shard_copy(self.weight_scale, full.to(torch.float32))
+
+    def input_scale_loader(self, full: torch.Tensor) -> None:
+        with torch.no_grad():
+            self.input_scale.copy_(full.to(torch.float32).reshape(()))
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.quant is not None:
+            return fp8_linear(
+                x, self.weight, self.weight_scale, self.input_scale, self.bias,
+            )
         return torch.nn.functional.linear(x, self.weight, self.bias)
 
 
@@ -261,6 +386,9 @@ class RowParallelLinear(nn.Module):
 
     Bias is held in full size but only added on rank 0 to avoid the bias
     being summed ``tp_size`` times in the all-reduce.
+
+    For fp8: per-output-channel ``weight_scale`` is replicated across ranks
+    (output dim isn't sharded); per-tensor ``input_scale`` is also replicated.
     """
 
     def __init__(
@@ -268,6 +396,8 @@ class RowParallelLinear(nn.Module):
         in_features: int,
         out_features: int,
         bias: bool = False,
+        *,
+        quant: Optional[Fp8Config] = None,
     ):
         super().__init__()
         tp_size = get_tp_world_size()
@@ -278,9 +408,29 @@ class RowParallelLinear(nn.Module):
         self.in_features = in_features
         self.in_features_per_partition = in_features // tp_size
         self.out_features = out_features
-        self.weight = nn.Parameter(
-            torch.empty(out_features, self.in_features_per_partition)
-        )
+        self.quant = quant
+        if quant is not None:
+            self.weight = nn.Parameter(
+                torch.empty(
+                    out_features,
+                    self.in_features_per_partition,
+                    dtype=torch.float8_e4m3fn,
+                ),
+                requires_grad=False,
+            )
+            # Per-output-channel scale: not sharded (output dim is whole).
+            self.weight_scale = nn.Parameter(
+                torch.empty(out_features, dtype=torch.float32),
+                requires_grad=False,
+            )
+            self.input_scale = nn.Parameter(
+                torch.empty((), dtype=torch.float32),
+                requires_grad=False,
+            )
+        else:
+            self.weight = nn.Parameter(
+                torch.empty(out_features, self.in_features_per_partition)
+            )
         if bias:
             self.bias = nn.Parameter(torch.empty(out_features))
         else:
@@ -293,6 +443,22 @@ class RowParallelLinear(nn.Module):
         with torch.no_grad():
             self.weight.copy_(shard)
 
+    def weight_scale_loader(self, full: torch.Tensor) -> None:
+        """Replicated across ranks (output dim is whole). Stored fp32."""
+        # RedHatAI AutoFP8 ships ``down_proj.weight_scale`` and
+        # ``o_proj.weight_scale`` as scalar per-tensor — broadcast it to
+        # the per-channel shape this layer holds.
+        full32 = full.to(torch.float32)
+        with torch.no_grad():
+            if full32.dim() == 0:
+                self.weight_scale.fill_(full32.item())
+            else:
+                self.weight_scale.copy_(full32)
+
+    def input_scale_loader(self, full: torch.Tensor) -> None:
+        with torch.no_grad():
+            self.input_scale.copy_(full.to(torch.float32).reshape(()))
+
     def bias_loader(self, full: torch.Tensor) -> None:
         with torch.no_grad():
             self.bias.copy_(full)
@@ -301,7 +467,12 @@ class RowParallelLinear(nn.Module):
         # No bias inside the matmul — we add it on rank 0 only after the
         # all-reduce, mirroring SGLang's RowParallelLinear (see
         # layers/linear.py L1379-L1398).
-        out = torch.nn.functional.linear(x, self.weight, bias=None)
+        if self.quant is not None:
+            out = fp8_linear(
+                x, self.weight, self.weight_scale, self.input_scale, bias=None,
+            )
+        else:
+            out = torch.nn.functional.linear(x, self.weight, bias=None)
         out = tp_all_reduce(out)
         if self.bias is not None and get_tp_rank() == 0:
             out = out + self.bias

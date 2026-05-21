@@ -260,6 +260,8 @@ class PagedBackend:
             num_kv_heads=num_kv_heads,
             head_dim=head_dim,
             page_size=ps,
+            q_data_type=dtype,
+            kv_data_type=page_table.store_dtype,
         )
         if trace_on:
             torch.cuda.synchronize()
@@ -296,6 +298,7 @@ def beam_search(
     max_num_pages: int = 2048,
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
+    kv_dtype: torch.dtype | None = None,
     return_timings: bool = False,
     return_phase_timings: bool = False,
     select_at_prefill: PrefillSelect = standard_prefill_select,
@@ -309,6 +312,9 @@ def beam_search(
 
     ``select_at_prefill`` / ``select_at_decode`` plug in alternate top-K
     strategies (see ``beam_engine.decoding``); defaults are standard top-K.
+
+    ``kv_dtype`` (default = ``dtype``) stores the page-table K/V at a
+    narrower dtype for fp8-KV runs (Llama-3-70B-FP8 path).
     """
     from ..page_driver import beam_search as _shared_beam_search
 
@@ -320,6 +326,7 @@ def beam_search(
         max_num_pages=max_num_pages,
         device=device,
         dtype=dtype,
+        kv_dtype=kv_dtype,
         return_timings=return_timings,
         return_phase_timings=return_phase_timings,
         select_at_prefill=select_at_prefill,
