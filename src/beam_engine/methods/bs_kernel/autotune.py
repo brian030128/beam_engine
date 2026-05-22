@@ -86,6 +86,7 @@ def _make_workload(
     num_kv_heads: int,
     head_dim: int,
     dtype_bytes: int,
+    num_qo_heads: int = 0,
 ) -> WorkloadShape:
     """Approximate WorkloadShape for a (K, L_p) cell mid-decode.
 
@@ -101,6 +102,7 @@ def _make_workload(
         head_dim=head_dim,
         bytes_per_kv=2 * num_kv_heads * head_dim * dtype_bytes,
         intermediate=None,
+        num_qo_heads=num_qo_heads,
     )
 
 
@@ -176,6 +178,7 @@ def _eval_regret(
     head_dim: int,
     dtype_bytes: int,
     suffix_len: int,
+    num_qo_heads: int = 0,
 ) -> tuple[float, float, int]:
     """Sum-of-regrets and worst-cell regret for a candidate Coefficients
     against the measured grid. Cells where the model picks a strategy
@@ -192,7 +195,8 @@ def _eval_regret(
     for (K, L_p, B), cell in times.items():
         if not cell:
             continue
-        w = _make_workload(K, L_p, suffix_len, num_kv_heads, head_dim, dtype_bytes)
+        w = _make_workload(K, L_p, suffix_len, num_kv_heads, head_dim, dtype_bytes,
+                           num_qo_heads=num_qo_heads)
         pick = pick_strategy_batch([w] * B, coeff)
         mode = STRATEGY_TO_MODE.get(pick.strategy)
         if mode is None or mode not in cell:
@@ -273,6 +277,7 @@ def _main():
         return
 
     num_kv_heads = config.num_key_value_heads
+    num_qo_heads = getattr(config, "num_attention_heads", num_kv_heads)
     head_dim = config.head_dim
     dtype_bytes = torch.tensor([], dtype=dtype).element_size()
     suffix_len = max(1, args.max_new // 2)
@@ -283,6 +288,7 @@ def _main():
         head_dim=head_dim,
         dtype_bytes=dtype_bytes,
         suffix_len=suffix_len,
+        num_qo_heads=num_qo_heads,
     )
     print(
         f"\n[autotune] picker regret on grid: "

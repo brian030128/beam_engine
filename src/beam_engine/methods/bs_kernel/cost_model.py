@@ -15,12 +15,13 @@ matching wrapper call.
 
 Cost terms (paper-spec; see docs/paper_story.md §The cost-model picker):
   * Fused:    C_fused = B_s/β + ⌈M_s/N_SM⌉·τ + ⌈log₂ D_s⌉·µ
-  * Dec-tail: C_dt    = C_prefix + ν_decode
-                     + max(B_tail/β, ⌈R·⌈L̄/CTA_K⌉/N_SM⌉·τ_tail_elem)
+  * Dec-tail: C_dt    = C_prefix + ν_decode + B_tail/β
+                     + ⌈R·⌈L̄/CTA_K⌉/N_SM⌉·τ_tail_elem
               where R = Σ_b K_b (total decode-kernel CTAs),
               τ_tail_elem = ρ_d · cta_tile_kv_decode, and ν_decode
               is the calibrated per-call decode-kernel launch cost
-              (the extra launch DEC_TAIL pays over FUSED).
+              (the extra launch DEC_TAIL pays over FUSED). Bandwidth
+              and compute are added (no overlap) rather than max'd.
 
 Generic launch / sync overheads, the per-wave overhead floor, and the
 prefill per-tile L_kv slope are intentionally *not* modeled in this
@@ -227,6 +228,11 @@ class WorkloadShape:
     ``L_p`` is the LCA prefix length in *tokens* (not pages). ``suffix_lens``
     is per-beam unique-tail length in tokens. ``intermediate`` describes
     a 3-level fork structure when one exists, else None.
+
+    ``num_qo_heads`` is needed for the CTA-granularity wave model: the
+    kernel packs ``K × gqa_group_size`` Q rows per beam-group, with
+    ``gqa_group_size = num_qo_heads // num_kv_heads``. If unset (legacy
+    workloads), defaults to ``num_kv_heads`` (gqa=1, no-op).
     """
     K: int
     L_p: int
@@ -235,6 +241,11 @@ class WorkloadShape:
     head_dim: int
     bytes_per_kv: int          # 2 (k+v) × num_kv_heads × head_dim × dtype_bytes
     intermediate: Optional["IntermediateShape"] = None
+    num_qo_heads: int = 0      # 0 → fall back to num_kv_heads (gqa=1)
+
+    def gqa_group_size(self) -> int:
+        nq = self.num_qo_heads if self.num_qo_heads > 0 else self.num_kv_heads
+        return max(1, nq // self.num_kv_heads)
 
 
 @dataclass
@@ -297,6 +308,41 @@ class IntermediateShape:
 
 def _ceil_div(a: int, b: int) -> int:
     return -(-a // b)
+
+
+# FlashInfer split-K heuristic constants (mirrors cascade.py:1080-1173).
+# Below MIN_KV_LEN_FOR_SPLIT, the unsplit kernel runs fast enough that the
+# extra +1 merge_states launch outweighs the parallelism gain.
+_MIN_KV_LEN_FOR_SPLIT = 1024
+_MIN_KV_CHUNK_TOKENS = 128
+_SPLIT_K_PAGE_SIZE = 16  # mirrors page_size used in cascade.py heuristic
+
+
+def _split_k_chunks_for_level(
+    n_q_tiles_level: int,
+    L_kv: int,
+    *,
+    num_kv_heads: int,
+    num_sms: int,
+) -> int:
+    """Per-level split-K decision, mirroring FlashInfer's
+    cascade.py:1080-1173. Each (q_tile, kv_chunk) becomes one CTA.
+
+    Skip split-K when the level's q_tiles already saturate the SMs, or
+    when L_kv is below the floor where the +merge_states launch tax
+    exceeds the parallelism gain.
+    """
+    if L_kv < _MIN_KV_LEN_FOR_SPLIT:
+        return 1
+    target_tuples = max(num_sms // max(1, num_kv_heads), 1)
+    if n_q_tiles_level >= target_tuples:
+        return 1
+    target_chunks = max(target_tuples // n_q_tiles_level, 1)
+    chunk_size = max(_ceil_div(L_kv, target_chunks), _MIN_KV_CHUNK_TOKENS)
+    chunk_size = (
+        (chunk_size + _SPLIT_K_PAGE_SIZE - 1) // _SPLIT_K_PAGE_SIZE
+    ) * _SPLIT_K_PAGE_SIZE
+    return max(1, _ceil_div(L_kv, chunk_size))
 
 
 def _bytes_to_us(n_bytes: int, c: Coefficients) -> float:
@@ -583,43 +629,70 @@ def cost_shared_batch(
                 f"levels on every prompt; one prompt has {n_have}"
             )
 
-    # Paper formula: C_fused = B_s/β + ⌈M_s/N_SM⌉·τ + ⌈log₂ D_s⌉·µ
+    # CTA-granularity wave model (replaces prior elemental-sub-tile model).
     #
-    #   B_s = total bytes loaded across all cascade levels of every prompt.
-    #   M_s = total elemental (CTA_TILE_Q × CTA_TILE_KV) sub-tile count
-    #         across all cascade levels of every prompt:
-    #             M_s = Σ_levels g_count · ⌈packed_qo/T⌉ · ⌈L_kv/CTA_K⌉
-    #         The inner ⌈L_kv/CTA_K⌉ factor accounts for the per-CTA KV
-    #         iteration (NUM_MMA_KV chunks) and for KV split — both
-    #         describe the same parallelism the kernel exposes across SMs.
-    #   τ   = calibrated time per elemental sub-tile (derived from the
-    #         L_kv slope calibration: τ_elem = per_tile_per_kv_us[T] ·
-    #         CTA_K is the per-CTA_K-token compute cost at tile_q=T).
-    #   D_s = cascade depth. Merges sit at depth boundaries but can be
-    #         reduced in a balanced tree of depth ⌈log₂ D⌉.
-    M_s = 0
-    bw_us = 0.0
-    for w in workloads:
-        levels = _per_prompt_levels(w, depth)
-        per_prompt = _tile_breakdown(
-            levels, pool_count=pool_count, t_large=t_large,
-        )
-        # Multiply each Q-tile group by its KV-chunk count ⌈L_kv/CTA_K⌉.
-        for (T, L_kv), n_q_tiles in per_prompt.items():
-            kv_chunks = max(1, _ceil_div(L_kv, c.cta_tile_kv))
-            M_s += n_q_tiles * kv_chunks
-        bw_us += _level_bw_us(levels, c)
-    # τ_elem from the L_kv slope (µs per token), scaled by CTA_K:
-    # per_tile_per_kv_us is the per-token compute cost at tile_q=T,
-    # so per-elemental-sub-tile cost = slope · cta_tile_kv.
+    # The fused-cascade kernel schedules CTAs onto SMs, not elemental
+    # (T_Q × T_KV) sub-tiles. Per physical level:
+    #   * packed Q rows = beams_per_g · gqa_group_size  (kernel-true Q packing)
+    #   * q_tiles       = g_count · ⌈packed/T⌉
+    #   * num_chunks    = FlashInfer split-K decision per level (cascade.py)
+    #   * CTAs          = q_tiles · num_chunks · num_kv_heads  (gridDim.z = kv_heads)
+    #   * chunk_L_kv    = ⌈L_kv/num_chunks⌉
+    #   * τ_CTA         = ⌈chunk_L_kv/cta_tile_kv⌉ · τ_elem
+    #
+    # Within one CTA_TILE_Q pool the kernel launches all CTAs together →
+    # ⌈Σ CTAs / N_SM⌉ waves, each wave's duration dominated by the
+    # heaviest CTA in the pool (max τ_CTA across levels routed to that
+    # pool). Separate pools = separate kernel launches → independent ceil
+    # per pool, summed compute.
+    #
+    # This captures the wave-quantization knee verified by
+    # ``benchmarks/bs_kernel/probe_cascade_thin_q.py``: adding a thin-Q
+    # cascade level whose CTAs tip total SM occupancy over a wave
+    # boundary adds ~max_τ_CTA (heavy L0 cost), not its own marginal
+    # compute — exactly what the old elemental-sub-tile model missed.
     slope = c.per_tile_per_kv_us.get(t_large, 0.0)
     if slope > 0:
         tau_elem = slope * c.cta_tile_kv
     else:
-        # Legacy cache without the L_kv probe: fall back to per_tile_us
-        # interpreted at the calibration's reference L_kv.
         tau_elem = c.per_tile_us.get(t_large, 0.0) * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
-    compute_us = _ceil_div(M_s, c.num_sms) * tau_elem
+
+    pool_ctas: dict[int, int] = {}
+    pool_max_tau_cta: dict[int, float] = {}
+    bw_us = 0.0
+    for w in workloads:
+        levels = _per_prompt_levels(w, depth)
+        gqa = w.gqa_group_size()
+        for g_count, beams_per_g, L_kv, _bpkv in levels:
+            if L_kv == 0:
+                continue
+            # Physical packed-Q rows = beams_per_g × gqa, matching the
+            # kernel's true Q packing. The pool router picks T off the
+            # physical packed value (small → pool_16 only at pool_count=2).
+            packed_phys = beams_per_g * gqa
+            if pool_count == 1:
+                T = t_large
+            else:
+                T = T_SMALL if packed_phys <= T_SMALL else t_large
+            n_q_tiles = g_count * max(1, _ceil_div(packed_phys, T))
+            num_chunks = _split_k_chunks_for_level(
+                n_q_tiles, L_kv,
+                num_kv_heads=w.num_kv_heads, num_sms=c.num_sms,
+            )
+            chunk_L_kv = _ceil_div(L_kv, num_chunks)
+            n_ctas = n_q_tiles * num_chunks * w.num_kv_heads
+            kv_iters_per_cta = max(1, _ceil_div(chunk_L_kv, c.cta_tile_kv))
+            tau_cta = kv_iters_per_cta * tau_elem
+            pool_ctas[T] = pool_ctas.get(T, 0) + n_ctas
+            if tau_cta > pool_max_tau_cta.get(T, 0.0):
+                pool_max_tau_cta[T] = tau_cta
+        bw_us += _level_bw_us(levels, c)
+
+    compute_us = 0.0
+    for T, n_ctas in pool_ctas.items():
+        waves = max(1, _ceil_div(n_ctas, c.num_sms))
+        compute_us += waves * pool_max_tau_cta.get(T, 0.0)
+
     merge_rounds = int(math.ceil(math.log2(max(2, depth))))
     merge_us = merge_rounds * c.merge_launch_us
 
@@ -664,8 +737,10 @@ def cost_decode_tail_batch(
     τ_tail_elem = decode_us_per_beam_kv_token · CTA_K is the per-elemental
     sub-tile cost (derived from the per-(beam, KV-token) calibration).
 
-    Bandwidth and compute overlap inside the kernel (the decode kernel
-    is BW-bound at our shapes), so the two terms combine via max.
+    Bandwidth and compute are summed (not max'd) — the previous max
+    form assumed perfect overlap inside the decode kernel; the additive
+    form is the no-overlap worst case and tends to penalize DEC_TAIL
+    when its tail-side compute is non-trivial.
 
     The extra ``decode_launch_us`` term accounts for the extra kernel
     launch DEC_TAIL pays over FUSED: FUSED fires one fused-cascade
@@ -692,7 +767,7 @@ def cost_decode_tail_batch(
     waves = max(1, _ceil_div(M_s_tail, c.num_sms))
     tau_tail_elem = c.decode_us_per_beam_kv_token * c.cta_tile_kv_decode
     work_us = waves * tau_tail_elem
-    return c.decode_launch_us + max(bw_us, work_us)
+    return c.decode_launch_us + bw_us + work_us
 
 
 def cost_dec_tail_batch(
@@ -726,26 +801,47 @@ def cost_dec_tail_batch(
                 f"levels on every prompt; one prompt has {n_have}"
             )
 
-    # Paper formula: C_dt = C_prefix + max(B_tail/β, ⌈R·⌈L̄/CTA_K⌉/N_SM⌉·τ_tail_elem)
-    # where C_prefix is the FUSED cost applied to prefix-only cascade
-    # levels (root + intermediates, no per-beam tail level). C_prefix
-    # uses the same elemental sub-tile counting as cost_shared_batch
-    # and carries the ⌈log₂ D⌉·µ merge term.
-    M_prefix = 0
-    bw_us = 0.0
-    for w in workloads:
-        levels = _per_prompt_levels_no_tail(w, depth)
-        per_prompt = _tile_breakdown(levels, pool_count=1, t_large=64)
-        for (T, L_kv), n_q_tiles in per_prompt.items():
-            kv_chunks = max(1, _ceil_div(L_kv, c.cta_tile_kv))
-            M_prefix += n_q_tiles * kv_chunks
-        bw_us += _level_bw_us(levels, c)
-    slope = c.per_tile_per_kv_us.get(64, 0.0)
+    # CTA-granularity wave model for the prefix-side fused-cascade launch.
+    # See ``cost_shared_batch`` for rationale and the formula breakdown.
+    # The DEC_TAIL prefix uses pool_count=1 and t_large=64 (per the
+    # existing convention here).
+    t_large_prefix = 64
+    slope = c.per_tile_per_kv_us.get(t_large_prefix, 0.0)
     if slope > 0:
         tau_elem = slope * c.cta_tile_kv
     else:
-        tau_elem = c.per_tile_us.get(64, 0.0) * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
-    prefix_compute_us = _ceil_div(M_prefix, c.num_sms) * tau_elem
+        tau_elem = c.per_tile_us.get(t_large_prefix, 0.0) * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
+
+    pool_ctas: dict[int, int] = {}
+    pool_max_tau_cta: dict[int, float] = {}
+    bw_us = 0.0
+    for w in workloads:
+        levels = _per_prompt_levels_no_tail(w, depth)
+        gqa = w.gqa_group_size()
+        for g_count, beams_per_g, L_kv, _bpkv in levels:
+            if L_kv == 0:
+                continue
+            packed_phys = beams_per_g * gqa
+            T = t_large_prefix  # pool_count=1 here
+            n_q_tiles = g_count * max(1, _ceil_div(packed_phys, T))
+            num_chunks = _split_k_chunks_for_level(
+                n_q_tiles, L_kv,
+                num_kv_heads=w.num_kv_heads, num_sms=c.num_sms,
+            )
+            chunk_L_kv = _ceil_div(L_kv, num_chunks)
+            n_ctas = n_q_tiles * num_chunks * w.num_kv_heads
+            kv_iters_per_cta = max(1, _ceil_div(chunk_L_kv, c.cta_tile_kv))
+            tau_cta = kv_iters_per_cta * tau_elem
+            pool_ctas[T] = pool_ctas.get(T, 0) + n_ctas
+            if tau_cta > pool_max_tau_cta.get(T, 0.0):
+                pool_max_tau_cta[T] = tau_cta
+        bw_us += _level_bw_us(levels, c)
+
+    prefix_compute_us = 0.0
+    for T, n_ctas in pool_ctas.items():
+        waves = max(1, _ceil_div(n_ctas, c.num_sms))
+        prefix_compute_us += waves * pool_max_tau_cta.get(T, 0.0)
+
     merge_rounds = int(math.ceil(math.log2(max(2, depth))))
     merge_us = merge_rounds * c.merge_launch_us
     prefix_us = bw_us + prefix_compute_us + merge_us

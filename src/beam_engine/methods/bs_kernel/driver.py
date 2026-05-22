@@ -129,6 +129,7 @@ def _workload_from_levels(
     num_kv_heads: int,
     head_dim: int,
     dtype_bytes: int,
+    num_qo_heads: int = 0,
 ) -> WorkloadShape:
     """Derive the cost model's WorkloadShape from `_adaptive_levels`'s
     output. Generalized to support N levels (root + N-2 intermediates +
@@ -183,6 +184,7 @@ def _workload_from_levels(
         head_dim=head_dim,
         bytes_per_kv=bytes_per_kv,
         intermediate=intermediate,
+        num_qo_heads=num_qo_heads,
     )
 
 
@@ -329,6 +331,7 @@ def _workload_from_cache(
     head_dim: int,
     dtype_bytes: int,
     lpl: int,
+    num_qo_heads: int = 0,
 ) -> WorkloadShape:
     """Rebuild the ``WorkloadShape`` from cached structure + current
     lpl. Equivalent to calling ``_workload_from_levels`` on the
@@ -347,6 +350,7 @@ def _workload_from_cache(
         head_dim=head_dim,
         bytes_per_kv=2 * num_kv_heads * head_dim * dtype_bytes,
         intermediate=entry.intermediate,
+        num_qo_heads=num_qo_heads,
     )
 
 
@@ -359,6 +363,7 @@ def _entry_from_decomp(
     num_kv_heads: int,
     head_dim: int,
     dtype_bytes: int,
+    num_qo_heads: int = 0,
 ) -> tuple[_DecompCacheEntry, WorkloadShape]:
     """Build the cache entry from a fresh ``_adaptive_levels`` output
     (on cache miss). Also returns the current-step WorkloadShape so the
@@ -367,6 +372,7 @@ def _entry_from_decomp(
     # L_p and intermediate, which we need for the entry).
     w = _workload_from_levels(
         levels, K, page_size, num_kv_heads, head_dim, dtype_bytes,
+        num_qo_heads=num_qo_heads,
     )
     # Tease apart the levels into (sizes, pages, lpl) parallel lists.
     sizes_per_level = [lv[0] for lv in levels]
@@ -587,7 +593,12 @@ class BsKernelBackend:
         last_lca_per_prompt: list[int],
     ) -> StepPlan:
         ps = page_size
-        dtype_bytes = torch.tensor([], dtype=dtype).element_size()
+        # KV cache may be quantized (e.g. fp8) while compute stays bf16;
+        # the cost model's bytes_per_kv tracks HBM bytes loaded, so use
+        # the KV cache's actual element size, not the compute dtype.
+        dtype_bytes = torch.tensor(
+            [], dtype=page_table.store_dtype,
+        ).element_size()
         max_depth = wrappers.max_depth
         trace_on = bool(int(os.environ.get("BS_KERNEL_TRACE_PLAN", "0")))
         # Override fixed_split_size for the DEC_TAIL prefix wrapper plan.
@@ -636,6 +647,7 @@ class BsKernelBackend:
                 lca_b = entry.lca_b
                 w = _workload_from_cache(
                     entry, K, ps, num_kv_heads, head_dim, dtype_bytes, lpl,
+                    num_qo_heads=num_qo_heads,
                 )
                 decomp_hits += 1
             else:
@@ -649,11 +661,13 @@ class BsKernelBackend:
                     entry, w = _entry_from_decomp(
                         levels, beam_order, lca_b, K, ps,
                         num_kv_heads, head_dim, dtype_bytes,
+                        num_qo_heads=num_qo_heads,
                     )
                     self._decomp_cache[b] = (key, entry)
                 else:
                     w = _workload_from_levels(
                         levels, K, ps, num_kv_heads, head_dim, dtype_bytes,
+                        num_qo_heads=num_qo_heads,
                     )
             last_lca_per_prompt[b] = lca_b
             levels_full_per_prompt.append(levels)
