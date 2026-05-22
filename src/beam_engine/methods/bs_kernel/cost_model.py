@@ -698,9 +698,19 @@ def cost_shared_batch(
     else:
         tau_elem = c.per_tile_us.get(t_large, 0.0) * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
 
-    # First pass: collect per-pool max τ_CTA and per-(pool, level) entries.
-    pool_max_tau_cta: dict[int, float] = {}
-    pool_level_entries: dict[int, list[tuple[int, float]]] = {}  # T → [(n_ctas, tau_cta)]
+    # First pass: aggregate per-level q_tile counts ACROSS the batch.
+    # FlashInfer's split-K decision is per-level over all B prompts in
+    # the cascade (not per-workload), so the cost model must match: sum
+    # n_q_tiles across all workloads at each level *before* picking
+    # num_chunks. Otherwise at B > 1 the model over-splits L0 (each
+    # workload thinks it has too few q_tiles → aggressive split-K)
+    # which inflates L0's CTA count and shrinks τ_L0 — wrong direction
+    # for the picker on batched cells.
+    #
+    # Track per-level: total n_q_tiles across batch, L_kv (uniform per
+    # level since all prompts share dtype/shape), and a representative
+    # num_kv_heads (uniform across workloads).
+    level_aggregates: dict[tuple[int, int], dict] = {}  # (T, L_kv) → state
     bw_us = 0.0
     for w in workloads:
         levels = _per_prompt_levels(w, depth)
@@ -714,18 +724,31 @@ def cost_shared_batch(
             else:
                 T = T_SMALL if packed_phys <= T_SMALL else t_large
             n_q_tiles = g_count * max(1, _ceil_div(packed_phys, T))
-            num_chunks = _split_k_chunks_for_level(
-                n_q_tiles, L_kv,
-                num_kv_heads=w.num_kv_heads, num_sms=c.num_sms,
-            )
-            chunk_L_kv = _ceil_div(L_kv, num_chunks)
-            n_ctas = n_q_tiles * num_chunks * w.num_kv_heads
-            kv_iters_per_cta = max(1, _ceil_div(chunk_L_kv, c.cta_tile_kv))
-            tau_cta = kv_iters_per_cta * tau_elem
-            pool_level_entries.setdefault(T, []).append((n_ctas, tau_cta))
-            if tau_cta > pool_max_tau_cta.get(T, 0.0):
-                pool_max_tau_cta[T] = tau_cta
+            key = (T, L_kv)
+            state = level_aggregates.setdefault(key, {
+                "n_q_tiles": 0, "num_kv_heads": w.num_kv_heads,
+            })
+            state["n_q_tiles"] += n_q_tiles
         bw_us += _level_bw_us(levels, c)
+
+    # Now compute num_chunks once per (pool, L_kv) group using the
+    # batch-aggregated n_q_tiles, then build per-pool entry list.
+    pool_max_tau_cta: dict[int, float] = {}
+    pool_level_entries: dict[int, list[tuple[int, float]]] = {}
+    for (T, L_kv), state in level_aggregates.items():
+        n_q_tiles = state["n_q_tiles"]
+        num_kv_heads = state["num_kv_heads"]
+        num_chunks = _split_k_chunks_for_level(
+            n_q_tiles, L_kv,
+            num_kv_heads=num_kv_heads, num_sms=c.num_sms,
+        )
+        chunk_L_kv = _ceil_div(L_kv, num_chunks)
+        n_ctas = n_q_tiles * num_chunks * num_kv_heads
+        kv_iters_per_cta = max(1, _ceil_div(chunk_L_kv, c.cta_tile_kv))
+        tau_cta = kv_iters_per_cta * tau_elem
+        pool_level_entries.setdefault(T, []).append((n_ctas, tau_cta))
+        if tau_cta > pool_max_tau_cta.get(T, 0.0):
+            pool_max_tau_cta[T] = tau_cta
 
     # Equivalent-CTA wave model: convert light CTAs to "heavy-equivalent
     # units" by τ ratio, then wave-quantize the equivalents. This models
@@ -757,7 +780,34 @@ def cost_shared_batch(
         for n_ctas, tau_cta in entries:
             equiv += n_ctas * (tau_cta / max_tau)
         waves = max(1, _ceil_div(int(math.ceil(equiv)), c.num_sms))
-        compute_us += waves * max_tau
+        compute_wave_us = waves * max_tau
+
+        # Light-level overflow penalty (the C6 high-K + short-L_p case).
+        #
+        # Equivalent-CTA accounting compresses light CTAs into fractional
+        # heavy-equivalent units, assuming they hide in the heavy level's
+        # wave via work-stealing. When the heavy-τ level (typically L0)
+        # has LESS total work than the lighter level(s) (typically L1 with
+        # many thin Q-tiles in batched workloads), the light excess can't
+        # hide — there isn't enough heavy work to overlap with. Pay the
+        # excess at balanced wall rate.
+        #
+        # Fires at e.g. C6 (70B mcr K=64 B=4 L_p=500): L0 work=471 SM-µs,
+        # L1 work=1884 → overflow 1413 → +10.7 µs forces correct DT pick.
+        # Doesn't fire when L0 dominates (the typical regime: long prefix
+        # with few beams), so no regression on the 1POOL-favoring cells.
+        # See benchmarks/bs_kernel/verify_picker_demo_oracle.py.
+        heavy_work_us = 0.0
+        light_work_us = 0.0
+        for n_ctas, tau_cta in entries:
+            work = n_ctas * tau_cta
+            if abs(tau_cta - max_tau) < 1e-9:
+                heavy_work_us += work
+            else:
+                light_work_us += work
+        light_overflow_us = max(0.0, light_work_us - heavy_work_us) / max(1, c.num_sms)
+
+        compute_us += compute_wave_us + light_overflow_us
 
     merge_rounds = int(math.ceil(math.log2(max(2, depth))))
     merge_us = merge_rounds * c.merge_launch_us
