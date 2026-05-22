@@ -854,6 +854,7 @@ def cost_shared_batch(
     # neither dominates — equivalent-CTA wins because it preserves the
     # user-flagged C3 mispick.
     compute_us = 0.0
+    total_waves = 0
     for T, entries in pool_level_entries.items():
         max_tau = pool_max_tau_cta.get(T, 0.0)
         if max_tau <= 0.0:
@@ -862,6 +863,7 @@ def cost_shared_batch(
         for n_ctas, tau_cta in entries:
             equiv += n_ctas * (tau_cta / max_tau)
         waves = max(1, _ceil_div(int(math.ceil(equiv)), c.num_sms))
+        total_waves += waves
         compute_wave_us = waves * max_tau
 
         # Light-level overflow penalty (the C6 high-K + short-L_p case).
@@ -900,28 +902,25 @@ def cost_shared_batch(
     # empirical formula.
     thrash_us = _cross_level_thrash_us(workloads, c, depth)
 
-    # Batch-gated bw/compute overlap.
+    # Wave-count-and-batch-gated bw/compute overlap.
     #
-    # FlashAttention-style kernels pipeline HBM with MMA so that wall
-    # time ≈ max(bw, compute) when the kernel runs in 1-2 waves. As
-    # batch size grows the wave count grows, multiple waves contend for
-    # one HBM controller, and the overlap breaks down — additive
-    # bw + compute is closer to truth. We gate on B (= len(workloads))
-    # since it's the cleanest proxy for wave count given the picker's
-    # other inputs are uniform across the batch.
-    #
-    # Empirical pivot at B=8 on the picker_demo grid:
-    #   * B≤8 cells (A1-A5, B1-B5, C1-C6, D4): 1POOL/DT margins are
-    #     within ν_decode (~5%); max-overlap correctly resolves them.
-    #   * B≥16 cells (D-row at K=16/32, B≥16): real 1POOL is 5-17%
-    #     slower than DT because the L1 wave doesn't hide; additive
-    #     captures that.
-    # See benchmarks/bs_kernel/verify_picker_demo_oracle.py.
+    # FA-style kernels pipeline HBM with MMA so that wall ≈ max(bw,
+    # compute) only when:
+    #   (a) the kernel runs in ≤ 2 waves (so compute can hide under bw
+    #       within a wave), AND
+    #   (b) per-wave HBM demand fits the bandwidth budget — which
+    #       roughly tracks B. At high B each wave's KV reads multiply
+    #       and the controller saturates regardless of wave count.
+    # Either condition failing pushes the kernel toward additive
+    # bw + compute. ``total_waves`` is the sum of per-pool wave counts
+    # under the equivalent-CTA model.
     B = len(workloads)
-    if B <= 8:
-        work_us = max(bw_us, compute_us + thrash_us)
-    else:
-        work_us = bw_us + compute_us + thrash_us
+    well_pipelined = (total_waves <= 2) and (B <= 8)
+    work_us = (
+        max(bw_us, compute_us + thrash_us)
+        if well_pipelined
+        else bw_us + compute_us + thrash_us
+    )
 
     return work_us + merge_us
 
