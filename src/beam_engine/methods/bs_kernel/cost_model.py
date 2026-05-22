@@ -318,6 +318,47 @@ _MIN_KV_CHUNK_TOKENS = 128
 _SPLIT_K_PAGE_SIZE = 16  # mirrors page_size used in cascade.py heuristic
 
 
+# L2 cache size used by the cross-level thrash term in cost_shared_batch.
+# H100=50 MB, A100=40 MB, A6000/RTX-Ada≈40-100 MB. Conservative default
+# = H100 size; future work: thread per-device value from calibrate.
+_L2_SIZE_BYTES_DEFAULT = 50 * 1024 * 1024
+# Empirical fit from benchmarks/bs_kernel/probe_c3_K_sweep.py at K ≥ 32
+# on H100 + bf16 KV. Over-predicts at K ≤ 16 (where interference is
+# small anyway). Captures the C3-style mispick mechanism (L1's K
+# disjoint per-beam KV slabs evict L0's prefix lines when L0's working
+# set exceeds L2).
+_THRASH_ALPHA = 0.025
+
+
+def _cross_level_thrash_us(
+    workloads: list["WorkloadShape"], c: "Coefficients", depth: int,
+) -> float:
+    """Cross-level L2-thrash penalty for fused cascade (1POOL).
+
+    Activates when L0's prefix working set exceeds L2 capacity AND
+    there are ≥ 2 cascade levels in one kernel launch. L1's per-beam
+    KV-slab accesses pollute L0's lines in L2, forcing L0 to refetch
+    pages from HBM between scans.
+
+    Formula (empirical, see project memory + probe_c3_K_sweep.py):
+        interference = α × K × max(0, L_p × bpkv − L2_size) / B_hbm
+    Activates per workload (so batched cells with B prompts sum the
+    interference). Not applied for DEC_TAIL because it splits L0 and
+    L1 into separate kernel launches → each kernel's working set is
+    smaller and fits L2 (or at least doesn't get evicted by the
+    other level mid-scan).
+    """
+    if depth < 2:
+        return 0.0
+    total = 0.0
+    for w in workloads:
+        L_p_bytes = w.L_p * w.bytes_per_kv
+        excess = max(0, L_p_bytes - _L2_SIZE_BYTES_DEFAULT)
+        if excess > 0:
+            total += _THRASH_ALPHA * w.K * excess / c.B_hbm
+    return total
+
+
 def _split_k_chunks_for_level(
     n_q_tiles_level: int,
     L_kv: int,
@@ -721,7 +762,13 @@ def cost_shared_batch(
     merge_rounds = int(math.ceil(math.log2(max(2, depth))))
     merge_us = merge_rounds * c.merge_launch_us
 
-    return bw_us + compute_us + merge_us
+    # Cross-level L2 cache-thrash penalty (the C3-mispick mechanism).
+    # See _cross_level_thrash_us docstring + project memory
+    # [[project_cascade_l2_thrash]] for the L_p × K × (excess over L2)
+    # empirical formula.
+    thrash_us = _cross_level_thrash_us(workloads, c, depth)
+
+    return bw_us + compute_us + merge_us + thrash_us
 
 
 def _per_prompt_levels_no_tail(
