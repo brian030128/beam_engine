@@ -820,13 +820,41 @@ def cost_shared_batch(
     # on HBM refetches during compute, not extra independent bw).
     thrash_us = _cross_level_thrash_us(workloads, c, depth)
 
-    # FA-style kernels pipeline HBM loads with MMA so within one
-    # kernel launch compute and bandwidth overlap rather than add.
-    # Use max(bw, compute) — the additive form over-predicts 1POOL on
-    # bw-bound batched cells (B=4-8 with moderate K) where compute is
-    # half of bw. L2-thrash adds to compute (it's effectively a
-    # compute-time penalty paid while waiting for HBM refetches).
-    work_us = max(bw_us, compute_us + thrash_us)
+    # Conditional bw/compute overlap.
+    #
+    # FA-style kernels pipeline HBM with MMA → max(bw, compute) is
+    # accurate when one leg dominates. But that depends on whether
+    # compute hides under bw at the WAVE level, which in turn depends
+    # on whether the pool contains a mix of heavy and light CTAs:
+    #
+    # * Asymmetric pool (τ_max ≫ τ_min): light CTAs absorb into heavy
+    #   waves' spare-time via work-stealing → bw and compute overlap
+    #   → ``max(bw, compute)``. This is the picker_demo regime
+    #   (A4/A5/B4/B5 etc with L_tail≈80, τ_L1≈1.8 vs τ_L0≈12-77).
+    #
+    # * Symmetric pool (τ_max ≈ τ_min): all CTAs equally heavy, no
+    #   spare-time to hide L1 in → compute serializes with bw at the
+    #   wave level → ``bw + compute``. This is the long-decode regime
+    #   (exp2_dispatch_ablation_tp2_8b: L_tail=1750, τ_L1≈26 vs
+    #   τ_L0≈29 — within 1.2×).
+    #
+    # Threshold of 3× empirically captures both regimes on the
+    # picker_demo + exp2_dispatch_ablation corpus. The lowest-asymmetry
+    # picker_demo cell is C6/A5 with τ_max/τ_min = 4 (max form correct);
+    # exp2 at L_tail=2000 has τ_max/τ_min ∈ {1.0, 2.0} (additive correct).
+    pool_taus = [
+        tau for entries in pool_level_entries.values()
+        for _, tau in entries if tau > 0
+    ]
+    tau_max = max(pool_taus) if pool_taus else 0.0
+    tau_min = min(pool_taus) if pool_taus else 0.0
+    symmetric = (
+        tau_min > 0 and len(pool_taus) >= 2 and tau_max / tau_min < 3.0
+    )
+    if symmetric:
+        work_us = bw_us + compute_us + thrash_us
+    else:
+        work_us = max(bw_us, compute_us + thrash_us)
 
     return work_us + merge_us
 
