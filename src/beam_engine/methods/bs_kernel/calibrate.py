@@ -42,7 +42,10 @@ from pathlib import Path
 
 import torch
 
-from .cost_model import Coefficients, T_LARGE_CHOICES, T_SMALL
+from .cost_model import (
+    Coefficients, T_LARGE_CHOICES, T_SMALL,
+    PER_TILE_L_KV_REF, PER_TILE_L_KV_LONG,
+)
 
 
 _DEFAULT_CACHE_DIR = Path.home() / ".cache" / "beam_engine"
@@ -94,6 +97,7 @@ def _to_payload(c: Coefficients) -> dict:
         "merge_launch_us": c.merge_launch_us,
         "merge_bw_us_per_row": c.merge_bw_us_per_row,
         "per_tile_us": {str(k): v for k, v in c.per_tile_us.items()},
+        "per_tile_per_kv_us": {str(k): v for k, v in c.per_tile_per_kv_us.items()},
         "num_sms": c.num_sms,
         "decode_us_per_beam_kv_token": c.decode_us_per_beam_kv_token,
         "decode_launch_us": c.decode_launch_us,
@@ -112,6 +116,14 @@ def _from_payload(d: dict) -> Coefficients:
         merge_launch_us=d.get("merge_launch_us", legacy_merge_us),
         merge_bw_us_per_row=d.get("merge_bw_us_per_row", 0.0),
         per_tile_us={int(k): v for k, v in d["per_tile_us"].items()},
+        # CTA-granularity wave model requires per_tile_per_kv_us. Older
+        # caches omitted it (the legacy elemental-sub-tile model fell back
+        # to per_tile_us / PER_TILE_L_KV_REF). Default 0 so cost_model
+        # uses its fallback for legacy caches.
+        per_tile_per_kv_us=(
+            {int(k): v for k, v in d["per_tile_per_kv_us"].items()}
+            if "per_tile_per_kv_us" in d else {16: 0.0, 64: 0.0, 128: 0.0}
+        ),
         num_sms=d.get("num_sms", 84),
         decode_us_per_beam_kv_token=d.get("decode_us_per_beam_kv_token", 0.0008),
         decode_launch_us=d.get("decode_launch_us", 6.0),
@@ -270,16 +282,21 @@ def measure_decode_per_kv_us(
     n: int = 50,
     dtype: torch.dtype = torch.float16,
     BS_pairs: tuple[tuple[int, int], ...] = (
-        # All four samples are bw-bound — the OLS fit then disambiguates
-        # ``per_kv_token`` (slope) from ``launch_us`` (intercept) via the
-        # 8x span in (BS × L_kv). Adding very-small-BS samples
-        # (e.g. BS=64) was tried and DOESN'T help: those samples are
-        # ALSO bw-bound and just shift the fitted intercept upward by
-        # ~50 µs, making the picker over-charge DEC_TAIL's launch cost
-        # and mis-pick FUSED on K=64/B=8 cells where DEC_TAIL is
-        # empirically faster. The launch term can't be separated from
-        # bw with bw-bound-only samples; we keep the original 4 high-BS
-        # samples and rely on the (small) intercept the fit produces.
+        # Eight samples spanning two regimes:
+        #   - L2-resident / launch-dominated: (32, 128), (32, 256),
+        #     (64, 128), (64, 256) — the working set fits in the H100's
+        #     ~50 MB L2, so the kernel's effective BW exceeds the
+        #     all-HBM rate and the intercept reflects warm-pipeline
+        #     launch cost (not the empty-kernel measurement). This is
+        #     the regime real beam-search decode cells (K=32-64 with
+        #     short tails) actually live in.
+        #   - HBM-bound: (256, 256), (256, 1024), (2048, 64), (2048, 256)
+        #     — large BS×L_kv pushes past L2 and the slope tracks HBM
+        #     bandwidth.
+        # OLS over both regimes gives a slope and intercept biased
+        # toward the small-BS / short-tail behavior that matters for
+        # the picker on multi_doc_qa-style cells.
+        (32, 128), (32, 256), (64, 128), (64, 256),
         (256, 256), (256, 1024), (2048, 64), (2048, 256),
     ),
 ) -> tuple[float, float]:
@@ -397,6 +414,41 @@ def measure_per_tile_us(
     return _time_event_us(lambda: wrapper.run(q, kv), n, device=device)
 
 
+def measure_per_tile_per_kv_us(
+    device: torch.device,
+    T: int,
+    *,
+    num_kv_heads: int = 8,
+    num_qo_heads: int = 32,
+    head_dim: int = 128,
+    page_size: int = 16,
+    n: int = 50,
+    dtype: torch.dtype = torch.float16,
+) -> float:
+    """Two-point fit of the per-(kv-token) slope at fixed q_tile (T queries).
+
+    Times prefill at L_kv ∈ {PER_TILE_L_KV_REF, PER_TILE_L_KV_LONG}, then
+    fits slope = (t_long − t_ref) / (L_kv_long − L_kv_ref). The intercept
+    (launch + per-call overhead) cancels. The CTA-granularity wave model
+    consumes this slope as the per-(T_Q,T_KV) MMA cost (via
+    τ_elem = slope · cta_tile_kv).
+    """
+    t_ref = measure_per_tile_us(
+        device, T,
+        num_kv_heads=num_kv_heads, num_qo_heads=num_qo_heads,
+        head_dim=head_dim, L_kv=PER_TILE_L_KV_REF, page_size=page_size,
+        n=n, dtype=dtype,
+    )
+    t_long = measure_per_tile_us(
+        device, T,
+        num_kv_heads=num_kv_heads, num_qo_heads=num_qo_heads,
+        head_dim=head_dim, L_kv=PER_TILE_L_KV_LONG, page_size=page_size,
+        n=n, dtype=dtype,
+    )
+    dt = max(0.0, t_long - t_ref)
+    return dt / float(PER_TILE_L_KV_LONG - PER_TILE_L_KV_REF)
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -457,6 +509,10 @@ def calibrate(
         merge_bw_us_per_row=merge_bw_per_row,
         per_tile_us={
             T: measure_per_tile_us(device, T)
+            for T in (T_SMALL, *T_LARGE_CHOICES)
+        },
+        per_tile_per_kv_us={
+            T: measure_per_tile_per_kv_us(device, T)
             for T in (T_SMALL, *T_LARGE_CHOICES)
         },
         num_sms=num_sms,

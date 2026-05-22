@@ -22,4 +22,4 @@ echo "Node: $(hostname)"
 echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
 echo
 
-uv run python benchmarks/bs_kernel/probe_cascade_thin_q.py --sweep-l0-chunks
+uv run python benchmarks/bs_kernel/verify_cta_granularity.py

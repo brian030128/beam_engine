@@ -140,17 +140,20 @@ def derive_T(K: int, gqa_group_size: int) -> int:
 
 
 def main():
-    # H100-tuned defaults for the calibrated coefficients used by the
-    # picker on this branch. num_sms=132 (H100), per_tile_per_kv_us[128]
-    # roughly matches the probe's empirical slope at T=128 (0.014349
-    # µs/token/sub-tile × cta_tile_kv=64 → 0.918 µs/elem-sub-tile).
-    c = Coefficients(
-        num_sms=132,
-        cta_tile_kv=64,
-        per_tile_per_kv_us={64: 0.014349, 128: 0.014349, T_SMALL: 0.014349},
-        per_wave_overhead_us={64: 0.0, 128: 0.0, T_SMALL: 0.0},
-        merge_launch_us=0.0,
-    )
+    # Use the H100 calibrated coefficients written by the recalibration
+    # job. Read the JSON cache directly so this runs without a GPU.
+    import json
+    from pathlib import Path
+    from beam_engine.methods.bs_kernel.calibrate import _from_payload
+    cache = Path.home() / ".cache/beam_engine/coeffs-NVIDIA_H100_80GB_HBM3.json"
+    if cache.exists():
+        c = _from_payload(json.loads(cache.read_text()))
+        print(f"[verify] loaded H100 calibrated coefficients from {cache}")
+    else:
+        c = Coefficients(num_sms=132, per_tile_per_kv_us={
+            16: 0.0141, 64: 0.0144, 128: 0.0144,
+        })
+        print("[verify] H100 cache not found, using fallback defaults")
 
     # (K, L_p, L_tail, T_num1_observed_us, T_num2_observed_us, Δ_observed_us)
     # — from probe_cascade_thin_q.py run (T=128 forced for all rows).
