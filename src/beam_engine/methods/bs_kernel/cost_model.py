@@ -765,10 +765,20 @@ def cost_shared_batch(
     # Cross-level L2 cache-thrash penalty (the C3-mispick mechanism).
     # See _cross_level_thrash_us docstring + project memory
     # [[project_cascade_l2_thrash]] for the L_p × K × (excess over L2)
-    # empirical formula.
+    # empirical formula. Combined with max(bw, compute) below, the
+    # thrash term lands inside the compute leg (it's a stall waiting
+    # on HBM refetches during compute, not extra independent bw).
     thrash_us = _cross_level_thrash_us(workloads, c, depth)
 
-    return bw_us + compute_us + merge_us + thrash_us
+    # FA-style kernels pipeline HBM loads with MMA so within one
+    # kernel launch compute and bandwidth overlap rather than add.
+    # Use max(bw, compute) — the additive form over-predicts 1POOL on
+    # bw-bound batched cells (B=4-8 with moderate K) where compute is
+    # half of bw. L2-thrash adds to compute (it's effectively a
+    # compute-time penalty paid while waiting for HBM refetches).
+    work_us = max(bw_us, compute_us + thrash_us)
+
+    return work_us + merge_us
 
 
 def _per_prompt_levels_no_tail(
@@ -861,7 +871,10 @@ def cost_decode_tail_batch(
     tau_cta = kv_iters_per_cta * tau_tail_elem
     waves = max(1, _ceil_div(n_ctas, c.num_sms))
     work_us = waves * tau_cta
-    return c.decode_launch_us + bw_us + work_us
+    # Within the decode kernel, HBM load and MMA pipeline overlap →
+    # max(bw, work) is more accurate than sum (matches the form used
+    # by cost_shared_batch and cost_dec_tail_batch's prefix term).
+    return c.decode_launch_us + max(bw_us, work_us)
 
 
 def cost_dec_tail_batch(
@@ -943,7 +956,9 @@ def cost_dec_tail_batch(
 
     merge_rounds = int(math.ceil(math.log2(max(2, depth))))
     merge_us = merge_rounds * c.merge_launch_us
-    prefix_us = bw_us + prefix_compute_us + merge_us
+    # Prefix kernel: max(bw, compute) within the launch (FA pipelines
+    # HBM with MMA). See cost_shared_batch for rationale.
+    prefix_us = max(bw_us, prefix_compute_us) + merge_us
 
     # Tail under decode kernel — max(bw, wave-quantized elemental compute).
     tail_us = cost_decode_tail_batch(workloads, c)
