@@ -210,23 +210,37 @@ def main():
     print(f"\n MAE  OLD: {err_sum_old/len(shapes):>7.2f}  "
           f"NEW: {err_sum_new/len(shapes):>7.2f}  µs")
 
-    # End-to-end check: actual refactored cost_shared_batch (depth=2).
-    # We have no observed T for Config A through this API (it asserts
-    # depth>=2), so we only compare Config B predicted vs observed T_num2.
-    print("\n=== Refactored cost_shared_batch (depth=2): total predicted vs observed T_num2 ===")
-    h2 = f"{'K':>3} {'L_p':>6} {'L_tail':>6} | {'obs T_num2':>10} | {'pred':>8} | {'err':>8}"
+    # End-to-end check: cost_shared_batch Δ via "Config A equivalent"
+    # (suffix_lens=[0] drops the per-beam tail level in _per_prompt_levels).
+    print("\n=== Refactored cost_shared_batch: T_num2 and Δ predicted vs observed ===")
+    h2 = (f"{'K':>3} {'L_p':>6} {'L_tail':>6} | "
+          f"{'obs T2':>7} {'pred T2':>7} {'err T2':>7} | "
+          f"{'obs Δ':>7} {'pred Δ':>7} {'err Δ':>7}")
     print(h2)
     print("-" * len(h2))
-    for (K, L_p, L_tail, _, obs_t2, _) in shapes:
-        w = WorkloadShape(
+    abs_err_dt = 0.0
+    for (K, L_p, L_tail, obs_t1, obs_t2, obs_dt) in shapes:
+        T = derive_T(K, gqa)
+        w_B = WorkloadShape(
             K=K, L_p=L_p, suffix_lens=[L_tail] * K,
             num_kv_heads=num_kv_heads, head_dim=128,
-            bytes_per_kv=bytes_per_kv,
-            num_qo_heads=num_qo_heads,
+            bytes_per_kv=bytes_per_kv, num_qo_heads=num_qo_heads,
         )
-        pred = cost_shared_batch([w], c, depth=2, pool_count=1, t_large=derive_T(K, gqa))
-        err = pred - obs_t2
-        print(f"{K:>3} {L_p:>6} {L_tail:>6} | {obs_t2:>10.2f} | {pred:>8.2f} | {err:>+8.2f}")
+        w_A = WorkloadShape(
+            K=K, L_p=L_p, suffix_lens=[0] * K,
+            num_kv_heads=num_kv_heads, head_dim=128,
+            bytes_per_kv=bytes_per_kv, num_qo_heads=num_qo_heads,
+        )
+        pred_t2 = cost_shared_batch([w_B], c, depth=2, pool_count=1, t_large=T)
+        pred_t1 = cost_shared_batch([w_A], c, depth=2, pool_count=1, t_large=T)
+        pred_dt = pred_t2 - pred_t1
+        err_t2 = pred_t2 - obs_t2
+        err_dt = pred_dt - obs_dt
+        abs_err_dt += abs(err_dt)
+        print(f"{K:>3} {L_p:>6} {L_tail:>6} | "
+              f"{obs_t2:>7.2f} {pred_t2:>7.2f} {err_t2:>+7.2f} | "
+              f"{obs_dt:>7.2f} {pred_dt:>7.2f} {err_dt:>+7.2f}")
+    print(f"\n cost_shared_batch Δ MAE: {abs_err_dt/len(shapes):>7.2f} µs")
 
 
 if __name__ == "__main__":

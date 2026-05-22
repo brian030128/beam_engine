@@ -688,6 +688,12 @@ def cost_shared_batch(
                 pool_max_tau_cta[T] = tau_cta
         bw_us += _level_bw_us(levels, c)
 
+    # Wave capacity = num_sms (1 CTA/SM at T_large, empirically — the
+    # FlashInfer smem check says 2 CTAs/SM should fit at T=128 on H100,
+    # but verification (verify_cta_granularity.py) shows the kernel
+    # behaves as if 1 CTA/SM at K=32 and 2 at K=64. Without per-workload
+    # occupancy data we use the conservative 1 CTA/SM; the K=64 residual
+    # over-predicts Δ but doesn't flip picker rankings.
     compute_us = 0.0
     for T, n_ctas in pool_ctas.items():
         waves = max(1, _ceil_div(n_ctas, c.num_sms))
