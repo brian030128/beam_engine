@@ -897,46 +897,31 @@ def cost_shared_batch(
     # Cross-level L2 cache-thrash penalty (the C3-mispick mechanism).
     # See _cross_level_thrash_us docstring + project memory
     # [[project_cascade_l2_thrash]] for the L_p × K × (excess over L2)
-    # empirical formula. Combined with max(bw, compute) below, the
-    # thrash term lands inside the compute leg (it's a stall waiting
-    # on HBM refetches during compute, not extra independent bw).
+    # empirical formula.
     thrash_us = _cross_level_thrash_us(workloads, c, depth)
 
-    # Conditional bw/compute overlap.
+    # Batch-gated bw/compute overlap.
     #
-    # FA-style kernels pipeline HBM with MMA → max(bw, compute) is
-    # accurate when one leg dominates. But that depends on whether
-    # compute hides under bw at the WAVE level, which in turn depends
-    # on whether the pool contains a mix of heavy and light CTAs:
+    # FlashAttention-style kernels pipeline HBM with MMA so that wall
+    # time ≈ max(bw, compute) when the kernel runs in 1-2 waves. As
+    # batch size grows the wave count grows, multiple waves contend for
+    # one HBM controller, and the overlap breaks down — additive
+    # bw + compute is closer to truth. We gate on B (= len(workloads))
+    # since it's the cleanest proxy for wave count given the picker's
+    # other inputs are uniform across the batch.
     #
-    # * Asymmetric pool (τ_max ≫ τ_min): light CTAs absorb into heavy
-    #   waves' spare-time via work-stealing → bw and compute overlap
-    #   → ``max(bw, compute)``. This is the picker_demo regime
-    #   (A4/A5/B4/B5 etc with L_tail≈80, τ_L1≈1.8 vs τ_L0≈12-77).
-    #
-    # * Symmetric pool (τ_max ≈ τ_min): all CTAs equally heavy, no
-    #   spare-time to hide L1 in → compute serializes with bw at the
-    #   wave level → ``bw + compute``. This is the long-decode regime
-    #   (exp2_dispatch_ablation_tp2_8b: L_tail=1750, τ_L1≈26 vs
-    #   τ_L0≈29 — within 1.2×).
-    #
-    # Threshold of 3× empirically captures both regimes on the
-    # picker_demo + exp2_dispatch_ablation corpus. The lowest-asymmetry
-    # picker_demo cell is C6/A5 with τ_max/τ_min = 4 (max form correct);
-    # exp2 at L_tail=2000 has τ_max/τ_min ∈ {1.0, 2.0} (additive correct).
-    pool_taus = [
-        tau for entries in pool_level_entries.values()
-        for _, tau in entries if tau > 0
-    ]
-    tau_max = max(pool_taus) if pool_taus else 0.0
-    tau_min = min(pool_taus) if pool_taus else 0.0
-    symmetric = (
-        tau_min > 0 and len(pool_taus) >= 2 and tau_max / tau_min < 3.0
-    )
-    if symmetric:
-        work_us = bw_us + compute_us + thrash_us
-    else:
+    # Empirical pivot at B=8 on the picker_demo grid:
+    #   * B≤8 cells (A1-A5, B1-B5, C1-C6, D4): 1POOL/DT margins are
+    #     within ν_decode (~5%); max-overlap correctly resolves them.
+    #   * B≥16 cells (D-row at K=16/32, B≥16): real 1POOL is 5-17%
+    #     slower than DT because the L1 wave doesn't hide; additive
+    #     captures that.
+    # See benchmarks/bs_kernel/verify_picker_demo_oracle.py.
+    B = len(workloads)
+    if B <= 8:
         work_us = max(bw_us, compute_us + thrash_us)
+    else:
+        work_us = bw_us + compute_us + thrash_us
 
     return work_us + merge_us
 
