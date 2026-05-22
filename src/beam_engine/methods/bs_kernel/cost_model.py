@@ -781,21 +781,28 @@ def cost_dec_tail_batch(
     c: Coefficients,
     *,
     depth: int,
+    t_large: int = 64,
 ) -> float:
     """Hybrid: prefix (and optional intermediate) via prefill cascade +
     per-beam tail via paged decode + 1 (or 2) merges.
 
-    All prompts share one ``depth``. depth=N (N ≥ 3) requires every
-    prompt's workload to have at least N-2 intermediate levels;
-    the picker filters that.
+    All prompts share one ``(depth, t_large)``. ``t_large`` is the
+    CTA_TILE_Q the kernel will use for the prefix-side fused cascade
+    (FlashInfer's adaptive router picks it from the prefix's packed
+    Q size; the picker enumerates both ``T_LARGE_CHOICES`` so it can
+    mirror that choice — see ``pick_strategy_batch``).
 
-    The prefix-side cost is priced like ``cost_shared_batch`` with
-    pool_count=1 and t_large=64 (the common case at K∈{16,64} for
-    Llama-3.2-1B: packed_qo at the prefix level is K, not 1, so it's
-    typically wide enough to use T=64). The tail-side cost is priced
-    by ``cost_decode_tail_batch``.
+    Previous hardcode ``t_large=64`` over-priced the prefix at high-GQA
+    workloads (e.g. 70B with packed_qo=K·8=256 → kernel routes to T=128,
+    but model priced at T=64 → kv_iters per CTA doubles, compute
+    doubles). This biased the picker against DEC_TAIL on 70B C3 cells
+    where DT is empirically faster.
+
+    depth=N (N ≥ 3) requires every prompt's workload to have at least
+    N-2 intermediate levels; the picker filters that.
     """
     assert depth >= 2, depth
+    assert t_large in T_LARGE_CHOICES, t_large
     if depth >= 3:
         n_inter_needed = depth - 2
         for w in workloads:
@@ -809,9 +816,7 @@ def cost_dec_tail_batch(
 
     # CTA-granularity wave model for the prefix-side fused-cascade launch.
     # See ``cost_shared_batch`` for rationale and the formula breakdown.
-    # The DEC_TAIL prefix uses pool_count=1 and t_large=64 (per the
-    # existing convention here).
-    t_large_prefix = 64
+    t_large_prefix = t_large
     slope = c.per_tile_per_kv_us.get(t_large_prefix, 0.0)
     if slope > 0:
         tau_elem = slope * c.cta_tile_kv
@@ -968,16 +973,21 @@ def pick_strategy_batch(
                 candidates.append((s, cs, t_large, depth, pool_count))
 
     # DEC_TAIL candidates: prefix(/intermediates) prefill + decode tail +
-    # merge. T_large doesn't apply to the tail (decode kernel is CTA_Q=1);
-    # we record T_large=64 for the prefix-side picker hint.
+    # merge. T_large applies to the prefix-side fused cascade (the tail's
+    # decode kernel is CTA_Q=1, T_large doesn't apply there). Enumerate
+    # both T_LARGE_CHOICES so the picker can mirror what FlashInfer's
+    # adaptive router would pick (T=128 for high-GQA / large packed Q,
+    # T=64 for narrower Q). Previously hardcoded to T=64, which inflated
+    # prefix compute at 70B-class GQA and biased the picker against DT.
     for depth in range(2, enum_max_depth + 1):
         s = _strategy_for(depth, "dec_tail", 1)
         if s not in available_strategies:
             continue
-        cs = cost_dec_tail_batch(workloads, c, depth=depth)
-        tag = f"shared_d{depth}_dec_tail"
-        debug[tag] = cs
-        candidates.append((s, cs, 64, depth, 1))
+        for t_large in T_LARGE_CHOICES:
+            cs = cost_dec_tail_batch(workloads, c, depth=depth, t_large=t_large)
+            tag = f"shared_d{depth}_dec_tail_t{t_large}"
+            debug[tag] = cs
+            candidates.append((s, cs, t_large, depth, 1))
 
     if available_strategies is not None:
         filtered = [cand for cand in candidates if cand[0] in available_strategies]

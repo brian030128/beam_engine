@@ -44,15 +44,34 @@ def main():
         (16,   8192,  128, 8),
         (32,   8192,  128, 8),
     ]
-    num_kv_heads = 4    # match the probe
-    num_qo_heads = 64   # match the probe
+    print("=== Shapes-1: Llama-3 GQA=16 (num_qo_heads=64, num_kv_heads=4) ===\n")
+    _scan(shapes, c, num_qo_heads=64, num_kv_heads=4)
+
+    # 70B C3 cell (TP=2): num_qo_heads=32, num_kv_heads=4, fp8 KV → bpkv=1024.
+    print("\n=== Shapes-2: 70B-FP8 TP=2 (num_qo_heads=32, num_kv_heads=4, fp8 KV) ===\n")
+    _scan(
+        [
+            # C3 mispick shape from project_70b_fp8_picker_recalibrate.
+            (32,  8192,  150, 1),
+            (32, 32768,  150, 1),
+            (32, 86000,  150, 1),
+            (64,  8192,  150, 1),
+            (64, 32768,  150, 1),
+        ],
+        c, num_qo_heads=32, num_kv_heads=4,
+        bytes_per_kv=2 * 4 * 128 * 1,   # fp8 KV cache
+    )
+
+
+def _scan(shapes, c, *, num_qo_heads, num_kv_heads, bytes_per_kv=None):
     head_dim = 128
-    bytes_per_kv = 2 * num_kv_heads * head_dim * 2
+    if bytes_per_kv is None:
+        bytes_per_kv = 2 * num_kv_heads * head_dim * 2  # bf16
 
     print(f"{'K':>3} {'L_p':>6} {'L_tail':>6} {'B':>3} | "
-          f"{'pick (NEW)':>16} | "
-          f"{'C_fused 2L':>10} {'C_dt 2L':>10} {'C_paged':>10}")
-    print("-" * 85)
+          f"{'pick (NEW)':>22} | "
+          f"{'C_fused128':>10} {'C_dt T128':>10} {'C_dt T64':>10} {'C_paged':>10}")
+    print("-" * 100)
 
     for K, L_p, L_tail, B in shapes:
         w = WorkloadShape(
@@ -64,17 +83,17 @@ def main():
         wl = [w] * B
         result = pick_strategy_batch(wl, c)
 
-        # Itemize key candidates for transparency.
-        c_fused_2l_1p_128 = cost_shared_batch(wl, c, depth=2, pool_count=1, t_large=128)
-        c_dt_2l = cost_dec_tail_batch(wl, c, depth=2)
+        c_fused_t128 = cost_shared_batch(wl, c, depth=2, pool_count=1, t_large=128)
+        c_dt_t128 = cost_dec_tail_batch(wl, c, depth=2, t_large=128)
+        c_dt_t64 = cost_dec_tail_batch(wl, c, depth=2, t_large=64)
         c_paged = cost_per_beam_batch(wl, c)
 
         pick_label = f"{result.strategy.name}"
         if hasattr(result, "t_large"):
             pick_label += f"/T={result.t_large}"
         print(f"{K:>3} {L_p:>6} {L_tail:>6} {B:>3} | "
-              f"{pick_label:>16} | "
-              f"{c_fused_2l_1p_128:>10.2f} {c_dt_2l:>10.2f} {c_paged:>10.2f}")
+              f"{pick_label:>22} | "
+              f"{c_fused_t128:>10.2f} {c_dt_t128:>10.2f} {c_dt_t64:>10.2f} {c_paged:>10.2f}")
 
 
 if __name__ == "__main__":
