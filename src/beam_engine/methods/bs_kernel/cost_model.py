@@ -732,16 +732,21 @@ def _per_prompt_levels_no_tail(
 def cost_decode_tail_batch(
     workloads: list[WorkloadShape], c: Coefficients,
 ) -> float:
-    """Tail term: decode_launch_us + max(B_tail/β, ⌈R·⌈L̄_tail/CTA_K⌉/N_SM⌉·τ_tail_elem).
+    """Tail term for the DEC_TAIL strategies: decode_launch + bw + compute.
 
-    R = Σ_b K_b is the total decode-kernel CTA count (one CTA per beam,
-    CTA_Q=1). Each CTA iterates over its tail KV in chunks of CTA_K
-    tokens (cta_tile_kv_decode), giving ⌈L̄_tail/CTA_K⌉ elemental
-    sub-tiles per CTA. KV split distributes those sub-tiles across SMs,
-    so the wave-quantized compute term divides total sub-tiles by N_SM.
-
-    τ_tail_elem = decode_us_per_beam_kv_token · CTA_K is the per-elemental
-    sub-tile cost (derived from the per-(beam, KV-token) calibration).
+    CTA-granularity wave model (mirroring ``cost_shared_batch``):
+      * Each beam is one CTA (CTA_Q=1) in the decode kernel.
+      * When ``n_beams < num_sms``, FlashInfer's decode kernel does
+        internal split-KV: each beam's KV is split into ``split_kv``
+        chunks, spawning ``n_beams · split_kv`` total CTAs to fill SMs.
+        We mirror the heuristic ``split_kv ≈ num_sms / n_beams``,
+        clamped so each chunk holds ≥ ``cta_tile_kv_decode`` tokens.
+      * Per-CTA τ = ⌈(mean_tail / split_kv) / cta_tile_kv_decode⌉ ·
+        τ_tail_elem (each CTA iterates its KV slice sequentially in
+        elemental tiles, like ``cost_shared_batch`` does for prefill).
+      * Compute = ⌈total_CTAs / num_sms⌉ · τ_CTA — one wave when
+        split-KV saturates SMs, multiple waves at large K when no
+        split-KV is needed.
 
     Bandwidth and compute are summed (not max'd) — the previous max
     form assumed perfect overlap inside the decode kernel; the additive
@@ -749,12 +754,14 @@ def cost_decode_tail_batch(
     when its tail-side compute is non-trivial.
 
     The extra ``decode_launch_us`` term accounts for the extra kernel
-    launch DEC_TAIL pays over FUSED: FUSED fires one fused-cascade
-    prefill (+ merges), DEC_TAIL fires one prefill-on-prefix AND a
-    separate decode kernel for the tail. Without this term the picker
+    launch DEC_TAIL pays over FUSED. Without this term the picker
     misses the FUSED-vs-DECTAIL crossover at small-B / long-L_p where
     both strategies are bandwidth-bound on the prefix and the extra
     launch is the only distinguishing cost.
+
+    TODO: when split_kv > 1 the decode kernel also fires a
+    ``merge_states`` launch to fold the split-KV partials per beam.
+    That's a further ~merge_launch_us currently not modeled.
     """
     total_kv_tokens = 0
     n_beams = 0
@@ -767,12 +774,24 @@ def cost_decode_tail_batch(
         return 0.0
     mean_tail = total_kv_tokens / n_beams
     bw_us = total_kv_tokens * bytes_per_kv / c.B_hbm
-    # Elemental sub-tile count for the decode kernel.
-    kv_chunks_per_cta = max(1, _ceil_div(int(round(mean_tail)), c.cta_tile_kv_decode))
-    M_s_tail = n_beams * kv_chunks_per_cta
-    waves = max(1, _ceil_div(M_s_tail, c.num_sms))
+
+    # Split-KV factor: how many CTAs per beam does the decode kernel
+    # spawn to fill SMs? When K saturates SMs no split is needed; else
+    # split each beam's KV until total CTAs ≈ num_sms, never below one
+    # elemental tile per chunk.
+    mean_tail_int = max(1, int(round(mean_tail)))
+    max_split_by_kv = max(1, mean_tail_int // c.cta_tile_kv_decode)
+    split_kv = max(1, c.num_sms // max(1, n_beams))
+    split_kv = min(split_kv, max_split_by_kv)
+
+    n_ctas = n_beams * split_kv
+    kv_iters_per_cta = max(
+        1, _ceil_div(_ceil_div(mean_tail_int, split_kv), c.cta_tile_kv_decode),
+    )
     tau_tail_elem = c.decode_us_per_beam_kv_token * c.cta_tile_kv_decode
-    work_us = waves * tau_tail_elem
+    tau_cta = kv_iters_per_cta * tau_tail_elem
+    waves = max(1, _ceil_div(n_ctas, c.num_sms))
+    work_us = waves * tau_cta
     return c.decode_launch_us + bw_us + work_us
 
 
