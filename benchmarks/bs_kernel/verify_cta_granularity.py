@@ -76,7 +76,10 @@ def compute_us_old(
     Note: the OLD code computes one global ceil over M_s regardless of
     pool — that's also a bug, but we keep it here for fidelity to the
     pre-fix model. (See cost_shared_batch on the main branch.)"""
-    slope = c.per_tile_per_kv_us.get(t_large, 0.0)
+    from beam_engine.methods.bs_kernel.cost_model import (
+        lookup_per_tile_per_kv_us, DEFAULT_KV_DTYPE,
+    )
+    slope = lookup_per_tile_per_kv_us(c, t_large, DEFAULT_KV_DTYPE)
     tau_elem = slope * c.cta_tile_kv if slope > 0 else 0.0
     M_s = 0
     for g_count, beams_per_g, L_kv, _bpkv in levels:
@@ -100,7 +103,10 @@ def compute_us_new(
     Per-CTA τ in level l: ⌈(L_kv/num_chunks_l)/cta_tile_kv⌉ × τ_elem.
     Wave = ⌈CTAs/N_SM⌉ once per pool; compute = waves × max_l(τ_CTA_l).
     """
-    slope = c.per_tile_per_kv_us.get(t_large, 0.0)
+    from beam_engine.methods.bs_kernel.cost_model import (
+        lookup_per_tile_per_kv_us, DEFAULT_KV_DTYPE,
+    )
+    slope = lookup_per_tile_per_kv_us(c, t_large, DEFAULT_KV_DTYPE)
     tau_elem = slope * c.cta_tile_kv if slope > 0 else 0.0
     pool_ctas: dict[int, int] = {}
     pool_max_tau: dict[int, float] = {}
@@ -150,8 +156,9 @@ def main():
         c = _from_payload(json.loads(cache.read_text()))
         print(f"[verify] loaded H100 calibrated coefficients from {cache}")
     else:
+        from beam_engine.methods.bs_kernel.cost_model import DEFAULT_KV_DTYPE
         c = Coefficients(num_sms=132, per_tile_per_kv_us={
-            16: 0.0141, 64: 0.0144, 128: 0.0144,
+            DEFAULT_KV_DTYPE: {16: 0.0141, 64: 0.0144, 128: 0.0144},
         })
         print("[verify] H100 cache not found, using fallback defaults")
 
@@ -171,8 +178,12 @@ def main():
     gqa = num_qo_heads // num_kv_heads
     bytes_per_kv = 2 * num_kv_heads * 128 * 2  # 2(K+V) × kv_heads × head_dim × bf16
 
+    from beam_engine.methods.bs_kernel.cost_model import (
+        lookup_per_tile_per_kv_us, DEFAULT_KV_DTYPE,
+    )
+    tau_elem_128 = lookup_per_tile_per_kv_us(c, 128, DEFAULT_KV_DTYPE) * c.cta_tile_kv
     print(f"GQA group size = {gqa};  num_sms = {c.num_sms};  τ_elem = "
-          f"{c.per_tile_per_kv_us[128] * c.cta_tile_kv:.3f} µs")
+          f"{tau_elem_128:.3f} µs")
     print()
     print("=== Standalone formulas (compute_us only): OLD vs NEW Δ ===")
     header = (f"{'K':>3} {'L_p':>6} {'L_tail':>6} {'T':>4} | "

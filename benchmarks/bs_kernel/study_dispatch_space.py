@@ -166,9 +166,12 @@ def cost_shared(
     bw_us = B * _level_bw_us(levels, c)
     waves_large = max(1, _ceil_div(total_large, c.num_sms)) if total_large > 0 else 0
     waves_small = max(1, _ceil_div(total_small, c.num_sms)) if total_small > 0 else 0
+    from beam_engine.methods.bs_kernel.cost_model import (
+        lookup_per_tile_us, DEFAULT_KV_DTYPE,
+    )
     compute_us = (
-        waves_large * c.per_tile_us[t_large]
-        + waves_small * c.per_tile_us[T_SMALL]
+        waves_large * lookup_per_tile_us(c, t_large, DEFAULT_KV_DTYPE)
+        + waves_small * lookup_per_tile_us(c, T_SMALL, DEFAULT_KV_DTYPE)
     )
     return bw_us + compute_us
 
@@ -192,7 +195,10 @@ def cost_dec_tail(
     total_large = B * large_per
     bw_us = B * _level_bw_us(prefix_levels, c)
     waves_large = max(1, _ceil_div(total_large, c.num_sms)) if total_large > 0 else 0
-    prefix_us = bw_us + waves_large * c.per_tile_us[64]
+    from beam_engine.methods.bs_kernel.cost_model import (
+        lookup_per_tile_us, lookup_decode_us_per_beam_kv_token, DEFAULT_KV_DTYPE,
+    )
+    prefix_us = bw_us + waves_large * lookup_per_tile_us(c, 64, DEFAULT_KV_DTYPE)
 
     g_count, beams_per_g, kv_tokens, bytes_per_kv = tail_level
     n_beams = B * g_count * beams_per_g
@@ -201,7 +207,8 @@ def cost_dec_tail(
     else:
         tail_bytes = n_beams * kv_tokens * bytes_per_kv
         tail_bw_us = _bytes_to_us(tail_bytes, c)
-        tail_work_us = n_beams * kv_tokens * c.decode_us_per_beam_kv_token
+        decode_per_tok = lookup_decode_us_per_beam_kv_token(c, DEFAULT_KV_DTYPE)
+        tail_work_us = n_beams * kv_tokens * decode_per_tok
         tail_us = c.decode_launch_us + max(tail_bw_us, tail_work_us)
 
     n_merges = depth - 1
@@ -498,7 +505,14 @@ def _load_calibrated_coeffs() -> Coefficients:
     the production cost model only calibrates {16, 64, 128}. The
     interpolation is documented in the findings report; if A4
     surfaces T∈{32, 96} as picker choices, those need real calibration.
+
+    Cache format is dtype-nested (``{dtype: {T: rate}}``); we operate on
+    the default dtype slice for this study script.
     """
+    from beam_engine.methods.bs_kernel.calibrate import _from_payload
+    from beam_engine.methods.bs_kernel.cost_model import DEFAULT_KV_DTYPE
+    from dataclasses import replace
+
     cache_dir = Path.home() / ".cache" / "beam_engine"
     coeffs_files = sorted(cache_dir.glob("coeffs-*.json"))
     coeffs_files = [p for p in coeffs_files if not p.name.endswith(".bak")]
@@ -507,25 +521,16 @@ def _load_calibrated_coeffs() -> Coefficients:
         return Coefficients.defaults()
     coeffs_file = coeffs_files[0]
     print(f"[study] Loading calibrated coefficients: {coeffs_file.name}")
-    data = json.loads(coeffs_file.read_text())
+    c = _from_payload(json.loads(coeffs_file.read_text()))
 
-    per_tile = {int(k): float(v) for k, v in data.get("per_tile_us", {}).items()}
+    per_tile = dict(c.per_tile_us.get(DEFAULT_KV_DTYPE, {}))
     # Linear interpolation for T=32, T=96 (not calibrated in production).
     if 32 not in per_tile and 16 in per_tile and 64 in per_tile:
         per_tile[32] = per_tile[16] + (per_tile[64] - per_tile[16]) * (32 - 16) / (64 - 16)
     if 96 not in per_tile and 64 in per_tile and 128 in per_tile:
         per_tile[96] = per_tile[64] + (per_tile[128] - per_tile[64]) * (96 - 64) / (128 - 64)
 
-    c = Coefficients(
-        B_hbm=data.get("B_hbm", 1_000_000.0),
-        merge_launch_us=data.get("merge_launch_us", data.get("merge_us", 2.0)),
-        merge_bw_us_per_row=data.get("merge_bw_us_per_row", 0.0),
-        per_tile_us=per_tile,
-        num_sms=data.get("num_sms", 84),
-        decode_us_per_beam_kv_token=data.get("decode_us_per_beam_kv_token", 0.0008),
-        decode_launch_us=data.get("decode_launch_us", 2.0),
-    )
-    return c
+    return replace(c, per_tile_us={DEFAULT_KV_DTYPE: per_tile})
 
 
 def main():

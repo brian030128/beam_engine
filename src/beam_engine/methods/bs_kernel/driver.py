@@ -49,6 +49,7 @@ from .cost_model import (
     Pick,
     Strategy,
     WorkloadShape,
+    canonical_kv_dtype,
     pick_strategy,
     pick_strategy_batch,
 )
@@ -130,6 +131,7 @@ def _workload_from_levels(
     head_dim: int,
     dtype_bytes: int,
     num_qo_heads: int = 0,
+    kv_dtype: str = "fp16",
 ) -> WorkloadShape:
     """Derive the cost model's WorkloadShape from `_adaptive_levels`'s
     output. Generalized to support N levels (root + N-2 intermediates +
@@ -185,6 +187,7 @@ def _workload_from_levels(
         bytes_per_kv=bytes_per_kv,
         intermediate=intermediate,
         num_qo_heads=num_qo_heads,
+        kv_dtype=kv_dtype,
     )
 
 
@@ -332,6 +335,7 @@ def _workload_from_cache(
     dtype_bytes: int,
     lpl: int,
     num_qo_heads: int = 0,
+    kv_dtype: str = "fp16",
 ) -> WorkloadShape:
     """Rebuild the ``WorkloadShape`` from cached structure + current
     lpl. Equivalent to calling ``_workload_from_levels`` on the
@@ -351,6 +355,7 @@ def _workload_from_cache(
         bytes_per_kv=2 * num_kv_heads * head_dim * dtype_bytes,
         intermediate=entry.intermediate,
         num_qo_heads=num_qo_heads,
+        kv_dtype=kv_dtype,
     )
 
 
@@ -364,6 +369,7 @@ def _entry_from_decomp(
     head_dim: int,
     dtype_bytes: int,
     num_qo_heads: int = 0,
+    kv_dtype: str = "fp16",
 ) -> tuple[_DecompCacheEntry, WorkloadShape]:
     """Build the cache entry from a fresh ``_adaptive_levels`` output
     (on cache miss). Also returns the current-step WorkloadShape so the
@@ -373,6 +379,7 @@ def _entry_from_decomp(
     w = _workload_from_levels(
         levels, K, page_size, num_kv_heads, head_dim, dtype_bytes,
         num_qo_heads=num_qo_heads,
+        kv_dtype=kv_dtype,
     )
     # Tease apart the levels into (sizes, pages, lpl) parallel lists.
     sizes_per_level = [lv[0] for lv in levels]
@@ -599,6 +606,10 @@ class BsKernelBackend:
         dtype_bytes = torch.tensor(
             [], dtype=page_table.store_dtype,
         ).element_size()
+        # Canonical KV-dtype label used by the cost model to pick the
+        # right per-dtype calibrated rates (fp8 dequant differs from
+        # fp16/bf16; see calibrate.py).
+        kv_dtype_label = canonical_kv_dtype(page_table.store_dtype)
         max_depth = wrappers.max_depth
         trace_on = bool(int(os.environ.get("BS_KERNEL_TRACE_PLAN", "0")))
         # Override fixed_split_size for the DEC_TAIL prefix wrapper plan.
@@ -648,6 +659,7 @@ class BsKernelBackend:
                 w = _workload_from_cache(
                     entry, K, ps, num_kv_heads, head_dim, dtype_bytes, lpl,
                     num_qo_heads=num_qo_heads,
+                    kv_dtype=kv_dtype_label,
                 )
                 decomp_hits += 1
             else:
@@ -662,12 +674,14 @@ class BsKernelBackend:
                         levels, beam_order, lca_b, K, ps,
                         num_kv_heads, head_dim, dtype_bytes,
                         num_qo_heads=num_qo_heads,
+                        kv_dtype=kv_dtype_label,
                     )
                     self._decomp_cache[b] = (key, entry)
                 else:
                     w = _workload_from_levels(
                         levels, K, ps, num_kv_heads, head_dim, dtype_bytes,
                         num_qo_heads=num_qo_heads,
+                        kv_dtype=kv_dtype_label,
                     )
             last_lca_per_prompt[b] = lca_b
             levels_full_per_prompt.append(levels)

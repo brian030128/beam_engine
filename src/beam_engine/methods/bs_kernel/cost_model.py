@@ -106,6 +106,44 @@ PER_TILE_L_KV_REF = 1024
 PER_TILE_L_KV_LONG = 8192
 
 
+# Canonical KV-cache dtype labels used as keys in Coefficients per-dtype
+# tables. Calibration probes record rates separately per dtype because
+# fp8 KV (compact load, _scaled_mm MMA) has a measurably different
+# (compute, HBM) balance than bf16 / fp16; see project memory
+# [[project_70b_fp8_picker_recalibrate]].
+DTYPE_FP16 = "fp16"
+DTYPE_BF16 = "bf16"
+DTYPE_FP8_E4M3 = "fp8_e4m3"
+DTYPE_FP8_E5M2 = "fp8_e5m2"
+DEFAULT_KV_DTYPE = DTYPE_FP16
+
+
+def canonical_kv_dtype(dtype) -> str:
+    """Map a ``torch.dtype`` (or canonical str) to the lookup key used by
+    ``Coefficients`` per-dtype tables. Unknown dtypes fall back to fp16
+    so legacy callers that pass no dtype keep working.
+    """
+    if isinstance(dtype, str):
+        return dtype
+    if dtype is None:
+        return DEFAULT_KV_DTYPE
+    # Lazy import to keep cost_model importable without torch at module
+    # load time (used by test harnesses that stub torch).
+    try:
+        import torch
+    except ImportError:
+        return DEFAULT_KV_DTYPE
+    mapping = {
+        torch.float16:        DTYPE_FP16,
+        torch.bfloat16:       DTYPE_BF16,
+    }
+    if hasattr(torch, "float8_e4m3fn"):
+        mapping[torch.float8_e4m3fn] = DTYPE_FP8_E4M3
+    if hasattr(torch, "float8_e5m2"):
+        mapping[torch.float8_e5m2] = DTYPE_FP8_E5M2
+    return mapping.get(dtype, DEFAULT_KV_DTYPE)
+
+
 @dataclass
 class Coefficients:
     """Device-calibrated cost-model coefficients (see calibrate.py).
@@ -132,25 +170,25 @@ class Coefficients:
     merge_launch_us: float = 2.0
     merge_bw_us_per_row: float = 0.0
 
-    # Per-tile time table (µs per CTA-tile).
-    # Indexed by T_large ∈ T_LARGE_CHOICES + the small tile T_SMALL.
+    # Per-tile time table (µs per CTA-tile), nested by KV-cache dtype.
+    # Outer key: canonical dtype label (DTYPE_FP16, DTYPE_BF16, ...).
+    # Inner key: T_large ∈ T_LARGE_CHOICES + the small tile T_SMALL.
     # The value is the cost at L_kv = PER_TILE_L_KV_REF tokens; for
     # other L_kv the cost is computed by ``_tile_cost`` below using the
     # linear slope ``per_tile_per_kv_us`` (defaults to 0, i.e. constant
-    # cost, for backward compatibility).
-    per_tile_us: dict[int, float] = field(default_factory=lambda: {
-        16: 0.6,
-        64: 1.4,
-        128: 2.4,
+    # cost, for backward compatibility). Lookup via
+    # ``lookup_per_tile_us(c, T, kv_dtype)`` which falls back to
+    # ``DEFAULT_KV_DTYPE`` when the workload's dtype isn't calibrated.
+    per_tile_us: dict[str, dict[int, float]] = field(default_factory=lambda: {
+        DEFAULT_KV_DTYPE: {16: 0.6, 64: 1.4, 128: 2.4},
     })
     # Per-(KV token) slope of the prefill tile cost, fit from a two-point
     # probe at L_kv ∈ {PER_TILE_L_KV_REF, PER_TILE_L_KV_LONG}. Default 0
     # preserves the original constant-cost behavior; ``calibrate.py``
     # overwrites with the actual slope when the long-L_kv probe runs.
-    per_tile_per_kv_us: dict[int, float] = field(default_factory=lambda: {
-        16: 0.0,
-        64: 0.0,
-        128: 0.0,
+    # Nested by KV-cache dtype (see ``per_tile_us``).
+    per_tile_per_kv_us: dict[str, dict[int, float]] = field(default_factory=lambda: {
+        DEFAULT_KV_DTYPE: {16: 0.0, 64: 0.0, 128: 0.0},
     })
     # Per-call prefill kernel launch overhead. The fused-cascade wrapper
     # is ONE kernel launch regardless of cascade depth or wave count, so
@@ -186,8 +224,12 @@ class Coefficients:
     # Decode kernel is purpose-built for CTA_Q=1 and is bandwidth-bound
     # at our shapes — compute and bandwidth overlap rather than add, so
     # the cost expression uses max(bw_us, work_us) not bw_us + work_us.
-    # Calibrated by `calibrate.measure_decode_per_kv_us`.
-    decode_us_per_beam_kv_token: float = 0.0008
+    # Calibrated by `calibrate.measure_decode_per_kv_us`. Nested by KV
+    # dtype (fp8 dequant overhead and _scaled_mm throughput differ from
+    # fp16/bf16); lookup via ``lookup_decode_us_per_beam_kv_token``.
+    decode_us_per_beam_kv_token: dict[str, float] = field(default_factory=lambda: {
+        DEFAULT_KV_DTYPE: 0.0008,
+    })
     # Per-step constant: post-launch / kernel-init cost for the decode
     # kernel. With the bs_kernel driver's plan_info cache the call is
     # essentially a kernel launch (~2 µs) per layer, no scheduling work.
@@ -221,6 +263,35 @@ class Coefficients:
         return cls()
 
 
+def lookup_per_tile_us(c: Coefficients, T: int, kv_dtype: str) -> float:
+    """Per-tile time at L_kv=PER_TILE_L_KV_REF for tile dim ``T`` and the
+    given KV dtype. Falls back to ``DEFAULT_KV_DTYPE`` (then 0) when the
+    workload's dtype isn't in the calibrated table.
+    """
+    table = c.per_tile_us.get(kv_dtype) or c.per_tile_us.get(DEFAULT_KV_DTYPE) or {}
+    return table.get(T, 0.0)
+
+
+def lookup_per_tile_per_kv_us(c: Coefficients, T: int, kv_dtype: str) -> float:
+    """L_kv-slope of prefill tile cost for tile dim ``T`` and the given
+    KV dtype. Falls back to ``DEFAULT_KV_DTYPE`` (then 0) when the
+    workload's dtype isn't in the calibrated table.
+    """
+    table = c.per_tile_per_kv_us.get(kv_dtype) or c.per_tile_per_kv_us.get(DEFAULT_KV_DTYPE) or {}
+    return table.get(T, 0.0)
+
+
+def lookup_decode_us_per_beam_kv_token(c: Coefficients, kv_dtype: str) -> float:
+    """Decode-kernel per-(beam, kv-token) cost for the given KV dtype.
+    Falls back to ``DEFAULT_KV_DTYPE`` when the workload's dtype isn't
+    in the calibrated table.
+    """
+    table = c.decode_us_per_beam_kv_token
+    if kv_dtype in table:
+        return table[kv_dtype]
+    return table.get(DEFAULT_KV_DTYPE, 0.0008)
+
+
 @dataclass
 class WorkloadShape:
     """Per-step workload signature the cost model needs.
@@ -242,6 +313,11 @@ class WorkloadShape:
     bytes_per_kv: int          # 2 (k+v) × num_kv_heads × head_dim × dtype_bytes
     intermediate: Optional["IntermediateShape"] = None
     num_qo_heads: int = 0      # 0 → fall back to num_kv_heads (gqa=1)
+    # Canonical KV dtype label (DTYPE_FP16, DTYPE_BF16, DTYPE_FP8_E4M3,
+    # ...). Selects which per-dtype rate the cost model uses for prefill
+    # tile cost and decode-kernel cost. Defaults to fp16 so callers that
+    # haven't been updated keep the legacy lookup behavior.
+    kv_dtype: str = DEFAULT_KV_DTYPE
 
     def gqa_group_size(self) -> int:
         nq = self.num_qo_heads if self.num_qo_heads > 0 else self.num_kv_heads
@@ -390,7 +466,7 @@ def _bytes_to_us(n_bytes: int, c: Coefficients) -> float:
     return n_bytes / c.B_hbm
 
 
-def _tile_compute_us(T: int, L_kv: int, c: Coefficients) -> float:
+def _tile_compute_us(T: int, L_kv: int, c: Coefficients, kv_dtype: str) -> float:
     """Pure per-tile *compute* time (excludes one-shot kernel launch).
 
     With the L_kv slope calibrated, the per-tile cost is split into:
@@ -401,14 +477,17 @@ def _tile_compute_us(T: int, L_kv: int, c: Coefficients) -> float:
 
     The legacy ``per_tile_us[T]`` is the SUM of the two at L_kv_REF.
     Subtracting the launch intercept leaves the pure-compute term.
+
+    ``kv_dtype`` selects the per-dtype calibration entry; falls back to
+    the default dtype (fp16) when the workload's dtype isn't calibrated.
     """
-    slope = c.per_tile_per_kv_us.get(T, 0.0)
+    slope = lookup_per_tile_per_kv_us(c, T, kv_dtype)
     if slope == 0.0:
         # Legacy cache (no L_kv probe yet): per_tile_us is the full
         # constant-cost stand-in. Caller (_compute_us_from_tile_groups)
         # multiplies it by wave count and adds no separate launch — same
         # behavior as before the L_kv refactor.
-        return c.per_tile_us.get(T, 0.0)
+        return lookup_per_tile_us(c, T, kv_dtype)
     # Pure compute = slope × L_kv (intercept is the launch overhead,
     # added once per call by the caller). Clamped to non-negative.
     return max(0.0, slope * L_kv)
@@ -443,6 +522,7 @@ def _tile_breakdown(
 def _compute_us_from_tile_groups(
     groups: dict[tuple[int, int], int],
     c: Coefficients,
+    kv_dtype: str,
 ) -> float:
     """Total compute time across (T, L_kv) tile groups for one kernel call.
 
@@ -459,7 +539,7 @@ def _compute_us_from_tile_groups(
         with launch baked into per_tile_us. No separate launch term.
     """
     has_slope = any(
-        c.per_tile_per_kv_us.get(T, 0.0) > 0.0
+        lookup_per_tile_per_kv_us(c, T, kv_dtype) > 0.0
         for (T, _) in groups.keys()
     )
     if not has_slope:
@@ -468,7 +548,7 @@ def _compute_us_from_tile_groups(
             if n_tiles <= 0:
                 continue
             waves = max(1, _ceil_div(n_tiles, c.num_sms))
-            total += waves * c.per_tile_us.get(T, 0.0)
+            total += waves * lookup_per_tile_us(c, T, kv_dtype)
         return total
     # Slope-based formula: launch once + per-wave (overhead + L_kv compute).
     # Per-wave time = max(per_wave_overhead[T], slope * L_kv) — the wave
@@ -482,7 +562,7 @@ def _compute_us_from_tile_groups(
             continue
         waves = max(1, _ceil_div(n_tiles, c.num_sms))
         overhead = c.per_wave_overhead_us.get(T, 0.0)
-        compute = _tile_compute_us(T, L_kv, c)
+        compute = _tile_compute_us(T, L_kv, c, kv_dtype)
         per_wave = max(overhead, compute)
         total += waves * per_wave
     return total
@@ -692,11 +772,13 @@ def cost_shared_batch(
     # cascade level whose CTAs tip total SM occupancy over a wave
     # boundary adds ~max_τ_CTA (heavy L0 cost), not its own marginal
     # compute — exactly what the old elemental-sub-tile model missed.
-    slope = c.per_tile_per_kv_us.get(t_large, 0.0)
+    # All workloads in a batch share KV dtype; pick from the first.
+    kv_dtype = workloads[0].kv_dtype if workloads else DEFAULT_KV_DTYPE
+    slope = lookup_per_tile_per_kv_us(c, t_large, kv_dtype)
     if slope > 0:
         tau_elem = slope * c.cta_tile_kv
     else:
-        tau_elem = c.per_tile_us.get(t_large, 0.0) * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
+        tau_elem = lookup_per_tile_us(c, t_large, kv_dtype) * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
 
     # First pass: aggregate per-level q_tile counts ACROSS the batch.
     # FlashInfer's split-K decision is per-level over all B prompts in
@@ -932,6 +1014,10 @@ def cost_decode_tail_batch(
     mean_tail = total_kv_tokens / n_beams
     bw_us = total_kv_tokens * bytes_per_kv / c.B_hbm
 
+    # Per-dtype decode rate (fp8 dequant cost differs from fp16/bf16).
+    kv_dtype = workloads[0].kv_dtype if workloads else DEFAULT_KV_DTYPE
+    decode_per_token = lookup_decode_us_per_beam_kv_token(c, kv_dtype)
+
     # Split-KV factor: how many CTAs per beam does the decode kernel
     # spawn to fill SMs? When K saturates SMs no split is needed; else
     # split each beam's KV until total CTAs ≈ num_sms, never below one
@@ -945,7 +1031,7 @@ def cost_decode_tail_batch(
     kv_iters_per_cta = max(
         1, _ceil_div(_ceil_div(mean_tail_int, split_kv), c.cta_tile_kv_decode),
     )
-    tau_tail_elem = c.decode_us_per_beam_kv_token * c.cta_tile_kv_decode
+    tau_tail_elem = decode_per_token * c.cta_tile_kv_decode
     tau_cta = kv_iters_per_cta * tau_tail_elem
     waves = max(1, _ceil_div(n_ctas, c.num_sms))
     work_us = waves * tau_cta
@@ -996,11 +1082,12 @@ def cost_dec_tail_batch(
     # CTA-granularity wave model for the prefix-side fused-cascade launch.
     # See ``cost_shared_batch`` for rationale and the formula breakdown.
     t_large_prefix = t_large
-    slope = c.per_tile_per_kv_us.get(t_large_prefix, 0.0)
+    kv_dtype = workloads[0].kv_dtype if workloads else DEFAULT_KV_DTYPE
+    slope = lookup_per_tile_per_kv_us(c, t_large_prefix, kv_dtype)
     if slope > 0:
         tau_elem = slope * c.cta_tile_kv
     else:
-        tau_elem = c.per_tile_us.get(t_large_prefix, 0.0) * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
+        tau_elem = lookup_per_tile_us(c, t_large_prefix, kv_dtype) * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
 
     pool_ctas: dict[int, int] = {}
     pool_max_tau_cta: dict[int, float] = {}

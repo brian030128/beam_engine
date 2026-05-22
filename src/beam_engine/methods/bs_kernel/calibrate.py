@@ -45,7 +45,25 @@ import torch
 from .cost_model import (
     Coefficients, T_LARGE_CHOICES, T_SMALL,
     PER_TILE_L_KV_REF, PER_TILE_L_KV_LONG,
+    DTYPE_FP16, DTYPE_BF16, DTYPE_FP8_E4M3,
+    DEFAULT_KV_DTYPE, canonical_kv_dtype,
 )
+
+
+# Dtypes the calibration sweeps by default. Each entry is the canonical
+# label paired with the torch.dtype to probe. fp8 is included so 70B-fp8
+# cells get their own per_tile and decode rates — without it the picker
+# falls back to fp16 rates and mispicks (see project memory
+# [[project_70b_fp8_picker_recalibrate]]). If FlashInfer rejects fp8 in
+# the probe path on a given build, the dtype is skipped with a warning.
+def _default_probe_dtypes() -> list[tuple[str, "torch.dtype"]]:
+    probes: list[tuple[str, "torch.dtype"]] = [
+        (DTYPE_FP16, torch.float16),
+        (DTYPE_BF16, torch.bfloat16),
+    ]
+    if hasattr(torch, "float8_e4m3fn"):
+        probes.append((DTYPE_FP8_E4M3, torch.float8_e4m3fn))
+    return probes
 
 
 _DEFAULT_CACHE_DIR = Path.home() / ".cache" / "beam_engine"
@@ -96,13 +114,62 @@ def _to_payload(c: Coefficients) -> dict:
         "B_hbm": c.B_hbm,
         "merge_launch_us": c.merge_launch_us,
         "merge_bw_us_per_row": c.merge_bw_us_per_row,
-        "per_tile_us": {str(k): v for k, v in c.per_tile_us.items()},
-        "per_tile_per_kv_us": {str(k): v for k, v in c.per_tile_per_kv_us.items()},
+        # Per-dtype nested maps. Outer key = canonical dtype label
+        # (fp16/bf16/fp8_e4m3/...); inner key = tile dim T as str (JSON
+        # has no int keys). Older caches stored these as flat ``{T_str:
+        # rate}`` maps; ``_from_payload`` accepts both shapes.
+        "per_tile_us": {
+            dt: {str(t): v for t, v in inner.items()}
+            for dt, inner in c.per_tile_us.items()
+        },
+        "per_tile_per_kv_us": {
+            dt: {str(t): v for t, v in inner.items()}
+            for dt, inner in c.per_tile_per_kv_us.items()
+        },
         "num_sms": c.num_sms,
-        "decode_us_per_beam_kv_token": c.decode_us_per_beam_kv_token,
+        # Per-dtype scalar map.
+        "decode_us_per_beam_kv_token": dict(c.decode_us_per_beam_kv_token),
         "decode_launch_us": c.decode_launch_us,
         "max_dispatch_depth": c.max_dispatch_depth,
     }
+
+
+def _is_dtype_nested(payload_value) -> bool:
+    """A nested dtype map looks like ``{"fp16": {"64": 1.4, ...}}``; a
+    flat (legacy) map looks like ``{"64": 1.4, ...}``. Distinguish by
+    checking whether the values are themselves dicts.
+    """
+    if not isinstance(payload_value, dict) or not payload_value:
+        return False
+    return any(isinstance(v, dict) for v in payload_value.values())
+
+
+def _parse_per_tile_table(payload_value) -> dict:
+    """Parse either a nested (per-dtype) or flat (legacy) per_tile table.
+
+    Legacy flat tables ``{T_str: rate}`` are promoted to
+    ``{DEFAULT_KV_DTYPE: {T_int: rate}}`` so the in-memory format is
+    uniform.
+    """
+    if payload_value is None:
+        return {}
+    if _is_dtype_nested(payload_value):
+        return {
+            dt: {int(t): float(v) for t, v in inner.items()}
+            for dt, inner in payload_value.items()
+        }
+    # Legacy flat shape: treat as the default dtype.
+    return {DEFAULT_KV_DTYPE: {int(t): float(v) for t, v in payload_value.items()}}
+
+
+def _parse_decode_per_token(payload_value) -> dict:
+    """Parse either a nested per-dtype map or a legacy flat scalar."""
+    if payload_value is None:
+        return {DEFAULT_KV_DTYPE: 0.0008}
+    if isinstance(payload_value, dict):
+        return {dt: float(v) for dt, v in payload_value.items()}
+    # Legacy scalar.
+    return {DEFAULT_KV_DTYPE: float(payload_value)}
 
 
 def _from_payload(d: dict) -> Coefficients:
@@ -111,21 +178,27 @@ def _from_payload(d: dict) -> Coefficients:
     # Newer files store ``merge_launch_us`` + ``merge_bw_us_per_row``
     # explicitly; fall back to the legacy ``merge_us`` key if needed.
     legacy_merge_us = d.get("merge_us", 2.0)
-    return Coefficients(
-        B_hbm=d["B_hbm"],
-        merge_launch_us=d.get("merge_launch_us", legacy_merge_us),
-        merge_bw_us_per_row=d.get("merge_bw_us_per_row", 0.0),
-        per_tile_us={int(k): v for k, v in d["per_tile_us"].items()},
+    per_tile_us = _parse_per_tile_table(d.get("per_tile_us"))
+    per_tile_per_kv_us = (
+        _parse_per_tile_table(d["per_tile_per_kv_us"])
+        if "per_tile_per_kv_us" in d
         # CTA-granularity wave model requires per_tile_per_kv_us. Older
         # caches omitted it (the legacy elemental-sub-tile model fell back
         # to per_tile_us / PER_TILE_L_KV_REF). Default 0 so cost_model
         # uses its fallback for legacy caches.
-        per_tile_per_kv_us=(
-            {int(k): v for k, v in d["per_tile_per_kv_us"].items()}
-            if "per_tile_per_kv_us" in d else {16: 0.0, 64: 0.0, 128: 0.0}
-        ),
+        else {DEFAULT_KV_DTYPE: {16: 0.0, 64: 0.0, 128: 0.0}}
+    )
+    decode_per_token = _parse_decode_per_token(
+        d.get("decode_us_per_beam_kv_token")
+    )
+    return Coefficients(
+        B_hbm=d["B_hbm"],
+        merge_launch_us=d.get("merge_launch_us", legacy_merge_us),
+        merge_bw_us_per_row=d.get("merge_bw_us_per_row", 0.0),
+        per_tile_us=per_tile_us,
+        per_tile_per_kv_us=per_tile_per_kv_us,
         num_sms=d.get("num_sms", 84),
-        decode_us_per_beam_kv_token=d.get("decode_us_per_beam_kv_token", 0.0008),
+        decode_us_per_beam_kv_token=decode_per_token,
         decode_launch_us=d.get("decode_launch_us", 6.0),
         # Default 3 reproduces legacy enumeration. Set higher (typically
         # 6) once the bs_kernel driver supports deeper cascades AND
@@ -177,6 +250,37 @@ def _load(path: Path) -> Coefficients:
 # ---------------------------------------------------------------------------
 # Timing helper
 # ---------------------------------------------------------------------------
+
+
+def _is_fp8(dtype) -> bool:
+    fp8s = []
+    if hasattr(torch, "float8_e4m3fn"):
+        fp8s.append(torch.float8_e4m3fn)
+    if hasattr(torch, "float8_e5m2"):
+        fp8s.append(torch.float8_e5m2)
+    return dtype in fp8s
+
+
+def _random_tensor(shape, *, dtype, device) -> torch.Tensor:
+    """Like ``torch.randn(shape, dtype=dtype)`` but supports fp8 by
+    drawing samples in bf16 then casting. ``torch.randn`` raises
+    ``NotImplementedError: normal_kernel_cuda for Float8_e4m3fn``
+    so we route fp8 through a bf16 buffer.
+    """
+    if _is_fp8(dtype):
+        buf = torch.randn(shape, dtype=torch.bfloat16, device=device)
+        return buf.to(dtype)
+    return torch.randn(shape, dtype=dtype, device=device)
+
+
+def _compute_dtype_for(kv_dtype: torch.dtype) -> torch.dtype:
+    """Match the production driver: fp8 KV cache reads under bf16
+    compute. The FlashInfer fa2/fa3 backends don't support fp8 output,
+    and the 70B-fp8 driver pairs fp8 KV with bf16 Q (see driver.py:774).
+    Use this to derive the right ``q_data_type`` for the probes from a
+    KV-side dtype.
+    """
+    return torch.bfloat16 if _is_fp8(kv_dtype) else kv_dtype
 
 
 def _time_event_us(fn, n: int, *, warmup: int = 5, device: torch.device) -> float:
@@ -249,9 +353,9 @@ def measure_merge_us(
     xs: list[float] = []
     ys: list[float] = []
     for K in K_pairs:
-        v_a = torch.randn(K, num_heads, head_dim, dtype=dtype, device=device)
+        v_a = _random_tensor((K, num_heads, head_dim), dtype=dtype, device=device)
         s_a = torch.randn(K, num_heads, dtype=torch.float32, device=device)
-        v_b = torch.randn(K, num_heads, head_dim, dtype=dtype, device=device)
+        v_b = _random_tensor((K, num_heads, head_dim), dtype=dtype, device=device)
         s_b = torch.randn(K, num_heads, dtype=torch.float32, device=device)
         t = _time_event_us(
             lambda: merge_state_in_place(v_a, s_a, v_b, s_b),
@@ -312,6 +416,8 @@ def measure_decode_per_kv_us(
     """
     from flashinfer import BatchDecodeWithPagedKVCacheWrapper
 
+    # Probe in production pairing: fp8 KV cache reads under bf16 Q.
+    q_dtype = _compute_dtype_for(dtype)
     workspace = torch.empty(256 * 1024 * 1024, dtype=torch.uint8, device=device)
     wrapper = BatchDecodeWithPagedKVCacheWrapper(
         workspace, kv_layout="NHD", use_tensor_cores=True,
@@ -324,8 +430,8 @@ def measure_decode_per_kv_us(
         # (paged-KV needs unique page indices per request, but kernel
         # cost depends only on per-request KV length).
         total_pages = BS * num_pages_per_req
-        kv = torch.randn(
-            total_pages, 2, page_size, num_kv_heads, head_dim,
+        kv = _random_tensor(
+            (total_pages, 2, page_size, num_kv_heads, head_dim),
             dtype=dtype, device=device,
         )
         indptr = torch.arange(
@@ -336,6 +442,9 @@ def measure_decode_per_kv_us(
         last_page_len = torch.full(
             (BS,), page_size, dtype=torch.int32, device=device,
         )
+        # Pass q/kv dtype so the wrapper's plan path dispatches the
+        # matching kernel; otherwise it defaults to fp16 and rejects the
+        # bf16/fp8 inputs we hand it on the run() call.
         wrapper.plan(
             indptr=indptr,
             indices=indices,
@@ -344,8 +453,12 @@ def measure_decode_per_kv_us(
             num_kv_heads=num_kv_heads,
             head_dim=head_dim,
             page_size=page_size,
+            q_data_type=q_dtype,
+            kv_data_type=dtype,
         )
-        q = torch.randn(BS, num_qo_heads, head_dim, dtype=dtype, device=device)
+        q = _random_tensor(
+            (BS, num_qo_heads, head_dim), dtype=q_dtype, device=device,
+        )
         us = _time_event_us(lambda: wrapper.run(q, kv), n, device=device)
         xs.append(float(BS * L_kv))
         ys.append(us)
@@ -390,9 +503,13 @@ def measure_per_tile_us(
     """
     from flashinfer import BatchPrefillWithPagedKVCacheWrapper
 
+    # Probe in the production pairing: fp8 KV is read under bf16 Q (the
+    # fa2/fa3 backends don't support fp8 output, so fp8/fp8 would crash).
+    # See _compute_dtype_for.
+    q_dtype = _compute_dtype_for(dtype)
     num_pages = L_kv // page_size
-    kv = torch.randn(
-        num_pages, 2, page_size, num_kv_heads, head_dim,
+    kv = _random_tensor(
+        (num_pages, 2, page_size, num_kv_heads, head_dim),
         dtype=dtype, device=device,
     )
     workspace = torch.empty(256 * 1024 * 1024, dtype=torch.uint8, device=device)
@@ -407,10 +524,10 @@ def measure_per_tile_us(
         head_dim_qk=head_dim,
         page_size=page_size,
         causal=False,
-        q_data_type=dtype,
+        q_data_type=q_dtype,
         kv_data_type=dtype,
     )
-    q = torch.randn(T, num_qo_heads, head_dim, dtype=dtype, device=device)
+    q = _random_tensor((T, num_qo_heads, head_dim), dtype=q_dtype, device=device)
     return _time_event_us(lambda: wrapper.run(q, kv), n, device=device)
 
 
@@ -477,47 +594,82 @@ def calibrate(
         print(f"[calibrate] probing {torch.cuda.get_device_name(device)}")
 
     num_sms = torch.cuda.get_device_properties(device).multi_processor_count
-    raw_decode_launch, decode_per_kv_raw = measure_decode_per_kv_us(device)
     merge_launch, merge_bw_per_row = measure_merge_us(device)
     launch = measure_launch_us(device)
-    # ``decode_launch_us`` represents the EXTRA per-call cost the picker
-    # pays when DEC_TAIL adds a decode kernel call vs FUSED's
-    # single-fused-prefill. Physically that's one CUDA launch + minimal
-    # plan/dispatch work — same magnitude as ``launch_us``. The OLS fit
-    # on bw-bound samples inflates the intercept (it absorbs bw cost of
-    # the smallest sample point), which biases the picker away from
-    # DEC_TAIL on cells where it's empirically faster. Anchor the
-    # launch term at the empty-kernel measurement; recompute slope by
-    # subtracting it back out from the largest sample and dividing.
-    if raw_decode_launch > launch:
-        # Adjust slope so the fit still passes through the largest data
-        # point: t_max ≈ (raw_launch + slope_raw × x_max). With launch
-        # forced to ``launch_us``, slope = (t_max − launch_us) / x_max
-        # would be the consistent single-point fit. Approximate by
-        # taking the previous slope (already a good fit on the high
-        # end of the range) and just lowering the intercept.
-        decode_launch = launch
-        decode_per_kv = decode_per_kv_raw
-    else:
-        decode_launch = raw_decode_launch
-        decode_per_kv = decode_per_kv_raw
-    if verbose:
-        print(f"  raw decode_launch={raw_decode_launch:.2f} → anchored to launch_us={launch:.2f}")
+
+    # Per-dtype calibration sweep. Each dtype runs its own per_tile and
+    # decode-per-kv probes; rates differ across dtypes because the
+    # cascade kernel's elemental MMA throughput and the decode kernel's
+    # bw/dequant balance depend on the KV format. fp8 is included only
+    # if the FlashInfer probe path accepts it on this build — otherwise
+    # the dtype is skipped and the cost model falls back to fp16 rates
+    # for that workload (still works, just less accurate).
+    per_tile_us_by_dtype: dict[str, dict[int, float]] = {}
+    per_tile_per_kv_us_by_dtype: dict[str, dict[int, float]] = {}
+    decode_per_token_by_dtype: dict[str, float] = {}
+    decode_launch_anchor: float | None = None
+    for dtype_label, dtype in _default_probe_dtypes():
+        if verbose:
+            print(f"[calibrate] probing dtype={dtype_label}")
+        try:
+            per_tile_us_by_dtype[dtype_label] = {
+                T: measure_per_tile_us(device, T, dtype=dtype)
+                for T in (T_SMALL, *T_LARGE_CHOICES)
+            }
+            per_tile_per_kv_us_by_dtype[dtype_label] = {
+                T: measure_per_tile_per_kv_us(device, T, dtype=dtype)
+                for T in (T_SMALL, *T_LARGE_CHOICES)
+            }
+            raw_decode_launch, decode_per_kv_raw = measure_decode_per_kv_us(
+                device, dtype=dtype,
+            )
+        except Exception as e:
+            if verbose:
+                print(
+                    f"  skipping dtype={dtype_label}: "
+                    f"{type(e).__name__}: {e}"
+                )
+            continue
+        # ``decode_launch_us`` represents the EXTRA per-call cost the
+        # picker pays when DEC_TAIL adds a decode kernel call vs
+        # FUSED's single-fused-prefill. Physically that's one CUDA
+        # launch + minimal plan/dispatch work — same magnitude as
+        # ``launch_us``. Anchor at the empty-kernel measurement when
+        # the OLS intercept is implausibly high. The anchored value is
+        # dtype-independent (CUDA launch overhead); take the first
+        # dtype's measurement as the reference.
+        if raw_decode_launch > launch:
+            decode_launch_dt = launch
+        else:
+            decode_launch_dt = raw_decode_launch
+        if decode_launch_anchor is None:
+            decode_launch_anchor = decode_launch_dt
+            if verbose:
+                print(
+                    f"  raw decode_launch={raw_decode_launch:.2f} → "
+                    f"anchored to launch_us={launch:.2f}"
+                )
+        decode_per_token_by_dtype[dtype_label] = decode_per_kv_raw
+
+    # Guard against the unlikely case where every dtype probe failed —
+    # fall back to defaults so the cache write doesn't produce an empty
+    # coefficients object.
+    if not decode_per_token_by_dtype:
+        defaults = Coefficients.defaults()
+        per_tile_us_by_dtype = dict(defaults.per_tile_us)
+        per_tile_per_kv_us_by_dtype = dict(defaults.per_tile_per_kv_us)
+        decode_per_token_by_dtype = dict(defaults.decode_us_per_beam_kv_token)
+        decode_launch_anchor = launch
+
     coeffs = Coefficients(
         B_hbm=measure_B_hbm(device),
         merge_launch_us=merge_launch,
         merge_bw_us_per_row=merge_bw_per_row,
-        per_tile_us={
-            T: measure_per_tile_us(device, T)
-            for T in (T_SMALL, *T_LARGE_CHOICES)
-        },
-        per_tile_per_kv_us={
-            T: measure_per_tile_per_kv_us(device, T)
-            for T in (T_SMALL, *T_LARGE_CHOICES)
-        },
+        per_tile_us=per_tile_us_by_dtype,
+        per_tile_per_kv_us=per_tile_per_kv_us_by_dtype,
         num_sms=num_sms,
-        decode_us_per_beam_kv_token=decode_per_kv,
-        decode_launch_us=decode_launch,
+        decode_us_per_beam_kv_token=decode_per_token_by_dtype,
+        decode_launch_us=decode_launch_anchor or launch,
     )
     _save(coeffs, path)
     if verbose:
@@ -529,10 +681,14 @@ def _print_coeffs(c: Coefficients) -> None:
     print(f"  B_hbm                = {c.B_hbm:>10.1f} bytes/µs   ({c.B_hbm / 1e6:.2f} TB/s)")
     print(f"  merge_launch_us      = {c.merge_launch_us:>10.4f}")
     print(f"  merge_bw_us_per_row  = {c.merge_bw_us_per_row:>10.6f}")
-    for T, t in sorted(c.per_tile_us.items()):
-        print(f"  per_tile[{T:3d}]      = {t:>10.2f} µs")
     print(f"  decode_launch_us     = {c.decode_launch_us:>10.2f}")
-    print(f"  decode_us_per_beam_kv= {c.decode_us_per_beam_kv_token:>10.6f}")
+    for dtype_label in sorted(c.per_tile_us.keys()):
+        inner = c.per_tile_us[dtype_label]
+        for T in sorted(inner.keys()):
+            print(f"  per_tile[{dtype_label:>9s}][{T:3d}] = {inner[T]:>10.2f} µs")
+    for dtype_label in sorted(c.decode_us_per_beam_kv_token.keys()):
+        rate = c.decode_us_per_beam_kv_token[dtype_label]
+        print(f"  decode_us_per_beam[{dtype_label:>9s}] = {rate:>10.6f}")
 
 
 if __name__ == "__main__":
