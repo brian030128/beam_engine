@@ -751,7 +751,10 @@ def cost_decode_tail_batch(
     Bandwidth and compute are summed (not max'd) — the previous max
     form assumed perfect overlap inside the decode kernel; the additive
     form is the no-overlap worst case and tends to penalize DEC_TAIL
-    when its tail-side compute is non-trivial.
+    when its tail-side compute is non-trivial. (Tested swapping to max
+    on the picker_demo grid; at our shapes work_us ≈ 0.05 µs ≪ bw_us,
+    so max ≈ bw_us and the change moved zero picks. Kept the additive
+    form documented above.)
 
     The extra ``decode_launch_us`` term accounts for the extra kernel
     launch DEC_TAIL pays over FUSED. Without this term the picker
