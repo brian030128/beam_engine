@@ -657,8 +657,9 @@ def cost_shared_batch(
     else:
         tau_elem = c.per_tile_us.get(t_large, 0.0) * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
 
-    pool_ctas: dict[int, int] = {}
+    # First pass: collect per-pool max τ_CTA and per-(pool, level) entries.
     pool_max_tau_cta: dict[int, float] = {}
+    pool_level_entries: dict[int, list[tuple[int, float]]] = {}  # T → [(n_ctas, tau_cta)]
     bw_us = 0.0
     for w in workloads:
         levels = _per_prompt_levels(w, depth)
@@ -666,9 +667,6 @@ def cost_shared_batch(
         for g_count, beams_per_g, L_kv, _bpkv in levels:
             if L_kv == 0:
                 continue
-            # Physical packed-Q rows = beams_per_g × gqa, matching the
-            # kernel's true Q packing. The pool router picks T off the
-            # physical packed value (small → pool_16 only at pool_count=2).
             packed_phys = beams_per_g * gqa
             if pool_count == 1:
                 T = t_large
@@ -683,21 +681,42 @@ def cost_shared_batch(
             n_ctas = n_q_tiles * num_chunks * w.num_kv_heads
             kv_iters_per_cta = max(1, _ceil_div(chunk_L_kv, c.cta_tile_kv))
             tau_cta = kv_iters_per_cta * tau_elem
-            pool_ctas[T] = pool_ctas.get(T, 0) + n_ctas
+            pool_level_entries.setdefault(T, []).append((n_ctas, tau_cta))
             if tau_cta > pool_max_tau_cta.get(T, 0.0):
                 pool_max_tau_cta[T] = tau_cta
         bw_us += _level_bw_us(levels, c)
 
-    # Wave capacity = num_sms (1 CTA/SM at T_large, empirically — the
-    # FlashInfer smem check says 2 CTAs/SM should fit at T=128 on H100,
-    # but verification (verify_cta_granularity.py) shows the kernel
-    # behaves as if 1 CTA/SM at K=32 and 2 at K=64. Without per-workload
-    # occupancy data we use the conservative 1 CTA/SM; the K=64 residual
-    # over-predicts Δ but doesn't flip picker rankings.
+    # Equivalent-CTA wave model: convert light CTAs to "heavy-equivalent
+    # units" by τ ratio, then wave-quantize the equivalents. This models
+    # the GPU scheduler's work-stealing: a light CTA on an SM that just
+    # finished a heavy CTA finishes in (τ_light / τ_heavy) fraction of
+    # the wave time, so it consumes only that fraction of one SM slot.
+    #
+    # Rationale: the previous "⌈total_CTAs / num_sms⌉ · max_τ" formula
+    # over-predicts at moderate batches (B=4-8 with K=16-32) where L1's
+    # many light CTAs inflate the wave count but the kernel actually
+    # absorbs them into L0's wave via work-stealing.
+    #
+    # The "just barely tips" boundary still triggers when L0's CTAs
+    # alone are near num_sms and L1 has any non-trivial heavy-equivalent
+    # weight (e.g., 70B C3: L0=128, L1=4.6 equiv → 132.6 > 132 → 2 waves).
+    # Picker demo: 7/12 (vs 6/12 for ⌈total/SM⌉·max_τ).
+    #
+    # Tried "spare-capacity absorption" (light work absorbed in heavy
+    # wave's spare SM-time, overflow at avg rate): fixed A3 but broke
+    # C3 and B3. The two models capture different physical effects and
+    # neither dominates — equivalent-CTA wins because it preserves the
+    # user-flagged C3 mispick.
     compute_us = 0.0
-    for T, n_ctas in pool_ctas.items():
-        waves = max(1, _ceil_div(n_ctas, c.num_sms))
-        compute_us += waves * pool_max_tau_cta.get(T, 0.0)
+    for T, entries in pool_level_entries.items():
+        max_tau = pool_max_tau_cta.get(T, 0.0)
+        if max_tau <= 0.0:
+            continue
+        equiv = 0.0
+        for n_ctas, tau_cta in entries:
+            equiv += n_ctas * (tau_cta / max_tau)
+        waves = max(1, _ceil_div(int(math.ceil(equiv)), c.num_sms))
+        compute_us += waves * max_tau
 
     merge_rounds = int(math.ceil(math.log2(max(2, depth))))
     merge_us = merge_rounds * c.merge_launch_us
