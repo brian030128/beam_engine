@@ -64,13 +64,20 @@ DTYPE = {"fp16": torch.float16, "bf16": torch.bfloat16}[_BE_DTYPE]
 # bs_kernel forced-strategy aliases for picker-vs-kernel ablation.
 # Each maps to a single Strategy that overrides the cost-model picker.
 _BSK_FORCED: dict[str, Strategy] = {
-    "bsk_per_beam":   Strategy.PER_BEAM,
-    "bsk_2l_1p":      Strategy.SHARED_2L_1POOL,
-    "bsk_3l_1p":      Strategy.SHARED_3L_1POOL,
-    "bsk_2l_dt":      Strategy.SHARED_2L_DEC_TAIL,
-    "bsk_3l_dt":      Strategy.SHARED_3L_DEC_TAIL,
-    "bsk_2l_2p":      Strategy.SHARED_2L_2POOL,
+    "bsk_per_beam":     Strategy.PER_BEAM,
+    "bsk_2l_1p":        Strategy.SHARED_2L_1POOL,
+    "bsk_2l_1p_single": Strategy.SHARED_2L_1POOL,
+    "bsk_3l_1p":        Strategy.SHARED_3L_1POOL,
+    "bsk_2l_dt":        Strategy.SHARED_2L_DEC_TAIL,
+    "bsk_3l_dt":        Strategy.SHARED_3L_DEC_TAIL,
+    "bsk_2l_2p":        Strategy.SHARED_2L_2POOL,
 }
+
+# Aliases that need ``single_launch=True`` patched onto every
+# FusedMultiLevelCascadeAttentionWrapper.__init__ for the duration of the
+# run. Patch is process-global; only enable in a process that runs ONLY
+# the patched alias to avoid contaminating other backends.
+_BSK_SINGLE_LAUNCH: set[str] = {"bsk_2l_1p_single"}
 
 
 def _make_backend(name: str):
@@ -78,6 +85,15 @@ def _make_backend(name: str):
         coeff = load_or_defaults(torch.device(DEVICE), MODEL_NAME, tp_size=get_tp_world_size())
         return BsKernelBackend(coefficients=coeff)
     if name in _BSK_FORCED:
+        if name in _BSK_SINGLE_LAUNCH:
+            import flashinfer
+            _orig_init = flashinfer.FusedMultiLevelCascadeAttentionWrapper.__init__
+            if not getattr(_orig_init, "_be_single_launch_patched", False):
+                def _patched_init(self, *a, **kw):
+                    kw.setdefault("single_launch", True)
+                    return _orig_init(self, *a, **kw)
+                _patched_init._be_single_launch_patched = True
+                flashinfer.FusedMultiLevelCascadeAttentionWrapper.__init__ = _patched_init
         coeff = load_or_defaults(torch.device(DEVICE), MODEL_NAME, tp_size=get_tp_world_size())
         return BsKernelBackend(
             coefficients=coeff,
@@ -334,6 +350,17 @@ def main():
              "decode. Useful for picker-vs-forced ablations where the "
              "K=1 stage-2 muddies the per-strategy comparison.",
     )
+    ap.add_argument(
+        "--tree-root", action="store_true",
+        help="Build workloads as multi-level TreeSpec.root (sys → fewshot "
+             "→ QA leaves) instead of the legacy 2-level PromptGroup form. "
+             "Cross-group sys-sharing becomes visible at the page-ID level "
+             "so fasttree/deft's combined-radix builders discover the "
+             "depth-3 sharing; bs_kernel still picks (sys+fewshot, output) "
+             "per group at depth=2 (cross-prompt picker is a follow-up). "
+             "Only the builders that exposes 3-level structure honor it "
+             "today (multi_few_shot; others passthrough).",
+    )
     args = ap.parse_args()
     if args.k_override:
         k_overrides: list[int | None] = [int(x) for x in args.k_override.split(",")]
@@ -372,16 +399,40 @@ def main():
     stage2_specs: dict[tuple[str, int | None], object] = {}
     for k_override in k_overrides:
         for name in args.scenarios:
-            spec = SCENARIO_BUILDERS[name](
-                tok, k_override=k_override, b_override=args.b_override,
+            builder_kwargs: dict = dict(
+                k_override=k_override, b_override=args.b_override,
                 paper_exact=args.paper_exact,
             )
+            # Only builders that grew a tree_root kwarg accept it; the
+            # others fall back to the legacy form.
+            import inspect
+            if "tree_root" in inspect.signature(
+                SCENARIO_BUILDERS[name]
+            ).parameters:
+                builder_kwargs["tree_root"] = args.tree_root
+            spec = SCENARIO_BUILDERS[name](tok, **builder_kwargs)
             spec.validate()
             specs[(name, k_override)] = spec
-            L_s_mean = sum(len(g.shared_prefix_ids) for g in spec.groups) / spec.B
-            L_p_mean = sum(
-                len(g.private_prefix_ids_per_leaf[0]) for g in spec.groups
-            ) / spec.B
+            if spec.is_multilevel:
+                # Walk the tree to derive equivalent per-group shape
+                # metrics for logging — ancestor+leaf-parent tokens =
+                # "shared", leaf tokens = "private".
+                from beam_engine.tree_driver import _enumerate_leaf_parents
+                lps, anc_paths = _enumerate_leaf_parents(spec.root)
+                L_s_mean = sum(
+                    sum(len(a.token_ids) for a in path) + len(lp.token_ids)
+                    for lp, path in zip(lps, anc_paths)
+                ) / max(1, len(lps))
+                L_p_mean = sum(
+                    len(lp.children[0].token_ids) for lp in lps
+                ) / max(1, len(lps))
+            else:
+                L_s_mean = sum(
+                    len(g.shared_prefix_ids) for g in spec.groups
+                ) / spec.B
+                L_p_mean = sum(
+                    len(g.private_prefix_ids_per_leaf[0]) for g in spec.groups
+                ) / spec.B
             ko_tag = "natural" if k_override is None else f"K={k_override}"
             _say(
                 f"  {name:<24} [{ko_tag:<8}] B={spec.B:<3d} K={spec.K:<3d} "

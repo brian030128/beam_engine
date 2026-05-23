@@ -39,7 +39,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from beam_engine.tree_driver import PromptGroup, TreeSpec
+from beam_engine.tree_driver import PromptGroup, TreeNode, TreeSpec
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -211,6 +211,7 @@ def build_multi_level_system(
     k_override: int | None = None,
     b_override: int | None = None,
     paper_exact: bool = False,
+    tree_root: bool = False,
 ) -> TreeSpec:
     """B sys-prompts × K questions each. Natural (B=4, K=32) = 128
     leaves. ``k_override`` flips kernel phase; ``b_override`` lets B
@@ -224,11 +225,39 @@ def build_multi_level_system(
     LOCATION/LANGUAGE replacements; the paper reports 459+38+584+2112
     = 3193 tok with Llama-2 tokenizer; Llama-3 tokenizer yields
     ~2 516 tok for the same template.
+
+    ``tree_root=True`` returns the equivalent multi-level form (empty
+    root → B sys-variant nodes → K QA leaves). The 4 _SYS_VARIANTS are
+    distinct, so the empty root carries no cross-group sharing — the
+    tree merely exposes the structure to backends so they can decide
+    autonomously rather than being handed a pre-flattened view.
     """
     K = k_override if k_override is not None else 32
     B = b_override if b_override is not None else len(_SYS_VARIANTS)
     questions = _gsm8k_questions(tokenizer, n_min=B * K)
     sys_fn = _sys_tokens_raw if paper_exact else _sys_tokens
+
+    if tree_root:
+        sys_ids_per_b = [
+            sys_fn(tokenizer, *_SYS_VARIANTS[b % len(_SYS_VARIANTS)])
+            for b in range(B)
+        ]
+        sys_max = max(len(s) for s in sys_ids_per_b)
+        leaf_max = max(
+            len(questions[b * K + k]) for b in range(B) for k in range(K)
+        )
+        root = TreeNode(token_ids=[])
+        for b in range(B):
+            sys_node = TreeNode(
+                token_ids=_pad_or_truncate(sys_ids_per_b[b], sys_max),
+            )
+            for k in range(K):
+                sys_node.children.append(TreeNode(
+                    token_ids=_pad_or_truncate(questions[b * K + k], leaf_max),
+                ))
+            root.children.append(sys_node)
+        return TreeSpec.from_root(root)
+
     groups: list[PromptGroup] = []
     for b in range(B):
         loc, lang = _SYS_VARIANTS[b % len(_SYS_VARIANTS)]
@@ -244,6 +273,7 @@ def build_multi_few_shot(
     k_override: int | None = None,
     b_override: int | None = None,
     paper_exact: bool = False,
+    tree_root: bool = False,
 ) -> TreeSpec:
     """1 sys × 8 fewshot bundles × 16 questions = 128 leaves.
 
@@ -264,6 +294,72 @@ def build_multi_few_shot(
     K = k_override if k_override is not None else 16
     sys_fn = _sys_tokens_raw if paper_exact else _sys_tokens
     sys = sys_fn(tokenizer, *_SYS_VARIANTS[0])
+
+    if tree_root:
+        # Multi-level tree form: sys (1) → B fewshot bundles → K QA leaves.
+        # Bundles are padded to a uniform length, and leaves are padded to
+        # a uniform length, so every root-to-leaf path has the same
+        # cumulative token count (the TreeSpec.validate constraint that
+        # keeps decode-loop current_pos uniform).
+        stride = FEWSHOT_NUM_SHOTS + K
+        if paper_exact:
+            rows = _gsm8k_raw_questions(B * stride)
+            bundle_ids_raw: list[list[int]] = []
+            leaf_ids_raw: list[list[list[int]]] = []  # [B][K]
+            for b in range(B):
+                offset = stride * b
+                fewshot_text = ""
+                for i in range(FEWSHOT_NUM_SHOTS):
+                    fewshot_text += (
+                        f"Question: {rows[offset + i]['question']}\n"
+                        f"Answer: {rows[offset + i]['answer']}\n\n"
+                    )
+                bundle_ids_raw.append(
+                    tokenizer.encode(fewshot_text, add_special_tokens=False)
+                )
+                priv_b: list[list[int]] = []
+                for j in range(K):
+                    q = rows[offset + FEWSHOT_NUM_SHOTS + j]["question"]
+                    priv_b.append(tokenizer.encode(
+                        f"Question: {q}\nAnswer:", add_special_tokens=False,
+                    ))
+                leaf_ids_raw.append(priv_b)
+        else:
+            questions = _gsm8k_questions(tokenizer, n_min=B * K)
+            with _GSM8K_PATH.open() as f:
+                all_lines = [ln for ln in f if ln.strip()]
+            rng = random.Random(0)
+            bundle_ids_raw = []
+            for _ in range(B):
+                rng.shuffle(all_lines)
+                text_acc = ""
+                for line in all_lines:
+                    row = json.loads(line)
+                    text_acc += (
+                        f"Question: {row['question']}\n"
+                        f"Answer: {row['answer']}\n\n"
+                    )
+                    enc = tokenizer.encode(text_acc, add_special_tokens=False)
+                    if len(enc) >= FEWSHOT_LEN:
+                        break
+                bundle_ids_raw.append(_pad_or_truncate(enc, FEWSHOT_LEN))
+            leaf_ids_raw = [
+                [questions[b * K + k] for k in range(K)] for b in range(B)
+            ]
+        bundle_max = max(len(b) for b in bundle_ids_raw)
+        leaf_max = max(max(len(l) for l in row) for row in leaf_ids_raw)
+        root = TreeNode(token_ids=list(sys))
+        for b in range(B):
+            bundle_node = TreeNode(
+                token_ids=_pad_or_truncate(bundle_ids_raw[b], bundle_max),
+            )
+            for k in range(K):
+                bundle_node.children.append(TreeNode(
+                    token_ids=_pad_or_truncate(leaf_ids_raw[b][k], leaf_max),
+                ))
+            root.children.append(bundle_node)
+        return TreeSpec.from_root(root)
+
     if paper_exact:
         # Stride = num_shots + num_questions per bench_multi_few_shot.py.
         stride = FEWSHOT_NUM_SHOTS + K
@@ -525,9 +621,114 @@ def build_multi_chain_reasoning_stage2(
     return TreeSpec(groups=groups)
 
 
+_HOTPOTQA_MULTI_Q_PATH = _REPO_ROOT / "data" / "hotpotqa_multi_q.jsonl"
+
+
+def build_multi_doc_qa(
+    tokenizer,
+    k_override: int | None = None,
+    b_override: int | None = None,
+    paper_exact: bool = False,
+    tree_root: bool = False,
+) -> TreeSpec:
+    """B hotpot doc-sets × K questions each — RAG-style multi-doc QA.
+
+    Reads ``data/hotpotqa_multi_q.jsonl`` (produced by
+    ``scripts/data/build_hotpotqa_multi_q.py``). Each line has a
+    ``prefix`` (concatenated hotpot documents, ~40k tokens) and a
+    ``questions`` list (>=64 distinct hotpot questions answerable
+    from those docs).
+
+    Shape: shared = tokenized prefix; per-leaf private =
+    ``\\nQuestion {i}: {q}\\nAnswer:`` tokens, padded to uniform
+    length within each group (TreeSpec contract).
+
+    Natural (B=1, K=8) — single doc-set, 8 candidate questions.
+    ``k_override`` slices ``questions[:K]``; ``b_override`` cycles
+    through doc-set lines (and shifts the question slice so groups
+    don't share leaves verbatim). ``paper_exact`` is ignored — the
+    hotpot text is already real, no synthetic variant exists.
+    """
+    K = k_override if k_override is not None else 8
+    B = b_override if b_override is not None else 1
+    if not _HOTPOTQA_MULTI_Q_PATH.exists():
+        raise FileNotFoundError(
+            f"multi_doc_qa needs the hotpot multi-question dataset at "
+            f"{_HOTPOTQA_MULTI_Q_PATH}. Run "
+            f"`uv run python scripts/data/build_hotpotqa_multi_q.py` first."
+        )
+    lines: list[dict] = []
+    with _HOTPOTQA_MULTI_Q_PATH.open() as f:
+        for ln in f:
+            if not ln.strip():
+                continue
+            lines.append(json.loads(ln))
+    if not lines:
+        raise RuntimeError(f"{_HOTPOTQA_MULTI_Q_PATH} is empty")
+
+    # Tokenize each group's (prefix, K leaf-questions). The result is
+    # consumed by either the legacy 2-level form or the multi-level
+    # tree below.
+    per_group_shared: list[list[int]] = []
+    per_group_priv: list[list[list[int]]] = []  # [B][K]
+    for b in range(B):
+        row = lines[b % len(lines)]
+        questions = row["questions"]
+        if K > len(questions):
+            raise ValueError(
+                f"multi_doc_qa K={K} > questions-per-row={len(questions)}; "
+                f"rerun build_hotpotqa_multi_q.py with --questions-per >= {K}"
+            )
+        # Shift slice across doc-sets so each group has distinct questions.
+        offset = (b // len(lines)) * K
+        q_slice = questions[offset % len(questions) : (offset % len(questions)) + K]
+        if len(q_slice) < K:
+            # wrap around — fewer than K questions left from this offset
+            q_slice = (q_slice + questions)[:K]
+        per_group_shared.append(
+            tokenizer.encode(row["prefix"], add_special_tokens=False)
+        )
+        priv_raw: list[list[int]] = []
+        for j, q in enumerate(q_slice):
+            priv_raw.append(tokenizer.encode(
+                f"\nQuestion {j + 1}: {q}\nAnswer:", add_special_tokens=False,
+            ))
+        per_group_priv.append(priv_raw)
+
+    if tree_root:
+        # Pad uniformly across groups and across leaves so every
+        # root-to-leaf path is the same length (multi-level validate).
+        shared_max = max(len(s) for s in per_group_shared)
+        leaf_max = max(
+            max(len(p) for p in row) for row in per_group_priv
+        )
+        root = TreeNode(token_ids=[])
+        for b in range(B):
+            group_node = TreeNode(
+                token_ids=_pad_or_truncate(per_group_shared[b], shared_max),
+            )
+            for j in range(K):
+                group_node.children.append(TreeNode(
+                    token_ids=_pad_or_truncate(per_group_priv[b][j], leaf_max),
+                ))
+            root.children.append(group_node)
+        return TreeSpec.from_root(root)
+
+    groups: list[PromptGroup] = []
+    for b in range(B):
+        priv_raw = per_group_priv[b]
+        max_len = max(len(p) for p in priv_raw)
+        priv = [_pad_or_truncate(p, max_len) for p in priv_raw]
+        groups.append(PromptGroup(
+            shared_prefix_ids=per_group_shared[b], private_prefix_ids_per_leaf=priv,
+        ))
+    return TreeSpec(groups=groups)
+
+
 SCENARIO_BUILDERS = {
     "multi_level_system":    build_multi_level_system,
     "multi_few_shot":        build_multi_few_shot,
     "multi_chain_reasoning": build_multi_chain_reasoning,
     "multi_document":        build_multi_document,
+    "multi_doc_qa":          build_multi_doc_qa,
 }
