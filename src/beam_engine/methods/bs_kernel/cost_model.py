@@ -435,26 +435,40 @@ def _cross_level_thrash_us(
     return total
 
 
+# num_blocks_per_sm in FlashInfer's PrefillPlan (scheduler.cuh:717) — the
+# grid budget is this × num_sms. Mirrored by the fused cascade's split-K.
+_SPLIT_K_BLOCKS_PER_SM = 2
+
+
+def _split_k_budget_tuples(num_kv_heads: int, num_sms: int) -> int:
+    """Grid budget in (req, q_tile, kv_chunk) tuples: 2·num_sms / num_kv_heads."""
+    return max((_SPLIT_K_BLOCKS_PER_SM * num_sms) // max(1, num_kv_heads), 1)
+
+
 def _split_k_chunks_for_level(
     n_q_tiles_level: int,
     L_kv: int,
     *,
     num_kv_heads: int,
     num_sms: int,
+    other_tiles: int = 0,
 ) -> int:
-    """Per-level split-K decision, mirroring FlashInfer's
-    cascade.py:1080-1173. Each (q_tile, kv_chunk) becomes one CTA.
+    """Per-level split-K decision, mirroring FlashInfer's PrefillPlan
+    (scheduler.cuh:717) as ported into the fused cascade (cascade.py).
+    Each (q_tile, kv_chunk) becomes one CTA, parallelized across SMs.
 
-    Skip split-K when the level's q_tiles already saturate the SMs, or
-    when L_kv is below the floor where the +merge_states launch tax
-    exceeds the parallelism gain.
+    Grid budget is ``2·num_sms / num_kv_heads`` tuples. ``other_tiles`` is
+    the q_tile count contributed by the *other* levels of the same kernel
+    launch — split this level only into the budget that's left after them
+    (the launch-wide grid-saturation gate the picker was missing: a level
+    that shares its launch with the per-beam tail (1POOL) gets no budget,
+    while DEC_TAIL's prefix-only launch gets the full budget).
     """
-    if L_kv < _MIN_KV_LEN_FOR_SPLIT:
+    target_tuples = _split_k_budget_tuples(num_kv_heads, num_sms)
+    budget = max(target_tuples - other_tiles, 0)
+    if n_q_tiles_level >= budget:
         return 1
-    target_tuples = max(num_sms // max(1, num_kv_heads), 1)
-    if n_q_tiles_level >= target_tuples:
-        return 1
-    target_chunks = max(target_tuples // n_q_tiles_level, 1)
+    target_chunks = max(budget // n_q_tiles_level, 1)
     chunk_size = max(_ceil_div(L_kv, target_chunks), _MIN_KV_CHUNK_TOKENS)
     chunk_size = (
         (chunk_size + _SPLIT_K_PAGE_SIZE - 1) // _SPLIT_K_PAGE_SIZE
@@ -817,12 +831,19 @@ def cost_shared_batch(
     # batch-aggregated n_q_tiles, then build per-pool entry list.
     pool_max_tau_cta: dict[int, float] = {}
     pool_level_entries: dict[int, list[tuple[int, float]]] = {}
+    # Launch-wide q_tile total: all levels of this cascade run in ONE kernel,
+    # so split-K of any one level only gets the grid budget left after the
+    # others (FlashInfer's grid-saturation gate). For 1POOL the per-beam tail
+    # level's tiles fill the grid → L0 can't split (matches the kernel); for
+    # DEC_TAIL the tail is a separate launch (not in level_aggregates here).
+    total_q_tiles = sum(st["n_q_tiles"] for st in level_aggregates.values())
     for (T, L_kv), state in level_aggregates.items():
         n_q_tiles = state["n_q_tiles"]
         num_kv_heads = state["num_kv_heads"]
         num_chunks = _split_k_chunks_for_level(
             n_q_tiles, L_kv,
             num_kv_heads=num_kv_heads, num_sms=c.num_sms,
+            other_tiles=total_q_tiles - n_q_tiles,
         )
         chunk_L_kv = _ceil_div(L_kv, num_chunks)
         n_ctas = n_q_tiles * num_chunks * num_kv_heads
@@ -915,7 +936,16 @@ def cost_shared_batch(
     # bw + compute. ``total_waves`` is the sum of per-pool wave counts
     # under the equivalent-CTA model.
     B = len(workloads)
-    well_pipelined = (total_waves <= 2) and (B <= 8)
+    # Per-wave HBM demand tracks the total beam count (B·K), not just B:
+    # the fused 1POOL kernel reads every beam's per-beam tail KV each wave,
+    # so at high B·K (e.g. F2 multi_few_shot K=128 B=4 → 512 beams) the
+    # memory controller saturates and the tail bandwidth no longer hides
+    # under prefix compute — push to additive bw+compute. (DEC_TAIL splits
+    # the tail into a separate decode launch and already pays it additively,
+    # so this restores the correct DEC_TAIL<1POOL ordering there. F4
+    # self_consistency K=16 B=1 = 16 beams stays well-pipelined → 1POOL.)
+    n_beams = sum(w.K for w in workloads)
+    well_pipelined = (total_waves <= 2) and (B <= 8) and (n_beams <= 128)
     work_us = (
         max(bw_us, compute_us + thrash_us)
         if well_pipelined
