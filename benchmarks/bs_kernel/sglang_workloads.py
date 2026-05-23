@@ -621,7 +621,12 @@ def build_multi_chain_reasoning_stage2(
     return TreeSpec(groups=groups)
 
 
-_HOTPOTQA_MULTI_Q_PATH = _REPO_ROOT / "data" / "hotpotqa_multi_q.jsonl"
+_HOTPOTQA_MULTI_Q_PATH = Path(
+    os.environ.get(
+        "BE_HOTPOTQA_MULTI_Q_PATH",
+        str(_REPO_ROOT / "data" / "hotpotqa_multi_q.jsonl"),
+    )
+)
 
 
 def build_multi_doc_qa(
@@ -725,10 +730,60 @@ def build_multi_doc_qa(
     return TreeSpec(groups=groups)
 
 
+def build_self_consistency(
+    tokenizer,
+    k_override: int | None = None,
+    b_override: int | None = None,
+    paper_exact: bool = False,
+    tree_root: bool = False,
+) -> TreeSpec:
+    """Best-of-N / self-consistency sampling — a STATIC 2-level tree.
+
+    One shared prefix (few-shot GSM8K exemplars + the target question,
+    padded to ``BE_SELF_CONSISTENCY_LP`` tokens, default 8192) → K
+    independent sampled tails that each decode straight to the end (no
+    re-branching, unlike beam search). B=1 by default. This is the
+    canonical workload for self-consistency CoT (Wang et al. 2022) and
+    best-of-N / rejection sampling (code-gen with unit tests, RLHF
+    rollout generation): one context, many parallel candidate
+    continuations. Structurally it is exactly SHARED_2L_1POOL's shape —
+    moderate L_p (under the H100 L2-thrash threshold), modest K — the
+    regime where a single fused 2-level cascade launch beats the
+    DEC_TAIL split. See docs/cta_tile_q_design.md and
+    project_single_launch_cascade_h100.
+
+    L_p is env-controlled (no --l-p override in the harness) so the
+    K×L_p sweep can set it per run. Leaves carry a distinct index marker
+    so the K samples are K separate beams (no radix dedup collapse).
+    """
+    K = k_override if k_override is not None else 16
+    B = b_override if b_override is not None else 1
+    Lp = int(os.environ.get("BE_SELF_CONSISTENCY_LP", "8192"))
+
+    shared = _gsm8k_qa_concatenated(tokenizer, Lp)  # ~Lp tokens, padded
+    common_tail = tokenizer.encode(
+        "\nLet's think step by step.\n", add_special_tokens=False,
+    )
+    groups: list[PromptGroup] = []
+    for _ in range(B):
+        priv_raw: list[list[int]] = []
+        for j in range(K):
+            # Distinct first token per sample → K separate beams.
+            marker = tokenizer.encode(f" [{j}]", add_special_tokens=False)
+            priv_raw.append(marker + common_tail)
+        max_len = max(len(p) for p in priv_raw)
+        priv = [_pad_or_truncate(p, max_len) for p in priv_raw]
+        groups.append(PromptGroup(
+            shared_prefix_ids=shared, private_prefix_ids_per_leaf=priv,
+        ))
+    return TreeSpec(groups=groups)
+
+
 SCENARIO_BUILDERS = {
     "multi_level_system":    build_multi_level_system,
     "multi_few_shot":        build_multi_few_shot,
     "multi_chain_reasoning": build_multi_chain_reasoning,
     "multi_document":        build_multi_document,
     "multi_doc_qa":          build_multi_doc_qa,
+    "self_consistency":      build_self_consistency,
 }

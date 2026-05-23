@@ -58,8 +58,8 @@ class _PrefillCtx(AttentionContext):
         num_heads = q.shape[-1] // head_dim
         kv_cache = self.page_table.kv_cache_at_layer[layer_idx]
 
-        k_3d = k.view(-1, num_kv_heads, head_dim)
-        v_3d = v.view(-1, num_kv_heads, head_dim)
+        k_3d = k.reshape(-1, num_kv_heads, head_dim)
+        v_3d = v.reshape(-1, num_kv_heads, head_dim)
         nnz = k_3d.shape[0]
         device = k_3d.device
         if (
@@ -82,7 +82,7 @@ class _PrefillCtx(AttentionContext):
             kv_last_page_len=self.kv_page_offsets,
             kv_layout="NHD",
         )
-        q_3d = q.view(-1, num_heads, head_dim)
+        q_3d = q.reshape(-1, num_heads, head_dim)
         out = self.wrapper.run(q_3d, (kv_cache[0], kv_cache[1]))
         return out.reshape(*q.shape[:-1], num_heads * head_dim)
 
@@ -106,8 +106,8 @@ class AdaptivePoolContext(AttentionContext):
         num_heads = q.shape[-1] // head_dim
         kv_cache = self.page_table.kv_cache_at_layer[layer_idx]
 
-        k_3d = k.view(-1, num_kv_heads, head_dim)
-        v_3d = v.view(-1, num_kv_heads, head_dim)
+        k_3d = k.reshape(-1, num_kv_heads, head_dim)
+        v_3d = v.reshape(-1, num_kv_heads, head_dim)
         nnz = k_3d.shape[0]
         device = k_3d.device
         if (
@@ -131,7 +131,7 @@ class AdaptivePoolContext(AttentionContext):
             kv_layout="NHD",
         )
 
-        q_3d = q.view(-1, num_heads, head_dim)
+        q_3d = q.reshape(-1, num_heads, head_dim)
         out = self.wrapper.run(q_3d, (kv_cache[0], kv_cache[1]))
         return out.reshape(*q.shape[:-1], num_heads * head_dim)
 
@@ -614,7 +614,11 @@ class MlcaBackend:
                 page_size=ps,
                 causal=False,
                 q_data_type=dtype,
-                kv_data_type=dtype,
+                # KV is stored at the page table's dtype (fp8_e4m3 on the
+                # 70B-FP8 path), which can differ from the bf16 compute
+                # dtype — plan with the store dtype or the cascade run()
+                # rejects the fp8 K/V (matches paged's kv_data_type).
+                kv_data_type=page_table.store_dtype,
             )
             if self.enable_plan_cache and _is_sm90(device) and plan_sig is not None:
                 # Cache miss: capture the schedule's batch_indices
@@ -717,6 +721,7 @@ def beam_search(
     max_num_pages: int = 2048,
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.float16,
+    kv_dtype: torch.dtype | None = None,
     return_timings: bool = False,
     return_phase_timings: bool = False,
     select_at_prefill: PrefillSelect = standard_prefill_select,
@@ -744,6 +749,7 @@ def beam_search(
         max_num_pages=max_num_pages,
         device=device,
         dtype=dtype,
+        kv_dtype=kv_dtype,
         return_timings=return_timings,
         return_phase_timings=return_phase_timings,
         select_at_prefill=select_at_prefill,

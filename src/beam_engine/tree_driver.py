@@ -39,6 +39,7 @@ ever forks after the first step) — but the same CoW + plan + forward
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -409,8 +410,12 @@ def tree_batch_decode(
         store_dtype=kv_dtype,
     )
 
+    # FlashInfer scratch (batch_prefill_tmp_s etc.). 128 MiB suffices for
+    # 1B/8B, but a long single-launch prefill on a high-head-count model
+    # (70B: 64 qo heads) can overflow it — bump via BE_WORKSPACE_MB.
+    _ws_mb = int(os.environ.get("BE_WORKSPACE_MB", "128"))
     workspace_buffer = torch.empty(
-        128 * 1024 * 1024, dtype=torch.uint8, device=device,
+        _ws_mb * 1024 * 1024, dtype=torch.uint8, device=device,
     )
     prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(
         workspace_buffer, kv_layout="NHD",

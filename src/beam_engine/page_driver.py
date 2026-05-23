@@ -40,6 +40,7 @@ previously enjoy these (mlca, adaptive_pool, paged) inherit them for free.
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
@@ -266,8 +267,12 @@ def beam_search(
         store_dtype=kv_dtype,
     )
 
+    # FlashInfer scratch. 128 MiB suffices for 1B/8B and most 70B cases,
+    # but mlca's fp8 multi-level cascade at B>1 / long L_p can overflow it
+    # (batch_prefill_tmp_s) — bump via BE_WORKSPACE_MB (matches tree_driver).
+    _ws_mb = int(os.environ.get("BE_WORKSPACE_MB", "128"))
     workspace_buffer = torch.empty(
-        128 * 1024 * 1024, dtype=torch.uint8, device=device,
+        _ws_mb * 1024 * 1024, dtype=torch.uint8, device=device,
     )
     prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(
         workspace_buffer, kv_layout="NHD",

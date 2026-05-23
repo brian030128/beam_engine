@@ -80,6 +80,29 @@ _BSK_FORCED: dict[str, Strategy] = {
 _BSK_SINGLE_LAUNCH: set[str] = {"bsk_2l_1p_single"}
 
 
+def _maybe_patch_picker_single_launch() -> None:
+    """If ``BE_PICKER_SINGLE_LAUNCH=1``, make every
+    FusedMultiLevelCascadeAttentionWrapper default to ``single_launch=True``
+    process-wide. This lets the cost-model picker (``bs_kernel``) realize
+    the single-launch SHARED_2L_1POOL win when it selects that strategy.
+    Safe to run alongside paged/mlca/fasttree/deft — none of them build
+    that wrapper, so the patch never fires for them. The forced 1POOL
+    aliases simply become single-launch too (idempotent)."""
+    if os.environ.get("BE_PICKER_SINGLE_LAUNCH", "0") in ("0", "", "false"):
+        return
+    import flashinfer
+    _orig_init = flashinfer.FusedMultiLevelCascadeAttentionWrapper.__init__
+    if getattr(_orig_init, "_be_single_launch_patched", False):
+        return
+
+    def _patched_init(self, *a, **kw):
+        kw.setdefault("single_launch", True)
+        return _orig_init(self, *a, **kw)
+
+    _patched_init._be_single_launch_patched = True
+    flashinfer.FusedMultiLevelCascadeAttentionWrapper.__init__ = _patched_init
+
+
 def _make_backend(name: str):
     if name == "bs_kernel":
         coeff = load_or_defaults(torch.device(DEVICE), MODEL_NAME, tp_size=get_tp_world_size())
@@ -306,6 +329,7 @@ def _run_one(
 
 
 def main():
+    _maybe_patch_picker_single_launch()
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--scenarios", nargs="+",
