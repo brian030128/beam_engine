@@ -162,11 +162,14 @@ ladder_batched () {  # tag Lp mn  "K B" "K B" ...
 # F1 multi_doc_qa: B=1, just drop K if the long prefix won't fit.
 ladder_sglang  F1 multi_doc_qa   256  "128 1" "64 1"
 # F2 multi_few_shot: LONG shared sys (20k) + 20k per-prompt fewshot (see
-# run_sglang_attempt — drops --paper-exact, adds --tree-root). K=128; ladder B
-# from 16 down to max-fit (40k prefix per prompt → higher B OOMs; lands ~B=16
-# on 1B, ~B=8 on 8B, ~B=4 on 70B — all >=2 so the cross-prompt XPROMPT_DEC_TAIL
-# saving is realized). Override lengths via F2_SYS_LEN / F2_FEWSHOT_LEN.
-ladder_sglang  F2 multi_few_shot 256  "128 16" "128 8" "128 4" "128 2" "128 1"
+# run_sglang_attempt — drops --paper-exact, adds --tree-root). K=16, B=16 — the
+# regime where cross-prompt sys-dedup wins: the picker selects XPROMPT_DEC_TAIL
+# (validated ~17% faster than 2L_dt: 1941 vs 2272 ms on 1B). NOT K=128: at high
+# K the per-prompt cascade already amortizes the sys read across the beams
+# (decode is compute-bound), so the picker correctly stays 2L there. Ladder B
+# down for fit headroom (16x16 @ 40k prefix/prompt fits 1B/8B/70B-fp8).
+# Override lengths via F2_SYS_LEN / F2_FEWSHOT_LEN.
+ladder_sglang  F2 multi_few_shot 256  "16 16" "16 8" "16 4" "16 2"
 # F3 beam_search: K=64, 16K prefix (down from 40K), shrink B to fit.
 ladder_batched F3 16000 256       "64 16" "64 8" "64 4" "64 2" "64 1"
 

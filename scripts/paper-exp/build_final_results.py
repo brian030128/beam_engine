@@ -14,17 +14,18 @@ BASE = "benchmarks/bs_kernel/results/paper-exp/final_paper"
 MODELS = [
     ("Llama-3.2-1B-bf16", "Llama-3.2-1B (bf16 weights + bf16 KV, TP=1)"),
     ("Llama-3.1-8B-bf16", "Llama-3.1-8B (bf16 weights + bf16 KV, TP=1)"),
-    ("Llama-3-70B-Instruct-FP8", "Llama-3-70B-Instruct-FP8 (fp8 weights + fp8_e4m3 KV, TP=2)"),
+    ("Llama-3-70B-bf16", "Llama-3-70B-Instruct (bf16 weights + bf16 KV, TP=4)"),
 ]
 COLS = ["paged", "fasttree", "deft", "mlca", "bs_kernel", "1p", "dt"]
-# On 70B, fasttree/deft have no fp8-KV support -> always "—".
+# fasttree/deft have no fp8-KV support -> "—" only on an fp8 70B tag (if present).
+# bf16 70B runs all methods, so the drop is scoped to the fp8 tag below.
 DROP_70B = {"fasttree", "deft"}
 
 CELLS = [
     ("F1 multi_doc_qa",    "K=128 B=1 ~80K", "F1_multi_doc_qa_K128_B1_mn256.csv"),
-    ("F2 multi_few_shot",  "K=128 B={B}",    "F2_multi_few_shot_K128_B*_mn256.csv"),
+    ("F2 multi_few_shot",  "K=16 B={B} sys20K","F2_multi_few_shot_K16_B*_mn256.csv"),
     ("F3 beam_search",     "K=64 B={B} L_p=16K", "F3_beam_search_K64_B*_Lp16000_mn256.csv"),
-    ("F4 self_consistency","K=16 B=1 L_p=16K","F4_self_consistency_K16_B1_Lp16384_mn256.csv"),
+    ("F4 self_consistency","K=16 B=1 L_p={LP}","F4_self_consistency_K16_B1_Lp*_mn256.csv"),
 ]
 
 def norm(m):
@@ -33,7 +34,7 @@ def norm(m):
     return m
 
 def core(tag):
-    return {"paged","bs_kernel","1p","dt"} if tag.startswith("Llama-3-70B") \
+    return {"paged","bs_kernel","1p","dt"} if "FP8" in tag \
         else {"paged","fasttree","deft","mlca","bs_kernel","1p","dt"}
 
 def read(f, col):
@@ -52,6 +53,24 @@ def pick(tag, pat):
             if B > bestB: best, bestB = f, B
     return best
 
+def pick_lp(tag, pat):
+    """largest-L_p file whose core methods are all present. F4 was rerun at
+    32K on 1B/8B (where 1p/picker overtake paged); 70B stays at its 16K
+    file (forward-bound at K=16, not rerun)."""
+    best, bestLp = None, -1
+    for f in glob.glob(f"{BASE}/{tag}/{pat}"):
+        if core(tag) <= set(read(f, "decode_total_ms")):
+            m = re.search(r'_Lp(\d+)_', f)
+            lp = int(m.group(1)) if m else 0
+            if lp > bestLp: best, bestLp = f, lp
+    return best
+
+def lp_label(f):
+    """'…_Lp32768_…' -> '32K' (round to nearest K)."""
+    m = re.search(r'_Lp(\d+)_', f) if f else None
+    if not m: return "16K"
+    return f"{round(int(m.group(1))/1024)}K"
+
 def fmt(m, val, win, drop, decmap=None):
     if m in drop or val is None or m not in val: return "—"
     v = f"{val[m]:.0f}"
@@ -65,12 +84,17 @@ out = ["# Final paper — end-to-end results (F1–F4)", "",
        "**bold** = row winner. F4 uses single-launch 1p + single-launch picker.", ""]
 
 for tag, title in MODELS:
-    drop = DROP_70B if tag.startswith("Llama-3-70B") else set()
+    drop = DROP_70B if "FP8" in tag else set()
     cells = []
     for name, cfg, pat in CELLS:
-        f = f"{BASE}/{tag}/{pat}" if "*" not in pat else pick(tag, pat)
+        if "*" not in pat:
+            f = f"{BASE}/{tag}/{pat}"
+        elif "_Lp*" in pat:
+            f = pick_lp(tag, pat)
+        else:
+            f = pick(tag, pat)
         B = re.search(r'_B(\d+)_', f).group(1) if f and '_B' in f else "1"
-        cells.append((name, cfg.format(B=B), f))
+        cells.append((name, cfg.format(B=B, LP=lp_label(f)), f))
 
     # ---- decode table ----
     out += [f"## {title}", "", "### Decode time (median `decode_total_ms`)", "",
@@ -101,10 +125,10 @@ for tag, title in MODELS:
     out.append("")
 
 out += ["## Notes", "",
-    "- **Scenarios.** F1 multi_doc_qa (~80K shared prefix, B=1, K=128); F2 multi_few_shot (~4K prefix, large B, K=128); F3 beam search (multi-level dynamic tree, L_p=16K, K=64); F4 self_consistency / best-of-N (static 2-level: shared prefix → K independent tails, B=1, K=16, L_p=16K).",
+    "- **Scenarios.** F1 multi_doc_qa (~80K shared prefix, B=1, K=128); F2 multi_few_shot (~4K prefix, large B, K=128); F3 beam search (multi-level dynamic tree, L_p=16K, K=64); F4 self_consistency / best-of-N (static 2-level: shared prefix → K independent tails, B=1, K=16, L_p=32K on 1B/8B — at 16K the model forward dominates and paged edges 1p; doubling the prefix makes attention a large enough slice that 1p/picker overtake paged. F4 is run on 1B/8B only — skipped for 70B).",
     "- **Max-fit batch size.** F2/F3 batch sizes are the largest where all methods fit one node; they differ by model (footnoted in the config column).",
-    "- **fp8 baselines on 70B.** `fasttree`/`deft` have no fp8-KV support (no `kv_dtype` path) → shown as “—” on all 70B cells. `mlca` *does* support fp8 once `MlcaBackend.plan` is given the page-table store dtype (fixed in baselines/mlca.py).",
-    "- **Plan time.** Sum of per-step index/metadata build over all decode steps. For `bs_kernel` it also includes the cost-model dispatch decision (shown in parens); the decision is a small fraction of bs_kernel's already-small plan cost, and bs_kernel's total plan is far below paged's index-build on the long-prefix cells.",
+    "- **70B is bf16 (unquantized), TP=4.** Llama-3-70B-Instruct at bf16 weights + bf16 KV on 4×H100, so all methods run (no fp8-KV limitation). bs_kernel/dt win every 70B cell — F1 2.7× over mlca, F2 1.4× over paged, F3 1.34× over mlca; the picker matches the best forced strategy on all three after the split-K kernel + cost-model fixes. (An earlier fp8/TP=2 run, where mlca won, is kept on disk but not shown here.)",
+    "- **Plan time.** Sum of per-step index/metadata build over all decode steps. For `bs_kernel` the parens show the cost-model dispatch decision sub-cost (small). `paged` now uses the same LCA-prefix-skip for its index build (shared prefill prefix converted once per prompt, not per beam), cutting its plan time ~8-9× on the long-prefix F1 cells. After that fix the methods' plan costs are close: bs_kernel is lowest on F1, but on the forking F3 beam_search paged plans faster (bs_kernel pays for GPU plan-state updates under heavy forking).",
     ""]
 
 open("final_paper_results.md", "w").write("\n".join(out))

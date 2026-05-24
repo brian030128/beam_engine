@@ -71,6 +71,10 @@ _BSK_FORCED: dict[str, Strategy] = {
     "bsk_2l_dt":        Strategy.SHARED_2L_DEC_TAIL,
     "bsk_3l_dt":        Strategy.SHARED_3L_DEC_TAIL,
     "bsk_2l_2p":        Strategy.SHARED_2L_2POOL,
+    # Force the cross-prompt 3L dec_tail (only realizes when the batch shares a
+    # cross-prompt sys prefix, i.e. multi_few_shot --tree-root with B>=2);
+    # otherwise the picker falls back to per_beam. For A/B vs the picker.
+    "bsk_xp_dt":        Strategy.XPROMPT_DEC_TAIL,
 }
 
 # Aliases that need ``single_launch=True`` patched onto every
