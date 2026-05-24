@@ -56,15 +56,25 @@ BATCHED_CORE_CSV="$(echo "$BATCHED_CORE" | tr ' ' ',')"
 run_sglang_attempt () {
     local tag="$1" scenario="$2" K="$3" B="$4" mn="$5"
     local csv="$OUT_DIR/${tag}_${scenario}_K${K}_B${B}_mn${mn}.csv"
+    # multi_few_shot is the only tree-root-wired sglang builder: run it on the
+    # multilevel TreeSpec so the shared sys is page-deduped across the B
+    # prompts. fasttree/deft pick up the cross-prompt page dedup, and the
+    # bs_kernel picker can select the cross-prompt XPROMPT_DEC_TAIL strategy
+    # when the shared sys exceeds L2 (a no-op at paper-exact lengths, where the
+    # shared sys is the small natural system prompt → picker stays 2L). Safe to
+    # pass for other scenarios too (bench ignores --tree-root for builders that
+    # don't accept it), but scoped here for intent.
+    local tree_flag=""
+    [[ "$scenario" == "multi_few_shot" ]] && tree_flag="--tree-root"
     {
         echo
-        echo "=== ${tag}: ${scenario} (K=${K}, B=${B}, mn=${mn}, R=$((B*K))) ==="
+        echo "=== ${tag}: ${scenario} (K=${K}, B=${B}, mn=${mn}, R=$((B*K)), tree=${tree_flag:-none}) ==="
     } | tee -a "$LOG"
     rm -f "$csv"
     torchrun --standalone --nproc_per_node="$NPROC" \
         benchmarks/bs_kernel/bench_sglang_e2e.py \
         --methods $SGLANG_CORE \
-        --paper-exact --no-stage2 \
+        --paper-exact --no-stage2 $tree_flag \
         --max-new "$mn" --repeat 3 --warmup \
         --scenarios "$scenario" --k-override "$K" --b-override "$B" \
         --out "$csv" 2>&1 | tee -a "$LOG" || true
@@ -81,7 +91,7 @@ run_sglang_attempt () {
         torchrun --standalone --nproc_per_node="$NPROC" \
             benchmarks/bs_kernel/bench_sglang_e2e.py \
             --methods $SGLANG_EXTRA \
-            --paper-exact --no-stage2 \
+            --paper-exact --no-stage2 $tree_flag \
             --max-new "$mn" --repeat 3 --warmup \
             --scenarios "$scenario" --k-override "$K" --b-override "$B" \
             --out "$etmp" 2>&1 | tee -a "$LOG" || \
