@@ -34,6 +34,11 @@ export BS_KERNEL_TRACE_PLAN=1
 export BE_MODEL="meta-llama/Llama-3.2-1B-Instruct"
 export BE_DTYPE=bf16
 export BE_KV_DTYPE=bf16
+# 1B is head_dim=64: the flashinfer FA3/SM90 batch_prefill kernel fails to
+# compile for hd=64 ("No eligible GMMA operator"), breaking paged/fasttree/
+# tree/mlca on a cold build. Force FA2 prefill (compiles+runs for all hd on
+# Hopper). 8B/70B (hd=128) keep FA3 — do NOT set this there.
+export BE_FORCE_FA2=1
 
 MODEL_TAG="Llama-3.2-1B-bf16"
 NPROC=1

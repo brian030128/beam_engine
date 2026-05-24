@@ -107,6 +107,33 @@ def _maybe_patch_picker_single_launch() -> None:
     flashinfer.FusedMultiLevelCascadeAttentionWrapper.__init__ = _patched_init
 
 
+def _maybe_force_fa2() -> None:
+    """If ``BE_FORCE_FA2=1``, force flashinfer's prefill backend auto-selection
+    to FA2 process-wide. Needed on head_dim=64 (1B): the current flashinfer
+    fork's FA3/SM90 ``batch_prefill`` kernel fails to COMPILE for hd=64
+    (cutlass "No eligible GMMA operator" for the 192x96 tile), which takes down
+    paged / fasttree / tree / mlca (anything that builds that op) the moment a
+    cold rebuild is triggered. FA2 (SM80) compiles and runs for all head dims
+    on Hopper. ``determine_attention_backend`` (called by the prefill wrappers
+    and by mlca's per-level wrappers when backend='auto') has no env hook, so
+    patch it. Scope to 1B via the env so 8B/70B (hd=128, FA3 compiles) keep FA3.
+    Idempotent; orthogonal to the single_launch patch."""
+    if os.environ.get("BE_FORCE_FA2", "0") in ("0", "", "false"):
+        return
+    import flashinfer.prefill as _fip
+    import flashinfer.utils as _fiu
+    if getattr(_fiu.determine_attention_backend, "_be_fa2_forced", False):
+        return
+
+    def _force_fa2(*a, **kw):
+        return "fa2"
+
+    _force_fa2._be_fa2_forced = True
+    # Patch both the source (utils) and the name already imported into prefill.
+    _fiu.determine_attention_backend = _force_fa2
+    _fip.determine_attention_backend = _force_fa2
+
+
 def _make_backend(name: str):
     if name == "bs_kernel":
         coeff = load_or_defaults(torch.device(DEVICE), MODEL_NAME, tp_size=get_tp_world_size())
@@ -334,6 +361,7 @@ def _run_one(
 
 def main():
     _maybe_patch_picker_single_launch()
+    _maybe_force_fa2()
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--scenarios", nargs="+",
