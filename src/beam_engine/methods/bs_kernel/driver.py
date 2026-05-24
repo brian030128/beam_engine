@@ -123,6 +123,132 @@ def _collapse_d3_to_d2(levels: list) -> list:
     return _collapse_levels(levels, 2)
 
 
+def _force_prefix_split(levels: list, n: int) -> list:
+    """Split a natural 2-level decomposition's shared (L0) prefix into two
+    same-reader cascade levels at page boundary ``n``.
+
+    Experiment-only override (gated on ``BS_KERNEL_FORCE_PREFIX_SPLIT_PAGES``):
+    on a few-shot / best-of-N workload every beam shares the entire prefix, so
+    ``_adaptive_levels`` finds no fork and emits exactly 2 levels (shared +
+    per-beam tail). To probe whether a 3-level cascade
+    (L0 = sys, L1 = prompt, L2 = K-beam tails) beats the merged 2L, we manually
+    cut the shared prefix at ``n`` pages: ``L0 = shared[:n]``, ``L1 = shared[n:]``,
+    both still one group of all K beams. Mathematically identical (online-softmax
+    merge over the same KV), so output stays token-identical — only the kernel
+    partition changes.
+
+    No-op unless ``levels`` is exactly 2 levels and ``0 < n < len(shared)`` (so
+    short-prefix steps / cells without enough shared pages stay 2L). Does not
+    mutate the caller's prefix list — slices are fresh.
+    """
+    if len(levels) != 2:
+        return levels
+    sizes0, pages0, _lpl0 = levels[0]
+    if not pages0 or not sizes0:
+        return levels
+    shared = pages0[0]
+    if not (0 < n < len(shared)):
+        return levels
+    K = sizes0[0]
+    # lpl sentinel -1 == "full page" for non-leaf levels (see
+    # _adaptive_levels / _materialize_levels_from_cache).
+    l0 = ([K], [shared[:n]], [-1])
+    l1 = ([K], [shared[n:]], [-1])
+    return [l0, l1, levels[1]]
+
+
+def _cross_prompt_sys_bundle(beams_per_prompt: list, K: int, B: int):
+    """L0 (single cross-prompt sys group, read once by all B*K beams) + L1
+    (per-prompt bundle groups) + the shared-sys page count ``lca``.
+
+    Pure function of the *immutable* prompt prefixes: ``pages_prefix`` is
+    committed at prefill and never mutated (beam-search forks copy only the
+    per-beam tail), so the caller can cache this across decode steps and skip
+    the O(B*lca) page-ID LCA scan + the L0/L1 list copies on every step — the
+    dominant residual plan cost at B=16/lca=1250. Returns ``(L0, L1, lca)`` or
+    ``None`` when the prompts share no sys prefix (lca==0) or some prompt has
+    no private bundle remainder.
+    """
+    if B < 1:
+        return None
+    prefixes = [beams_per_prompt[b][0].pages_prefix for b in range(B)]
+    min_len = min((len(p) for p in prefixes), default=0)
+    lca = 0
+    while lca < min_len:
+        pg = prefixes[0][lca]
+        if any(prefixes[b][lca] != pg for b in range(1, B)):
+            break
+        lca += 1
+    if lca == 0 or any(len(prefixes[b]) <= lca for b in range(B)):
+        return None
+    BK = B * K
+    sys_pages = list(prefixes[0][:lca])
+    L0 = ([BK], [sys_pages], [-1])
+    L1 = (
+        [K] * B,
+        [list(prefixes[b][lca:]) for b in range(B)],
+        [-1] * B,
+    )
+    return L0, L1, lca
+
+
+def _cross_prompt_tails(
+    beams_per_prompt: list, current_pos: list, K: int, B: int, page_size: int,
+):
+    """Per-beam tail level (L2) for the cross-prompt cascade — rebuilt every
+    step (tail page lists grow, last_page_len = off+1 changes, and forks may
+    swap a beam's tail list). Cheap: B*K single-token groups."""
+    tail_pages: list[list[int]] = []
+    tail_lpl: list[int] = []
+    for b in range(B):
+        off = current_pos[b] % page_size
+        bp_b = beams_per_prompt[b]
+        for k in range(K):
+            tail_pages.append(bp_b[k].pages_tail)
+            tail_lpl.append(off + 1)
+    return ([1] * (B * K), tail_pages, tail_lpl)
+
+
+def _build_cross_prompt_3l_levels(
+    beams_per_prompt: list,
+    current_pos: list,
+    K: int,
+    B: int,
+    page_size: int,
+):
+    """Build a BATCH-WIDE 3-level cascade ``levels`` list with a SINGLE
+    cross-prompt sys group, in the standard ``(group_sizes, group_pages,
+    group_lpl)`` per-level tuple form so it feeds straight into
+    :func:`_pack_batched_cascade_arrays_any_depth` (passed as a one-element
+    ``levels_per_prompt``) — no bespoke array packing.
+
+      L0 = ([B*K],   [sys],            [-1])       one group, all beams read sys ONCE
+      L1 = ([K]*B,   [bundle_0, ...],  [-1]*B)     per-prompt bundle groups
+      L2 = ([1]*B*K, [tail_0, ...],    [off+1...]) per-beam decode tails
+
+    Unlike the per-prompt decomposition (B level-0 groups, each re-listing
+    sys → sys read B×), the single L0 group makes the cascade read sys once.
+    The shared sys is the longest common page-ID prefix across the B prompts'
+    ``pages_prefix`` (identical IDs under the multilevel TreeSpec's page
+    dedup). lpl ``-1`` is the packer's "full page" sentinel; the per-beam tail
+    carries the real ``off+1`` partial-last-page length.
+
+    Query rows are natural ``b*K + k`` order (matching the decode beam
+    layout), so L0's single group, L1's per-prompt groups, and L2's per-beam
+    groups all partition the same rows contiguously (a proper hierarchy).
+
+    Returns ``(levels, lca_pages)`` or ``None`` when the prompts share no sys
+    prefix (lca==0) or any prompt has no private bundle remainder — caller
+    then falls through to normal dispatch.
+    """
+    sb = _cross_prompt_sys_bundle(beams_per_prompt, K, B)
+    if sb is None:
+        return None
+    L0, L1, lca = sb
+    L2 = _cross_prompt_tails(beams_per_prompt, current_pos, K, B, page_size)
+    return [L0, L1, L2], lca
+
+
 def _workload_from_levels(
     levels: list,
     K: int,
@@ -502,6 +628,23 @@ class BsKernelBackend:
     # re-plan and overwrite the entry.
     _shared_plan_cache: dict = field(default_factory=dict, init=False, repr=False)
 
+    # Cross-prompt 3L_dt (XPROMPT_DEC_TAIL) caches. The non-leaf levels (L0 =
+    # the single cross-prompt sys group, L1 = per-prompt bundle groups) are
+    # built from the immutable prompt prefix, so they're byte-identical across
+    # decode steps while the cross-prompt LCA is unchanged (forks copy only the
+    # tail). Only the per-beam tail changes per step. Three caches:
+    #   * _xp_struct_cache — the (L0, L1, lca) decomposition (skips the O(B*lca)
+    #     LCA scan + L0/L1 list copies per step), keyed by prefix identity/len.
+    #   * _xp_l01_cache — packed non-leaf GPU tensors + host cumsums, keyed by
+    #     (lca, n_levels, tile_q); skips the list build + H2D for L0/L1.
+    #   * _xp_dt_prefix_key — the prefill cascade (L0+L1) carries no tail, so it
+    #     is fully static during decode; plan once, re-plan only on fork/lca.
+    _xp_struct_cache_key: object = field(default=None, init=False, repr=False)
+    _xp_struct_cache: tuple | None = field(default=None, init=False, repr=False)
+    _xp_l01_cache_key: object = field(default=None, init=False, repr=False)
+    _xp_l01_cache: tuple | None = field(default=None, init=False, repr=False)
+    _xp_dt_prefix_key: object = field(default=None, init=False, repr=False)
+
     # Per-prompt decomp/workload cache. ``_adaptive_levels`` builds the
     # cascade level tree by walking each beam's tail page list; at high B
     # (e.g. SGLang multi_chain_reasoning B=32 K=4) that's ~0.25 ms × B
@@ -621,6 +764,12 @@ class BsKernelBackend:
         # decode (see medium-K analysis 2026-05-12).
         _split_env = os.environ.get("BS_KERNEL_DEC_TAIL_PREFIX_SPLIT_PAGES", "").strip()
         prefix_fixed_split: int | None = int(_split_env) if _split_env else None
+        # Experiment knob: force a sys|prompt split of the shared prefix into
+        # two same-reader cascade levels at this page boundary, so the picker
+        # can dispatch a genuine 3L cascade on no-fork (few-shot/best-of-N)
+        # workloads. Unset → default 2L path unchanged. See _force_prefix_split.
+        _fps_env = os.environ.get("BS_KERNEL_FORCE_PREFIX_SPLIT_PAGES", "").strip()
+        force_prefix_split: int | None = int(_fps_env) if _fps_env else None
         if trace_on:
             torch.cuda.synchronize()
             _t_start = time.perf_counter()
@@ -669,6 +818,8 @@ class BsKernelBackend:
                     max_levels=max_depth,
                     start_lca=last_lca_per_prompt[b],
                 )
+                if force_prefix_split is not None:
+                    levels = _force_prefix_split(levels, force_prefix_split)
                 if not _cache_disabled:
                     entry, w = _entry_from_decomp(
                         levels, beam_order, lca_b, K, ps,
@@ -691,11 +842,40 @@ class BsKernelBackend:
         if trace_on:
             _t_decomp = time.perf_counter()
 
+        # ---- Cross-prompt structural decomposition (sys shared across ALL B
+        # prompts), computed BEFORE the pick so the cost model can weigh the
+        # cross-prompt sys-dedup candidate (XPROMPT_DEC_TAIL). L0 = one group of
+        # all B*K beams reading sys once; L1 = B per-prompt bundle groups; L2 =
+        # per-beam tails. Struct-cached: ``pages_prefix`` is immutable during
+        # decode (forks copy only the tail), so recompute only on a prefix
+        # identity/len change. ``cross_prompt_lca`` is 0 — and the picker won't
+        # offer XPROMPT — when B<2, the prompts share no sys prefix (single
+        # prompt / no tree-root page dedup), or BS_KERNEL_NO_XPROMPT=1.
+        xp_sb = None
+        xp_struct_hit = False
+        cross_prompt_lca = 0
+        if B >= 2 and not bool(int(os.environ.get("BS_KERNEL_NO_XPROMPT", "0"))):
+            xp_struct_key = tuple(
+                (id(beams_per_prompt[b][0].pages_prefix),
+                 len(beams_per_prompt[b][0].pages_prefix))
+                for b in range(B)
+            )
+            if self._xp_struct_cache_key == xp_struct_key:
+                xp_sb = self._xp_struct_cache
+                xp_struct_hit = True
+            else:
+                xp_sb = _cross_prompt_sys_bundle(beams_per_prompt, K, B)
+                self._xp_struct_cache_key = xp_struct_key
+                self._xp_struct_cache = xp_sb
+            if xp_sb is not None:
+                cross_prompt_lca = xp_sb[2]
+
         # ---- Cost-model pick across the whole batch. ----
         pick = pick_strategy_batch(
             workloads, self.coefficients,
             fused_merge=self.fused_merge,
             available_strategies=self.available_strategies,
+            cross_prompt_lca=cross_prompt_lca,
         )
         if trace_on:
             _t_pick = time.perf_counter()
@@ -707,6 +887,148 @@ class BsKernelBackend:
             for b in range(B)
         ]
         beam_order_per_prompt = beam_order_full_per_prompt
+
+        # ---- Cross-prompt 3L_dt dispatch (picker-selected XPROMPT_DEC_TAIL).
+        # L0 = ONE group of all B*K beams reading the cross-prompt-shared sys
+        # ONCE; L1 = B per-prompt bundle groups (fused-cascade prefill); L2 =
+        # per-beam tails through the dedicated CTA_Q=1 decode kernel, merged by
+        # online softmax. The picker only selects this when the read saving
+        # (sys 1× vs B×) beats the per-prompt strategies — i.e. per-layer sys
+        # KV exceeds L2 (see cost_xprompt_dec_tail_batch). ``xp_sb`` computed
+        # pre-pick; ``BS_KERNEL_XP_TILE_Q`` tunes the L0 query-tile size.
+        if pick.strategy == Strategy.XPROMPT_DEC_TAIL and xp_sb is not None:
+            xp_L0, xp_L1, xp_lca = xp_sb
+            # Only the per-beam tail (L2) changes per step; build it fresh.
+            xp_levels = [
+                xp_L0, xp_L1,
+                _cross_prompt_tails(beams_per_prompt, current_pos, K, B, ps),
+            ]
+            n_lv = len(xp_levels)
+            _xp_tq = int(os.environ.get("BS_KERNEL_XP_TILE_Q", "128"))
+
+            # --- Tier 1: pack-cache the non-leaf levels (L0 sys + L1 bundles).
+            # Invariant while the cross-prompt LCA is unchanged; only the
+            # per-beam tail (leaf level) is rebuilt per step.
+            nonleaf = tuple(range(n_lv - 1))
+            xp_l01_key = (xp_lca, n_lv, _xp_tq)
+            xp_l01_hit = self._xp_l01_cache_key == xp_l01_key
+            if xp_l01_hit:
+                qo_arr, kvp_arr, kvi_arr, kvl_arr, qo_arr_h, kvp_arr_h = (
+                    _pack_batched_cascade_arrays_any_depth(
+                        [xp_levels], ps, device, n_levels=n_lv,
+                        skip_levels=nonleaf,
+                    )
+                )
+                (cqo, ckvp, ckvi, ckvl, cqoh, ckvph) = self._xp_l01_cache
+                for li in nonleaf:
+                    qo_arr[li], kvp_arr[li] = cqo[li], ckvp[li]
+                    kvi_arr[li], kvl_arr[li] = ckvi[li], ckvl[li]
+                    qo_arr_h[li], kvp_arr_h[li] = cqoh[li], ckvph[li]
+            else:
+                qo_arr, kvp_arr, kvi_arr, kvl_arr, qo_arr_h, kvp_arr_h = (
+                    _pack_batched_cascade_arrays_any_depth(
+                        [xp_levels], ps, device, n_levels=n_lv,
+                    )
+                )
+                self._xp_l01_cache_key = xp_l01_key
+                self._xp_l01_cache = (
+                    list(qo_arr), list(kvp_arr), list(kvi_arr),
+                    list(kvl_arr), list(qo_arr_h), list(kvp_arr_h),
+                )
+
+            # Per-beam write slots (tail append) — (b, k) order, numpy bridge.
+            BK = B * K
+            xp_wpi_np = np.empty(BK, dtype=np.int32)
+            xp_wpo_np = np.empty(BK, dtype=np.int32)
+            row = 0
+            for b in range(B):
+                pos = current_pos[b]
+                off = pos % ps
+                pli = pos // ps
+                bp_b = beams_per_prompt[b]
+                tail_idx = pli - len(bp_b[0].pages_prefix)
+                for k in range(K):
+                    xp_wpi_np[row] = bp_b[k].pages_tail[tail_idx]
+                    xp_wpo_np[row] = off
+                    row += 1
+            xp_write_pi = torch.from_numpy(xp_wpi_np).to(device, non_blocking=True)
+            xp_write_po = torch.from_numpy(xp_wpo_np).to(device, non_blocking=True)
+
+            # Prefill cascade (L0 sys + L1 bundles) carries no tail level → it
+            # is fully static during decode; plan once, re-plan on fork/lca.
+            n_prefill = n_lv - 1
+            xp_dt_wrapper = wrappers.dec_tail_cascade_wrappers[n_lv]
+            xp_dt_prefix_key = (xp_lca, n_lv, _xp_tq)
+            xp_prefix_replan = self._xp_dt_prefix_key != xp_dt_prefix_key
+            if xp_prefix_replan:
+                xp_dt_wrapper.plan(
+                    qo_indptr_arr=qo_arr[:n_prefill],
+                    paged_kv_indptr_arr=kvp_arr[:n_prefill],
+                    paged_kv_indices_arr=kvi_arr[:n_prefill],
+                    paged_kv_last_page_len=kvl_arr[:n_prefill],
+                    num_qo_heads=num_qo_heads,
+                    num_kv_heads=num_kv_heads,
+                    head_dim=head_dim,
+                    page_size=ps,
+                    causal=False,
+                    q_data_type=dtype,
+                    kv_data_type=page_table.store_dtype,
+                    force_cta_tile_q=(_xp_tq if _xp_tq > 0 else None),
+                )
+                self._xp_dt_prefix_key = xp_dt_prefix_key
+            # Per-beam tail (L2) → decode kernel. The tier-1 packer already
+            # emitted the leaf level in indptr/indices/last_page_len form.
+            leaf = n_lv - 1
+            dt_indptr, dt_indices, dt_lpl = (
+                kvp_arr[leaf], kvi_arr[leaf], kvl_arr[leaf],
+            )
+            cur_max_kv = max(current_pos)
+            need_decode_full_plan = (
+                self._decode_plan_info_cached is None
+                or cur_max_kv >= 2 * self._decode_max_kv_at_plan
+            )
+            if need_decode_full_plan:
+                wrappers.decode_wrapper.plan(
+                    indptr=dt_indptr,
+                    indices=dt_indices,
+                    last_page_len=dt_lpl,
+                    num_qo_heads=num_qo_heads,
+                    num_kv_heads=num_kv_heads,
+                    head_dim=head_dim,
+                    page_size=ps,
+                    q_data_type=dtype,
+                    kv_data_type=page_table.store_dtype,
+                )
+                self._decode_plan_info_cached = wrappers.decode_wrapper._plan_info
+                self._decode_max_kv_at_plan = cur_max_kv
+            else:
+                wrappers.decode_wrapper._paged_kv_indptr_buf = dt_indptr
+                wrappers.decode_wrapper._paged_kv_indices_buf = dt_indices
+                wrappers.decode_wrapper._paged_kv_last_page_len_buf = dt_lpl
+                wrappers.decode_wrapper._plan_info = self._decode_plan_info_cached
+            xp_ctx = DecodeTailCascadeContext(
+                page_table=page_table,
+                write_pi=xp_write_pi,
+                write_po=xp_write_po,
+                prefix_wrapper=xp_dt_wrapper,
+                decode_wrapper=wrappers.decode_wrapper,
+                inter_wrappers=[],
+            )
+            if trace_on:
+                torch.cuda.synchronize()
+                self._plan_trace.append({
+                    "strategy": f"XPROMPT_{n_lv}L_DEC_TAIL",
+                    "depth": n_lv,
+                    "lca_pages": xp_lca,
+                    "xp_struct_hit": bool(xp_struct_hit),
+                    "xp_l01_hit": bool(xp_l01_hit),
+                    "xp_plan_hit": bool(not xp_prefix_replan),
+                })
+            return StepPlan(
+                ctx=xp_ctx,
+                beam_order_per_prompt=[list(range(K)) for _ in range(B)],
+                pick=pick,
+            )
 
         # ---- Dispatch. ----
         if pick.strategy == Strategy.PER_BEAM:
@@ -1276,21 +1598,46 @@ def _dump_plan_trace(trace: list) -> None:
         return out
 
     def _is_dec_tail(r):
-        return "DEC_TAIL" in r.get("strategy", "")
+        # Only the per-prompt SHARED_*_DEC_TAIL path carries the prefix/decode
+        # sub-phase fields. XPROMPT_*_DEC_TAIL also contains "DEC_TAIL" in its
+        # name but is reported in the XPROMPT bucket, so exclude it here.
+        s = r.get("strategy", "")
+        return "DEC_TAIL" in s and not s.startswith("XPROMPT")
 
     pb = [r for r in trace if r.get("strategy") == "PER_BEAM"]
     dt = [r for r in trace if _is_dec_tail(r)]
     sh = [r for r in trace if r.get("strategy", "").startswith("SHARED_")
           and not _is_dec_tail(r)]
+    xp = [r for r in trace if r.get("strategy", "").startswith("XPROMPT")]
 
     print(f"\n[bs_kernel plan-trace] {len(trace)} steps "
-          f"(PER_BEAM: {len(pb)}, DEC_TAIL: {len(dt)}, SHARED: {len(sh)})")
+          f"(PER_BEAM: {len(pb)}, DEC_TAIL: {len(dt)}, SHARED: {len(sh)}, "
+          f"XPROMPT: {len(xp)})")
+
+    if xp:
+        n = len(xp)
+        lcas = sorted({r.get("lca_pages") for r in xp})
+        struct_hits = sum(1 for r in xp if r.get("xp_struct_hit"))
+        l01_hits = sum(1 for r in xp if r.get("xp_l01_hit"))
+        plan_hits = sum(1 for r in xp if r.get("xp_plan_hit"))
+        print(f"\n  -- XPROMPT cross-prompt 3L path ({n} steps) --")
+        print(f"  L0=single sys group (all B*K); sys lca_pages seen: {lcas}")
+        print(
+            f"  struct (L0/L1/lca) cache hits: {struct_hits}/{n} "
+            f"({100.0*struct_hits/n:.1f}%)   "
+            f"pack cache hits: {l01_hits}/{n} ({100.0*l01_hits/n:.1f}%)   "
+            f"plan-state cache hits: {plan_hits}/{n} "
+            f"({100.0*plan_hits/n:.1f}%)"
+        )
 
     if dt:
         n = len(dt)
+        from collections import Counter as _Counter
+        dt_strat_counts = _Counter(r.get("strategy", "?") for r in dt)
         n_prefix = sum(1 for r in dt if r["prefix_replan"])
         n_decode = sum(1 for r in dt if r["decode_full_plan"])
         print(f"\n  -- DEC_TAIL path ({n} steps) --")
+        print(f"  strategy mix: {dict(dt_strat_counts)}")
         print(
             f"  prefix re-plans: {n_prefix}/{n} ({100.0*n_prefix/n:.1f}%)   "
             f"decode full re-plans: {n_decode}/{n} ({100.0*n_decode/n:.1f}%)"

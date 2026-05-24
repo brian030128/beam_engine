@@ -63,6 +63,14 @@ class Strategy(Enum):
     SHARED_4L_DEC_TAIL = "shared_4l_dec_tail"
     SHARED_5L_DEC_TAIL = "shared_5l_dec_tail"
     SHARED_6L_DEC_TAIL = "shared_6l_dec_tail"
+    # Cross-prompt 3-level dec_tail: a SINGLE L0 group of all B*K beams reads
+    # the cross-prompt-shared sys ONCE (vs once per per-prompt group in the
+    # SHARED_* strategies), L1 = per-prompt bundle groups (fused-cascade
+    # prefill), per-beam tail through the decode kernel. Only generated as a
+    # candidate when the batch shares a cross-prompt sys prefix
+    # (``cross_prompt_lca > 0``); the per-prompt cost functions can't express
+    # the cross-prompt group, so it has its own cost (cost_xprompt_dec_tail_batch).
+    XPROMPT_DEC_TAIL = "xprompt_dec_tail"
 
 
 # Default candidate set the production picker considers. Restricted to
@@ -73,9 +81,14 @@ class Strategy(Enum):
 DEFAULT_STRATEGIES: frozenset[Strategy] = frozenset({
     Strategy.PER_BEAM,
     Strategy.SHARED_2L_1POOL,
-    Strategy.SHARED_3L_1POOL,
     Strategy.SHARED_2L_DEC_TAIL,
     Strategy.SHARED_3L_DEC_TAIL,
+    # Cross-prompt 3L dec_tail — only contributes a candidate when the batch
+    # shares a cross-prompt sys prefix (cross_prompt_lca > 0); a strict no-op
+    # otherwise. Replaces SHARED_3L_1POOL (dropped from defaults; per-prompt
+    # same-reader 3L never won — see project_bs_kernel_3l_not_faster). The
+    # SHARED_3L_1POOL enum member is kept for forced ablations.
+    Strategy.XPROMPT_DEC_TAIL,
 })
 
 
@@ -1145,6 +1158,122 @@ def cost_dec_tail_batch(
     return prefix_us + tail_us
 
 
+def cost_xprompt_dec_tail_batch(
+    workloads: list[WorkloadShape],
+    c: Coefficients,
+    *,
+    cross_prompt_lca: int,
+    t_large: int = 64,
+) -> float:
+    """Cross-prompt 3-level dec_tail cost.
+
+    Same hybrid shape as ``cost_dec_tail_batch`` (prefill cascade + per-beam
+    decode tail + merges), but the prefill levels are built CROSS-PROMPT
+    rather than per-prompt:
+
+      * L0 = ONE group of all ``B*K`` beams reading the shared sys
+        (``cross_prompt_lca`` tokens) — counted **once** in the bandwidth
+        term (``_level_bw_us`` prices ``g_count * kv_tokens``, independent of
+        the beams attending it), vs ``B``× when each per-prompt group re-lists
+        sys in the SHARED_* strategies.
+      * L1 = one group per prompt of ``K`` beams reading that prompt's private
+        bundle (``L_p - cross_prompt_lca`` tokens) — distinct per prompt, so no
+        dedup; identical bytes to the per-prompt path.
+      * tail = per-beam decode kernel — identical to the SHARED_*_DEC_TAIL tail
+        (``cost_decode_tail_batch``).
+
+    The single B*K L0 group flows through the SAME tile/wave/bandwidth
+    primitives as ``cost_dec_tail_batch`` (``_level_tiles_and_bytes`` logic
+    inlined here, ``_split_k_chunks_for_level``, ``_level_bw_us``,
+    ``_cross_level_thrash_us``), so the read saving (sys 1× vs B×) and the
+    occupancy of collapsing B*K into one query-tile pool are both counted
+    honestly — the short-sys-loses / long-sys-wins crossover emerges from
+    ``max(bw, compute)`` rather than a hand-tuned credit.
+
+    Returns ``math.inf`` when not applicable (``B < 2`` or no shared sys), so
+    the picker never selects it in those cases.
+    """
+    assert t_large in T_LARGE_CHOICES, t_large
+    B = len(workloads)
+    if B < 2 or cross_prompt_lca <= 0:
+        return math.inf
+    w0 = workloads[0]
+    bpkv = w0.bytes_per_kv
+    gqa = w0.gqa_group_size()
+    num_kv_heads = w0.num_kv_heads
+    n_beams_total = sum(w.K for w in workloads)
+
+    # Cross-prompt prefill levels (no tail): L0 sys read once, L1 per-prompt
+    # bundles. Each entry is (group_count, beams_per_group, kv_tokens, bpkv).
+    levels: list[tuple[int, int, int, int]] = [
+        (1, n_beams_total, cross_prompt_lca, bpkv),
+    ]
+    for w in workloads:
+        bundle = w.L_p - cross_prompt_lca
+        if bundle > 0:
+            levels.append((1, w.K, bundle, bpkv))
+
+    kv_dtype = w0.kv_dtype
+    slope = lookup_per_tile_per_kv_us(c, t_large, kv_dtype)
+    if slope > 0:
+        tau_elem = slope * c.cta_tile_kv
+    else:
+        tau_elem = (
+            lookup_per_tile_us(c, t_large, kv_dtype)
+            * c.cta_tile_kv / max(1, PER_TILE_L_KV_REF)
+        )
+
+    pool_ctas = 0
+    pool_max_tau_cta = 0.0
+    for g_count, beams_per_g, L_kv, _bpkv in levels:
+        if L_kv == 0:
+            continue
+        packed_phys = beams_per_g * gqa
+        n_q_tiles = g_count * max(1, _ceil_div(packed_phys, t_large))
+        num_chunks = _split_k_chunks_for_level(
+            n_q_tiles, L_kv, num_kv_heads=num_kv_heads, num_sms=c.num_sms,
+        )
+        chunk_L_kv = _ceil_div(L_kv, num_chunks)
+        n_ctas = n_q_tiles * num_chunks * num_kv_heads
+        kv_iters_per_cta = max(1, _ceil_div(chunk_L_kv, c.cta_tile_kv))
+        tau_cta = kv_iters_per_cta * tau_elem
+        pool_ctas += n_ctas
+        if tau_cta > pool_max_tau_cta:
+            pool_max_tau_cta = tau_cta
+
+    waves = max(1, _ceil_div(pool_ctas, c.num_sms))
+    prefix_compute_us = waves * pool_max_tau_cta
+
+    # L2-aware bandwidth — the crux of when cross-prompt actually wins.
+    # The cross-prompt L0 physically reads the shared sys ONCE; the per-prompt
+    # baseline (cost_dec_tail_batch) re-reads it once per group. But those
+    # re-reads HIT L2 (free) unless one group's private bundle evicts sys
+    # before the next group re-reads it (LRU reuse distance ≈ sys + bundle).
+    # So the sys-read saving is real only ABOVE L2: below it, both strategies
+    # effectively read sys ~once, so we charge cross-prompt as if it also paid
+    # the (L2-served) re-reads — it ties the per-prompt baseline there and wins
+    # only once per-layer sys+bundle exceeds L2. ``evict`` is the fraction of
+    # sys spilled from L2 per group.
+    sys_bytes = cross_prompt_lca * bpkv
+    max_bundle_tok = max((w.L_p - cross_prompt_lca) for w in workloads)
+    bundle_resident_bytes = max(0, max_bundle_tok) * bpkv
+    evict = min(1.0, max(0.0,
+        (sys_bytes + bundle_resident_bytes - _L2_SIZE_BYTES_DEFAULT)
+        / max(1, sys_bytes)))
+    sys_eff_bytes = sys_bytes * (1.0 + (B - 1) * (1.0 - evict))
+    bundle_total_bytes = sum(
+        max(0, w.L_p - cross_prompt_lca) for w in workloads) * bpkv
+    bw_us = _bytes_to_us(int(sys_eff_bytes + bundle_total_bytes), c)
+
+    # 2 prefill cascade levels (sys, bundle) + decode-tail merge → like a
+    # depth-3 dec_tail.
+    merge_rounds = int(math.ceil(math.log2(3)))
+    merge_us = merge_rounds * c.merge_launch_us
+    prefix_us = max(bw_us, prefix_compute_us) + merge_us
+    tail_us = cost_decode_tail_batch(workloads, c)
+    return prefix_us + tail_us
+
+
 def cost_per_beam(w: WorkloadShape, c: Coefficients) -> float:
     """Plain paged decode for a single prompt — wraps cost_per_beam_batch."""
     return cost_per_beam_batch([w], c)
@@ -1193,6 +1322,7 @@ def pick_strategy_batch(
     *,
     fused_merge: bool = False,
     available_strategies: Optional[set[Strategy]] = None,
+    cross_prompt_lca: int = 0,
 ) -> Pick:
     """Pick the best strategy for a *batch* of prompts decoded together.
 
@@ -1270,6 +1400,21 @@ def pick_strategy_batch(
             tag = f"shared_d{depth}_dec_tail_t{t_large}"
             debug[tag] = cs
             candidates.append((s, cs, t_large, depth, 1))
+
+    # Cross-prompt 3L dec_tail candidate — only when the batch shares a
+    # cross-prompt sys prefix (cross_prompt_lca>0). The picker weighs reading
+    # the shared sys ONCE (L0 = one group of all B*K beams) against the
+    # per-prompt strategies that re-list sys per group; the crossover falls out
+    # of cost_xprompt_dec_tail_batch's honest tile+bandwidth counting. depth=3,
+    # pool_count=1 are carried for dispatch metadata (the driver rebuilds the
+    # cross-prompt layout structurally).
+    if cross_prompt_lca > 0 and Strategy.XPROMPT_DEC_TAIL in available_strategies:
+        for t_large in T_LARGE_CHOICES:
+            cs = cost_xprompt_dec_tail_batch(
+                workloads, c, cross_prompt_lca=cross_prompt_lca, t_large=t_large,
+            )
+            debug[f"xprompt_dec_tail_t{t_large}"] = cs
+            candidates.append((Strategy.XPROMPT_DEC_TAIL, cs, t_large, 3, 1))
 
     if available_strategies is not None:
         filtered = [cand for cand in candidates if cand[0] in available_strategies]
@@ -1350,14 +1495,18 @@ def pick_strategy(
     *,
     fused_merge: bool = False,
     available_strategies: Optional[set[Strategy]] = None,
+    cross_prompt_lca: int = 0,
 ) -> Pick:
     """Pick the best strategy for a single prompt — wraps
     ``pick_strategy_batch`` with a 1-element list. Existing single-prompt
     callers (driver, oracle_vs_model, autotune) keep working unchanged.
+    (``cross_prompt_lca`` is a no-op here: a 1-element batch has B<2 so the
+    cross-prompt candidate is never generated.)
     """
     return pick_strategy_batch(
         [w], c, fused_merge=fused_merge,
         available_strategies=available_strategies,
+        cross_prompt_lca=cross_prompt_lca,
     )
 
 
