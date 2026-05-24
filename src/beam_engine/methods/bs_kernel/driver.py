@@ -904,7 +904,15 @@ class BsKernelBackend:
                 _cross_prompt_tails(beams_per_prompt, current_pos, K, B, ps),
             ]
             n_lv = len(xp_levels)
-            _xp_tq = int(os.environ.get("BS_KERNEL_XP_TILE_Q", "128"))
+            # CTA_TILE_Q for the cross-prompt prefill cascade. Default 0 = let
+            # FlashInfer auto-tile each level (like mlca). Forcing a large tile
+            # (e.g. 128) so L0's B*K queries collapse into one query-tile
+            # ("read sys once") is a NET LOSS: at long shared sys the repeated
+            # L0 query-tiles hit L2 within the single launch anyway, while the
+            # large tile pads L1's small per-prompt bundle groups (K*gqa rows
+            # << 128) → wasted attention compute. Measured at 1B/K=16/B=16/
+            # sys=20k: auto 12.3 ms/step vs forced-128 13.7 ms (~10% slower).
+            _xp_tq = int(os.environ.get("BS_KERNEL_XP_TILE_Q", "0"))
 
             # --- Tier 1: pack-cache the non-leaf levels (L0 sys + L1 bundles).
             # Invariant while the cross-prompt LCA is unchanged; only the
