@@ -56,25 +56,31 @@ BATCHED_CORE_CSV="$(echo "$BATCHED_CORE" | tr ' ' ',')"
 run_sglang_attempt () {
     local tag="$1" scenario="$2" K="$3" B="$4" mn="$5"
     local csv="$OUT_DIR/${tag}_${scenario}_K${K}_B${B}_mn${mn}.csv"
-    # multi_few_shot is the only tree-root-wired sglang builder: run it on the
-    # multilevel TreeSpec so the shared sys is page-deduped across the B
-    # prompts. fasttree/deft pick up the cross-prompt page dedup, and the
-    # bs_kernel picker can select the cross-prompt XPROMPT_DEC_TAIL strategy
-    # when the shared sys exceeds L2 (a no-op at paper-exact lengths, where the
-    # shared sys is the small natural system prompt → picker stays 2L). Safe to
-    # pass for other scenarios too (bench ignores --tree-root for builders that
-    # don't accept it), but scoped here for intent.
-    local tree_flag=""
-    [[ "$scenario" == "multi_few_shot" ]] && tree_flag="--tree-root"
+    # F2 multi_few_shot is redefined as a LONG-shared-sys cell to exercise the
+    # cross-prompt strategy: drop --paper-exact so BE_SYS_LEN/BE_FEWSHOT_LEN
+    # take effect (default 20k each), and run on the multilevel TreeSpec
+    # (--tree-root) so the shared sys is page-deduped across the B prompts. A
+    # 20k shared sys exceeds H100 L2 on every model (1B/8B/70B-fp8 — crossover
+    # ~16k tok at 2 KB/tok, ~8k at 8B's 4 KB/tok), so the bs_kernel picker
+    # selects XPROMPT_DEC_TAIL (sys read once across all B*K beams); fasttree/
+    # deft also get cross-prompt page dedup. Needs B>=2 to realize the saving —
+    # the B-ladder lands max-fit B (>=2 on all models even at K=128/40k prefix).
+    # Other sglang scenarios keep --paper-exact + natural lengths.
+    local paper_flag="--paper-exact" tree_flag="" len_env=""
+    if [[ "$scenario" == "multi_few_shot" ]]; then
+        paper_flag=""
+        tree_flag="--tree-root"
+        len_env="BE_SYS_LEN=${F2_SYS_LEN:-20000} BE_FEWSHOT_LEN=${F2_FEWSHOT_LEN:-20000}"
+    fi
     {
         echo
-        echo "=== ${tag}: ${scenario} (K=${K}, B=${B}, mn=${mn}, R=$((B*K)), tree=${tree_flag:-none}) ==="
+        echo "=== ${tag}: ${scenario} (K=${K}, B=${B}, mn=${mn}, R=$((B*K)), tree=${tree_flag:-none} ${len_env}) ==="
     } | tee -a "$LOG"
     rm -f "$csv"
-    torchrun --standalone --nproc_per_node="$NPROC" \
+    env $len_env torchrun --standalone --nproc_per_node="$NPROC" \
         benchmarks/bs_kernel/bench_sglang_e2e.py \
         --methods $SGLANG_CORE \
-        --paper-exact --no-stage2 $tree_flag \
+        $paper_flag --no-stage2 $tree_flag \
         --max-new "$mn" --repeat 3 --warmup \
         --scenarios "$scenario" --k-override "$K" --b-override "$B" \
         --out "$csv" 2>&1 | tee -a "$LOG" || true
@@ -88,10 +94,10 @@ run_sglang_attempt () {
         local etmp="${csv%.csv}.extra.csv"
         rm -f "$etmp"
         echo "  --- extra sglang methods: $SGLANG_EXTRA ---" | tee -a "$LOG"
-        torchrun --standalone --nproc_per_node="$NPROC" \
+        env $len_env torchrun --standalone --nproc_per_node="$NPROC" \
             benchmarks/bs_kernel/bench_sglang_e2e.py \
             --methods $SGLANG_EXTRA \
-            --paper-exact --no-stage2 $tree_flag \
+            $paper_flag --no-stage2 $tree_flag \
             --max-new "$mn" --repeat 3 --warmup \
             --scenarios "$scenario" --k-override "$K" --b-override "$B" \
             --out "$etmp" 2>&1 | tee -a "$LOG" || \
@@ -155,8 +161,11 @@ ladder_batched () {  # tag Lp mn  "K B" "K B" ...
 
 # F1 multi_doc_qa: B=1, just drop K if the long prefix won't fit.
 ladder_sglang  F1 multi_doc_qa   256  "128 1" "64 1"
-# F2 multi_few_shot: K=128 with lower B (B=64/32 OOM on every model);
-# ladder from 16 down, max-fit per model.
+# F2 multi_few_shot: LONG shared sys (20k) + 20k per-prompt fewshot (see
+# run_sglang_attempt — drops --paper-exact, adds --tree-root). K=128; ladder B
+# from 16 down to max-fit (40k prefix per prompt → higher B OOMs; lands ~B=16
+# on 1B, ~B=8 on 8B, ~B=4 on 70B — all >=2 so the cross-prompt XPROMPT_DEC_TAIL
+# saving is realized). Override lengths via F2_SYS_LEN / F2_FEWSHOT_LEN.
 ladder_sglang  F2 multi_few_shot 256  "128 16" "128 8" "128 4" "128 2" "128 1"
 # F3 beam_search: K=64, 16K prefix (down from 40K), shrink B to fit.
 ladder_batched F3 16000 256       "64 16" "64 8" "64 4" "64 2" "64 1"
