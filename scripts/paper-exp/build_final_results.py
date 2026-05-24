@@ -23,10 +23,20 @@ DROP_70B = {"fasttree", "deft"}
 
 CELLS = [
     ("F1 multi_doc_qa",    "K=128 B=1 ~80K", "F1_multi_doc_qa_K128_B1_mn256.csv"),
-    ("F2 multi_few_shot",  "K=16 B={B} sys20K","F2_multi_few_shot_K16_B*_mn256.csv"),
+    ("F2 multi_few_shot",  "K=128 B={B}",    "F2_multi_few_shot_K128_B*_mn256.csv"),
     ("F3 beam_search",     "K=64 B={B} L_p=16K", "F3_beam_search_K64_B*_Lp16000_mn256.csv"),
     ("F4 self_consistency","K=16 B=1 L_p={LP}","F4_self_consistency_K16_B1_Lp*_mn256.csv"),
 ]
+
+# F4 self_consistency uses a per-model L_p (the prefix length that puts
+# attention in the 1POOL-win regime for that model's forward/attention
+# balance — bigger/more-forward-bound models need a longer prefix):
+#   1B → 32K, 8B → 16K, 70B → 64K.
+F4_LP_BY_MODEL = {
+    "Llama-3.2-1B-bf16": 32768,
+    "Llama-3.1-8B-bf16": 16384,
+    "Llama-3-70B-bf16": 65536,
+}
 
 def norm(m):
     if m in ("bsk_2l_1p", "bsk_2l_1p_single", "bs_kernel_2l1p"): return "1p"
@@ -90,7 +100,11 @@ for tag, title in MODELS:
         if "*" not in pat:
             f = f"{BASE}/{tag}/{pat}"
         elif "_Lp*" in pat:
-            f = pick_lp(tag, pat)
+            # F4: explicit per-model L_p (not largest-on-disk).
+            lp = F4_LP_BY_MODEL.get(tag)
+            f = f"{BASE}/{tag}/{pat.replace('_Lp*', f'_Lp{lp}')}" if lp else None
+            if f and not os.path.exists(f):
+                f = None
         else:
             f = pick(tag, pat)
         B = re.search(r'_B(\d+)_', f).group(1) if f and '_B' in f else "1"
@@ -125,7 +139,7 @@ for tag, title in MODELS:
     out.append("")
 
 out += ["## Notes", "",
-    "- **Scenarios.** F1 multi_doc_qa (~80K shared prefix, B=1, K=128); F2 multi_few_shot (~4K prefix, large B, K=128); F3 beam search (multi-level dynamic tree, L_p=16K, K=64); F4 self_consistency / best-of-N (static 2-level: shared prefix → K independent tails, B=1, K=16, L_p=32K on 1B/8B — at 16K the model forward dominates and paged edges 1p; doubling the prefix makes attention a large enough slice that 1p/picker overtake paged. F4 is run on 1B/8B only — skipped for 70B).",
+    "- **Scenarios.** F1 multi_doc_qa (~80K shared prefix, B=1, K=128); F2 multi_few_shot (~4K prefix, large B, K=128); F3 beam search (multi-level dynamic tree, L_p=16K, K=64); F4 self_consistency / best-of-N (static 2-level: shared prefix → K independent tails, B=1, K=16, per-model L_p = 1B 32K / 8B 16K / 70B 64K — the prefix length that puts attention in the 1POOL-win regime for that model's forward/attention balance; bigger/more-forward-bound models need a longer prefix. At those L_p the picker selects 1POOL and 1p/bs_kernel beat paged on all three, 10–22%).",
     "- **Max-fit batch size.** F2/F3 batch sizes are the largest where all methods fit one node; they differ by model (footnoted in the config column).",
     "- **70B is bf16 (unquantized), TP=4.** Llama-3-70B-Instruct at bf16 weights + bf16 KV on 4×H100, so all methods run (no fp8-KV limitation). bs_kernel/dt win every 70B cell — F1 2.7× over mlca, F2 1.4× over paged, F3 1.34× over mlca; the picker matches the best forced strategy on all three after the split-K kernel + cost-model fixes. (An earlier fp8/TP=2 run, where mlca won, is kept on disk but not shown here.)",
     "- **Plan time.** Sum of per-step index/metadata build over all decode steps. For `bs_kernel` the parens show the cost-model dispatch decision sub-cost (small). `paged` now uses the same LCA-prefix-skip for its index build (shared prefill prefix converted once per prompt, not per beam), cutting its plan time ~8-9× on the long-prefix F1 cells. After that fix the methods' plan costs are close: bs_kernel is lowest on F1, but on the forking F3 beam_search paged plans faster (bs_kernel pays for GPU plan-state updates under heavy forking).",
