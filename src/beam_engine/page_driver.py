@@ -798,6 +798,13 @@ def beam_search(
     _gc.collect()
     torch.cuda.empty_cache()
 
+    # Expose the per-step plan trace (populated only under
+    # BS_KERNEL_TRACE_PLAN / FT_TRACE_PLAN) so benches can split plan time
+    # into build-indices vs dispatch-decision. backend survives the cleanup
+    # above (only wrappers / page_table are deleted).
+    if return_timings:
+        timings["plan_trace"] = list(getattr(backend, "_plan_trace", []))
+
     if return_timings and return_picks:
         return beams_per_prompt, timings, picks_per_prompt
     if return_timings:

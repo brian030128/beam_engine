@@ -1,0 +1,4 @@
+scenario,k_override,method,repeat,n_leaves,prefill_shared_ms,prefill_private_ms,decode_total_ms,decode_p50_ms,decode_p99_ms,n_decode_steps,plan_mean_ms,plan_p50_ms,plan_p99_ms,plan_total_ms,forward_mean_ms,forward_p50_ms,forward_p99_ms,forward_total_ms,alloc_mean_ms,alloc_total_ms,topk_mean_ms,topk_total_ms,dispatch_total_ms
+self_consistency,16,mlca,0,16,7476.7436,217.4880,1295018.5165,108.0490,121.4452,11999,1.0819,1.0864,1.4400,12981.6205,106.7120,106.8310,120.0804,1280436.8788,0.0091,109.0241,0.1076,1291.5219,0.0000
+self_consistency,16,fasttree,0,16,7307.6347,190.5213,621572.3990,51.6909,64.0448,11999,2.4126,2.3974,3.2546,28948.8229,49.2528,49.1464,60.8058,590983.7981,0.0088,105.9697,0.1112,1334.6710,0.0000
+self_consistency,16,deft,0,16,7028.3077,189.7954,5003148.6341,416.8332,427.0049,11999,0.4592,0.4128,1.5218,5510.0681,416.3707,416.2766,426.2793,4996031.5692,0.0091,109.1798,0.1085,1301.7135,0.0000

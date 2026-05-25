@@ -1,0 +1,84 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['paged']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 44793.54it/s]
+Model loaded.
+
+  paged          K=16  L_p=51200 max_new=16   prefill=4182.0ms  decode= 27.20ms p50  (  4.8s wall)
+  paged          K=32  L_p=51200 max_new=16   prefill=3252.2ms  decode= 47.34ms p50  (  4.0s wall)
+  paged          K=64  L_p=51200 max_new=16   prefill=3250.4ms  decode= 86.35ms p50  (  4.6s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/lp50k-20260506-215424/sweep-paged.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['tree']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 150775.63it/s]
+Model loaded.
+
+  tree           K=16  L_p=51200 max_new=16   prefill=3938.6ms  decode= 48.50ms p50  (  4.9s wall)
+  tree           K=32  L_p=51200 max_new=16   prefill=3042.0ms  decode= 87.86ms p50  (  4.4s wall)
+  tree           K=64  L_p=51200 max_new=16   prefill=3060.3ms  decode=166.71ms p50  (  5.6s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/lp50k-20260506-215424/sweep-tree.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['fasttree']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 84967.48it/s]
+Model loaded.
+
+  fasttree       K=16  L_p=51200 max_new=16   prefill=4017.5ms  decode= 49.06ms p50  (  5.4s wall)
+  fasttree       K=32  L_p=51200 max_new=16   prefill=3053.5ms  decode= 90.72ms p50  (  4.5s wall)
+  fasttree       K=64  L_p=51200 max_new=16   prefill=3073.7ms  decode=140.80ms p50  (  5.3s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/lp50k-20260506-215424/sweep-fasttree.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['mlca']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 37571.13it/s]
+Model loaded.
+
+  mlca           K=16  L_p=51200 max_new=16   prefill=4274.2ms  decode= 17.57ms p50  (  4.8s wall)
+  mlca           K=32  L_p=51200 max_new=16   prefill=3267.7ms  decode= 22.44ms p50  (  3.6s wall)
+  mlca           K=64  L_p=51200 max_new=16   prefill=3253.3ms  decode= 36.33ms p50  (  3.8s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/lp50k-20260506-215424/sweep-mlca.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['adaptive_pool']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 29518.45it/s]
+Model loaded.
+
+  adaptive_pool  K=16  L_p=51200 max_new=16   prefill=4121.1ms  decode= 18.35ms p50  (  4.6s wall)
+  adaptive_pool  K=32  L_p=51200 max_new=16   prefill=3265.0ms  decode= 22.54ms p50  (  3.6s wall)
+  adaptive_pool  K=64  L_p=51200 max_new=16   prefill=3264.0ms  decode= 36.65ms p50  (  3.8s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/lp50k-20260506-215424/sweep-adaptive_pool.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['bs_kernel']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 17855.01it/s]
+Model loaded.
+
+  bs_kernel      K=16  L_p=51200 max_new=16   prefill=4105.6ms  decode= 17.72ms p50  (  4.6s wall)
+  bs_kernel      K=32  L_p=51200 max_new=16   prefill=3265.9ms  decode= 22.83ms p50  (  3.6s wall)
+  bs_kernel      K=64  L_p=51200 max_new=16   prefill=3259.1ms  decode= 37.55ms p50  (  3.8s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/lp50k-20260506-215424/sweep-bs_kernel.csv

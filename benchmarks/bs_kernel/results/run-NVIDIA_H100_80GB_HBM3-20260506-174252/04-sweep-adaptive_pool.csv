@@ -1,0 +1,4 @@
+method,K,L_p,max_new,prefill_ms,decode_step_ms_p50,decode_step_ms_p90,decode_step_ms_p99,decode_step_ms_mean,decode_step_count
+adaptive_pool,16,8192,16,1123.7594,12.0099,14.3437,126.5609,19.6254,15
+adaptive_pool,32,8192,16,234.2047,13.6216,19.3394,22.8270,14.6846,15
+adaptive_pool,64,8192,16,231.7008,19.3544,25.1275,30.7006,20.0020,15

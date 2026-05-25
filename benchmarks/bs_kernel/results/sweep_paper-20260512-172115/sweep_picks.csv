@@ -1,0 +1,12 @@
+method,K,L_p,B,max_new,strategy,depth,pool,t_large,count,n_steps
+bs_kernel,4,8192,1,256,PER_BEAM,-,-,-,255,255
+dbs_bs_kernel,4,8192,1,256,PER_BEAM,-,-,-,255,255
+bs_kernel,4,8192,4,256,SHARED_3L_1POOL,3,1,64,236,255
+bs_kernel,4,8192,4,256,SHARED_2L_1POOL,2,1,64,19,255
+dbs_bs_kernel,4,8192,4,256,SHARED_2L_1POOL,2,1,64,255,255
+bs_kernel,4,8192,8,256,SHARED_3L_1POOL,3,1,64,236,255
+bs_kernel,4,8192,8,256,SHARED_2L_1POOL,2,1,64,19,255
+dbs_bs_kernel,4,8192,8,256,SHARED_2L_1POOL,2,1,64,255,255
+bs_kernel,4,8192,16,256,SHARED_3L_1POOL,3,1,64,236,255
+bs_kernel,4,8192,16,256,SHARED_2L_1POOL,2,1,64,19,255
+dbs_bs_kernel,4,8192,16,256,SHARED_2L_1POOL,2,1,64,255,255

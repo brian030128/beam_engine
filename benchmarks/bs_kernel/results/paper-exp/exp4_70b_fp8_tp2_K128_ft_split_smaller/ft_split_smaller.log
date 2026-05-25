@@ -1,0 +1,102 @@
+=== fasttree KV_SPLIT_SIZES smaller-sweep on 70B-fp8 TP=2 ===
+started:  2026-05-19T11:57:08+08:00
+cell:     K=128, L_p=8192, B=2, max_new=768
+control:  (1024,128) = 140,849 ms; (2048,256) = 140,687 ms
+tested:   (4096,512) = 203,786 ms; (8192,1024) = 264,310 ms
+
+=== KV_SPLIT_SIZES = (512,64) ===
+W0519 11:57:09.483000 571629 torch/distributed/run.py:803] 
+W0519 11:57:09.483000 571629 torch/distributed/run.py:803] *****************************************
+W0519 11:57:09.483000 571629 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0519 11:57:09.483000 571629 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs  (tp_size=2)
+methods: ['fasttree']
+max_new: 768
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  5.64it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  4.97it/s]Fetching 21 files:  14%|█▍        | 3/21 [00:30<03:50, 12.79s/it]Fetching 21 files:  14%|█▍        | 3/21 [00:30<03:50, 12.80s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:38<03:04, 10.83s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:38<03:04, 10.84s/it]Fetching 21 files:  52%|█████▏    | 11/21 [00:57<00:44,  4.41s/it]Fetching 21 files:  52%|█████▏    | 11/21 [00:57<00:44,  4.41s/it]Fetching 21 files:  76%|███████▌  | 16/21 [00:57<00:12,  2.50s/it]Fetching 21 files: 100%|██████████| 21/21 [00:57<00:00,  2.75s/it]
+Fetching 21 files:  76%|███████▌  | 16/21 [00:57<00:12,  2.50s/it]Fetching 21 files: 100%|██████████| 21/21 [00:57<00:00,  2.75s/it]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  fasttree              K=128 L_p=8192   B=2  [fasttree] FT_KV_SPLIT_SIZES override → (512, 64)
+[fasttree] FT_KV_SPLIT_SIZES override → (512, 64)
+prefill= 6507.7ms  decode_total=141018.3ms  per_pt_token= 91.93ms  (148.0s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2_K128_ft_split_smaller/fasttree_512_64.csv
+[W519 12:01:24.978156971 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 12:01:24.980846550 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 12:01:25.889588913 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== KV_SPLIT_SIZES = (256,32) ===
+W0519 12:01:26.558000 617088 torch/distributed/run.py:803] 
+W0519 12:01:26.558000 617088 torch/distributed/run.py:803] *****************************************
+W0519 12:01:26.558000 617088 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0519 12:01:26.558000 617088 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs  (tp_size=2)
+methods: ['fasttree']
+max_new: 768
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 87122.04it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 227597.89it/s]
+Model loaded.
+
+[fasttree] FT_KV_SPLIT_SIZES override → (256, 32)
+loaded 200 prompts from data/gov_report.jsonl
+  fasttree              K=128 L_p=8192   B=2  [fasttree] FT_KV_SPLIT_SIZES override → (256, 32)
+prefill= 3745.4ms  decode_total=147761.7ms  per_pt_token= 96.32ms  (152.1s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2_K128_ft_split_smaller/fasttree_256_32.csv
+[W519 12:04:49.875421881 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 12:04:49.878466429 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 12:04:49.748879833 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== KV_SPLIT_SIZES = (128,16) ===
+W0519 12:04:51.402000 636563 torch/distributed/run.py:803] 
+W0519 12:04:51.402000 636563 torch/distributed/run.py:803] *****************************************
+W0519 12:04:51.402000 636563 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0519 12:04:51.402000 636563 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs  (tp_size=2)
+methods: ['fasttree']
+max_new: 768
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 248814.64it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 240001.05it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  fasttree              K=128 L_p=8192   B=2  [fasttree] FT_KV_SPLIT_SIZES override → (128, 16)
+[fasttree] FT_KV_SPLIT_SIZES override → (128, 16)
+prefill= 3672.5ms  decode_total=165820.0ms  per_pt_token=108.10ms  (170.1s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2_K128_ft_split_smaller/fasttree_128_16.csv
+[W519 12:08:29.338943491 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 12:08:29.341978833 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 12:08:30.171076068 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== merging CSVs to benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2_K128_ft_split_smaller/merged.csv ===
+
+=== merged results (sorted by decode_total_ms) ===
+method_split,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms,plan_mean_ms,plan_total_ms,forward_mean_ms,forward_total_ms,cow_mean_ms,cow_total_ms,topk_mean_ms,topk_total_ms,fork_mean_ms,fork_total_ms
+fasttree_512_64,128,8192,2,768,6507.6997,141018.3383,183.8570,91.9285,5.2310,4012.1490,175.1042,134304.9231,1.5070,1155.8345,1.3406,1028.2542,0.6586,505.1378
+fasttree_256_32,128,8192,2,768,3745.4084,147761.7181,192.6489,96.3245,5.5238,4236.7820,183.7796,140958.9449,1.4742,1130.7131,1.3374,1025.7961,0.5178,397.1605
+fasttree_128_16,128,8192,2,768,3672.4900,165820.0228,216.1930,108.0965,5.8387,4478.2477,206.8229,158633.1270,1.4930,1145.1657,1.3422,1029.4776,0.6804,521.8370
+
+Done. Results: benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2_K128_ft_split_smaller

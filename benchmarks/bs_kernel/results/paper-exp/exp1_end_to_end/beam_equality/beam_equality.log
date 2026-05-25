@@ -1,0 +1,755 @@
+=== exp1c beam-equality run started 2026-05-20T13:15:15+08:00 ===
+GPU: NVIDIA H100 80GB HBM3
+NVIDIA H100 80GB HBM3
+
+############ Llama-3.2-1B ############
+=== multi_level_system B=4 K=64 max_new=64 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B  (tp_size=1)
+scenarios: ['multi_level_system']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 403, in hf_raise_for_status
+    response.raise_for_status()
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/requests/models.py", line 1028, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1121, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1662, in _raise_on_head_call_error
+    raise head_call_error
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1550, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1467, in get_hf_file_metadata
+    r = _request_wrapper(
+        ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 283, in _request_wrapper
+    response = _request_wrapper(
+               ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 307, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(GatedRepoError, message, response) from e
+huggingface_hub.errors.GatedRepoError: 401 Client Error. (Request ID: Root=1-6a0d436b-0e2acadb53976436744ec073;faf2765a-1bdb-4e3a-b809-3520ceacf138)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.2-1B is restricted. You must have access to it and be authenticated to access it. Please log in.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 510, in <module>
+    main()
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 350, in main
+    tok = AutoTokenizer.from_pretrained(MODEL_NAME)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/tokenization_auto.py", line 1109, in from_pretrained
+    config = AutoConfig.from_pretrained(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 543, in cached_files
+    raise OSError(
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/meta-llama/Llama-3.2-1B.
+401 Client Error. (Request ID: Root=1-6a0d436b-0e2acadb53976436744ec073;faf2765a-1bdb-4e3a-b809-3520ceacf138)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.2-1B is restricted. You must have access to it and be authenticated to access it. Please log in.
+[W520 13:15:24.984613222 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+=== multi_chain_reasoning B=32 K=64 max_new=64 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B  (tp_size=1)
+scenarios: ['multi_chain_reasoning']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 403, in hf_raise_for_status
+    response.raise_for_status()
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/requests/models.py", line 1028, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1121, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1662, in _raise_on_head_call_error
+    raise head_call_error
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1550, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1467, in get_hf_file_metadata
+    r = _request_wrapper(
+        ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 283, in _request_wrapper
+    response = _request_wrapper(
+               ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 307, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(GatedRepoError, message, response) from e
+huggingface_hub.errors.GatedRepoError: 401 Client Error. (Request ID: Root=1-6a0d4373-430b34614aff0f482b6089e6;891e843d-bb34-473b-a416-22ca13948532)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.2-1B is restricted. You must have access to it and be authenticated to access it. Please log in.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 510, in <module>
+    main()
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 350, in main
+    tok = AutoTokenizer.from_pretrained(MODEL_NAME)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/tokenization_auto.py", line 1109, in from_pretrained
+    config = AutoConfig.from_pretrained(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 543, in cached_files
+    raise OSError(
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/meta-llama/Llama-3.2-1B.
+401 Client Error. (Request ID: Root=1-6a0d4373-430b34614aff0f482b6089e6;891e843d-bb34-473b-a416-22ca13948532)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.2-1B is restricted. You must have access to it and be authenticated to access it. Please log in.
+[W520 13:15:31.494598707 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+=== multi_few_shot B=32 K=64 max_new=64 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 403, in hf_raise_for_status
+    response.raise_for_status()
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/requests/models.py", line 1028, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1121, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1662, in _raise_on_head_call_error
+    raise head_call_error
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1550, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1467, in get_hf_file_metadata
+    r = _request_wrapper(
+        ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 283, in _request_wrapper
+    response = _request_wrapper(
+               ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 307, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(GatedRepoError, message, response) from e
+huggingface_hub.errors.GatedRepoError: 401 Client Error. (Request ID: Root=1-6a0d437a-0245b2695475129b449bf339;6aed3343-d7fa-452c-bc8e-359bb1283ce6)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.2-1B is restricted. You must have access to it and be authenticated to access it. Please log in.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 510, in <module>
+    main()
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 350, in main
+    tok = AutoTokenizer.from_pretrained(MODEL_NAME)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/tokenization_auto.py", line 1109, in from_pretrained
+    config = AutoConfig.from_pretrained(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 543, in cached_files
+    raise OSError(
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/meta-llama/Llama-3.2-1B.
+401 Client Error. (Request ID: Root=1-6a0d437a-0245b2695475129b449bf339;6aed3343-d7fa-452c-bc8e-359bb1283ce6)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.2-1B is restricted. You must have access to it and be authenticated to access it. Please log in.
+[W520 13:15:39.055916389 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+############ Llama-3.1-8B ############
+=== multi_level_system B=4 K=64 max_new=64 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B  (tp_size=1)
+scenarios: ['multi_level_system']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 403, in hf_raise_for_status
+    response.raise_for_status()
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/requests/models.py", line 1028, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/meta-llama/Llama-3.1-8B/resolve/main/config.json
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1121, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1662, in _raise_on_head_call_error
+    raise head_call_error
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1550, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1467, in get_hf_file_metadata
+    r = _request_wrapper(
+        ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 283, in _request_wrapper
+    response = _request_wrapper(
+               ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 307, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(GatedRepoError, message, response) from e
+huggingface_hub.errors.GatedRepoError: 401 Client Error. (Request ID: Root=1-6a0d4382-3511448657eb83d31c7aab87;4605c9b5-edf9-4773-8493-e426825d08a5)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.1-8B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.1-8B is restricted. You must have access to it and be authenticated to access it. Please log in.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 510, in <module>
+    main()
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 350, in main
+    tok = AutoTokenizer.from_pretrained(MODEL_NAME)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/tokenization_auto.py", line 1109, in from_pretrained
+    config = AutoConfig.from_pretrained(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 543, in cached_files
+    raise OSError(
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/meta-llama/Llama-3.1-8B.
+401 Client Error. (Request ID: Root=1-6a0d4382-3511448657eb83d31c7aab87;4605c9b5-edf9-4773-8493-e426825d08a5)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.1-8B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.1-8B is restricted. You must have access to it and be authenticated to access it. Please log in.
+[W520 13:15:46.628275060 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+=== multi_chain_reasoning B=8 K=64 max_new=64 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B  (tp_size=1)
+scenarios: ['multi_chain_reasoning']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 403, in hf_raise_for_status
+    response.raise_for_status()
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/requests/models.py", line 1028, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/meta-llama/Llama-3.1-8B/resolve/main/config.json
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1121, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1662, in _raise_on_head_call_error
+    raise head_call_error
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1550, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1467, in get_hf_file_metadata
+    r = _request_wrapper(
+        ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 283, in _request_wrapper
+    response = _request_wrapper(
+               ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 307, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(GatedRepoError, message, response) from e
+huggingface_hub.errors.GatedRepoError: 401 Client Error. (Request ID: Root=1-6a0d438a-723f1c0f25d849a600a21aef;ab66f053-1a8a-40da-b72c-509cd9b29bb1)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.1-8B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.1-8B is restricted. You must have access to it and be authenticated to access it. Please log in.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 510, in <module>
+    main()
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 350, in main
+    tok = AutoTokenizer.from_pretrained(MODEL_NAME)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/tokenization_auto.py", line 1109, in from_pretrained
+    config = AutoConfig.from_pretrained(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 543, in cached_files
+    raise OSError(
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/meta-llama/Llama-3.1-8B.
+401 Client Error. (Request ID: Root=1-6a0d438a-723f1c0f25d849a600a21aef;ab66f053-1a8a-40da-b72c-509cd9b29bb1)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.1-8B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.1-8B is restricted. You must have access to it and be authenticated to access it. Please log in.
+[W520 13:15:55.842008312 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+=== multi_few_shot B=8 K=64 max_new=64 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 403, in hf_raise_for_status
+    response.raise_for_status()
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/requests/models.py", line 1028, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/meta-llama/Llama-3.1-8B/resolve/main/config.json
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1121, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1662, in _raise_on_head_call_error
+    raise head_call_error
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1550, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1467, in get_hf_file_metadata
+    r = _request_wrapper(
+        ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 283, in _request_wrapper
+    response = _request_wrapper(
+               ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 307, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(GatedRepoError, message, response) from e
+huggingface_hub.errors.GatedRepoError: 401 Client Error. (Request ID: Root=1-6a0d4392-5471191165f1b1f832dabb85;878ad4ea-a1f8-499f-aa6a-04ba9614bc6b)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.1-8B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.1-8B is restricted. You must have access to it and be authenticated to access it. Please log in.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 510, in <module>
+    main()
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 350, in main
+    tok = AutoTokenizer.from_pretrained(MODEL_NAME)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/tokenization_auto.py", line 1109, in from_pretrained
+    config = AutoConfig.from_pretrained(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/transformers/utils/hub.py", line 543, in cached_files
+    raise OSError(
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/meta-llama/Llama-3.1-8B.
+401 Client Error. (Request ID: Root=1-6a0d4392-5471191165f1b1f832dabb85;878ad4ea-a1f8-499f-aa6a-04ba9614bc6b)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.1-8B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.1-8B is restricted. You must have access to it and be authenticated to access it. Please log in.
+[W520 13:16:02.275465097 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+############ Qwen3-4B TP=2 ############
+=== Qwen3-4B multi_level_system B=4 K=64 max_new=64 ===
+W0520 13:16:04.118000 3621002 torch/distributed/run.py:803] 
+W0520 13:16:04.118000 3621002 torch/distributed/run.py:803] *****************************************
+W0520 13:16:04.118000 3621002 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0520 13:16:04.118000 3621002 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: Qwen/Qwen3-4B  (tp_size=2)
+scenarios: ['multi_level_system']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files:  22%|██▏       | 2/9 [00:00<00:01,  5.53it/s]Fetching 9 files:  22%|██▏       | 2/9 [00:00<00:01,  5.32it/s]Fetching 9 files:  33%|███▎      | 3/9 [00:10<00:26,  4.49s/it]Fetching 9 files: 100%|██████████| 9/9 [00:10<00:00,  1.21s/it]
+Fetching 9 files:  33%|███▎      | 3/9 [00:10<00:27,  4.50s/it]Fetching 9 files: 100%|██████████| 9/9 [00:10<00:00,  1.21s/it]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=4   K=64  L_shared~2521  L_priv~80    n_leaves=256
+
+--- multi_level_system [K=64] ---
+  bs_kernel    r=0  prefill= 2455.3ms  decode= 1113.1ms  plan/step= 1.99ms  fwd/step=15.51ms  p50/step=15.79ms  wall=  3.9s
+  bsk_2l_1p    r=0  prefill=  301.2ms  decode= 1033.2ms  plan/step= 0.97ms  fwd/step=15.26ms  p50/step=15.85ms  wall=  1.5s
+  bsk_2l_dt    r=0  prefill=  300.9ms  decode= 1305.6ms  plan/step= 1.72ms  fwd/step=18.84ms  p50/step=18.18ms  wall=  1.8s
+  rank (decode_total): bsk_2l_1p=1033.2, bs_kernel=1113.1, bsk_2l_dt=1305.6
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/beam_equality/Qwen3-4B_multi_level_system.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): bsk_2l_1p=1033.2, bs_kernel=1113.1, bsk_2l_dt=1305.6
+[W520 13:16:46.098379022 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:16:46.106624152 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:16:47.855412958 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+=== Qwen3-4B multi_chain_reasoning B=8 K=64 max_new=64 ===
+W0520 13:16:48.542000 3624054 torch/distributed/run.py:803] 
+W0520 13:16:48.542000 3624054 torch/distributed/run.py:803] *****************************************
+W0520 13:16:48.542000 3624054 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0520 13:16:48.542000 3624054 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: Qwen/Qwen3-4B  (tp_size=2)
+scenarios: ['multi_chain_reasoning']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 125829.12it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 130618.46it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=64    ] B=8   K=64  L_shared~2581  L_priv~23    n_leaves=512
+  multi_chain_reasoning (stage2) [K=64    ] B=8   K=1   L_shared~7142  L_priv~    0 n_leaves=8
+
+--- multi_chain_reasoning [K=64] ---
+  bs_kernel    r=0  prefill= 2879.7ms  decode= 2268.2ms  plan/step= 2.05ms  fwd/step=15.78ms  p50/step=16.40ms  wall=  5.6s
+  bsk_2l_1p    r=0  prefill=  953.2ms  decode= 2127.8ms  plan/step= 1.30ms  fwd/step=15.42ms  p50/step=16.53ms  wall=  3.5s
+  bsk_2l_dt    r=0  prefill=  953.7ms  decode= 2410.4ms  plan/step= 0.89ms  fwd/step=18.07ms  p50/step=18.59ms  wall=  3.8s
+  rank (decode_total): bsk_2l_1p=2127.8, bs_kernel=2268.2, bsk_2l_dt=2410.4
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/beam_equality/Qwen3-4B_multi_chain_reasoning.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=64    ]   rank (decode_total): bsk_2l_1p=2127.8, bs_kernel=2268.2, bsk_2l_dt=2410.4
+[W520 13:17:20.291387409 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:17:20.294932045 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:17:21.027477638 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+=== Qwen3-4B multi_few_shot B=8 K=64 max_new=64 ===
+W0520 13:17:22.706000 3626230 torch/distributed/run.py:803] 
+W0520 13:17:22.706000 3626230 torch/distributed/run.py:803] *****************************************
+W0520 13:17:22.706000 3626230 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0520 13:17:22.706000 3626230 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: Qwen/Qwen3-4B  (tp_size=2)
+scenarios: ['multi_few_shot']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 115793.67it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 120989.54it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=64    ] B=8   K=64  L_shared~6362  L_priv~126   n_leaves=512
+
+--- multi_few_shot [K=64] ---
+  bs_kernel    r=0  prefill= 3329.9ms  decode= 1364.5ms  plan/step= 2.59ms  fwd/step=18.84ms  p50/step=19.84ms  wall=  5.2s
+  bsk_2l_1p    r=0  prefill= 1378.1ms  decode= 1302.9ms  plan/step= 1.96ms  fwd/step=18.48ms  p50/step=20.58ms  wall=  3.1s
+  bsk_2l_dt    r=0  prefill= 1384.7ms  decode= 1341.1ms  plan/step= 2.44ms  fwd/step=18.61ms  p50/step=19.14ms  wall=  3.1s
+  rank (decode_total): bsk_2l_1p=1302.9, bsk_2l_dt=1341.1, bs_kernel=1364.5
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/beam_equality/Qwen3-4B_multi_few_shot.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=64    ]   rank (decode_total): bsk_2l_1p=1302.9, bsk_2l_dt=1341.1, bs_kernel=1364.5
+[W520 13:17:53.158365935 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:17:53.668726046 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:17:54.327513078 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+############ Llama-3-70B-FP8 TP=2 ############
+=== 70B-FP8 multi_level_system B=4 K=64 max_new=64 ===
+W0520 13:17:55.975000 3628702 torch/distributed/run.py:803] 
+W0520 13:17:55.975000 3628702 torch/distributed/run.py:803] *****************************************
+W0520 13:17:55.975000 3628702 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0520 13:17:55.975000 3628702 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_level_system']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:04,  4.22it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  5.16it/s]Fetching 21 files:  14%|█▍        | 3/21 [00:28<03:35, 12.00s/it]Fetching 21 files:  14%|█▍        | 3/21 [00:28<03:35, 11.98s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:33<02:39,  9.39s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:33<02:39,  9.38s/it]Fetching 21 files:  52%|█████▏    | 11/21 [00:45<00:32,  3.26s/it]Fetching 21 files:  52%|█████▏    | 11/21 [00:45<00:32,  3.27s/it]Fetching 21 files:  57%|█████▋    | 12/21 [00:50<00:31,  3.49s/it]Fetching 21 files:  57%|█████▋    | 12/21 [00:50<00:31,  3.50s/it]Fetching 21 files:  62%|██████▏   | 13/21 [00:54<00:28,  3.60s/it]Fetching 21 files: 100%|██████████| 21/21 [00:54<00:00,  2.59s/it]
+Fetching 21 files:  62%|██████▏   | 13/21 [00:54<00:28,  3.60s/it]Fetching 21 files: 100%|██████████| 21/21 [00:54<00:00,  2.59s/it]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=4   K=64  L_shared~2515  L_priv~80    n_leaves=256
+
+--- multi_level_system [K=64] ---
+  bs_kernel    r=0  prefill= 8219.0ms  decode= 3280.1ms  plan/step= 1.91ms  fwd/step=50.00ms  p50/step=50.64ms  wall= 12.0s
+  bsk_2l_1p    r=0  prefill= 3504.2ms  decode= 3182.9ms  plan/step= 0.99ms  fwd/step=49.36ms  p50/step=50.08ms  wall=  7.0s
+  bsk_2l_dt    r=0  prefill= 3506.1ms  decode= 3467.8ms  plan/step= 2.69ms  fwd/step=52.20ms  p50/step=52.94ms  wall=  7.3s
+  rank (decode_total): bsk_2l_1p=3182.9, bs_kernel=3280.1, bsk_2l_dt=3467.8
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/beam_equality/Llama-3-70B-FP8_multi_level_system.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): bsk_2l_1p=3182.9, bs_kernel=3280.1, bsk_2l_dt=3467.8
+[W520 13:20:09.125803510 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:20:09.135394329 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:20:10.042567376 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+=== 70B-FP8 multi_chain_reasoning B=4 K=64 max_new=64 ===
+W0520 13:20:11.719000 3638732 torch/distributed/run.py:803] 
+W0520 13:20:11.719000 3638732 torch/distributed/run.py:803] *****************************************
+W0520 13:20:11.719000 3638732 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0520 13:20:11.719000 3638732 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_chain_reasoning']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 87294.73it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 228780.22it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=64    ] B=4   K=64  L_shared~2561  L_priv~23    n_leaves=256
+  multi_chain_reasoning (stage2) [K=64    ] B=4   K=1   L_shared~7067  L_priv~    0 n_leaves=4
+
+--- multi_chain_reasoning [K=64] ---
+  bs_kernel    r=0  prefill= 7095.4ms  decode= 6711.2ms  plan/step= 1.85ms  fwd/step=51.27ms  p50/step=51.94ms  wall= 14.5s
+  bsk_2l_1p    r=0  prefill= 5441.3ms  decode= 6513.8ms  plan/step= 0.82ms  fwd/step=50.74ms  p50/step=51.91ms  wall= 12.5s
+  bsk_2l_dt    r=0  prefill= 5443.4ms  decode= 6928.9ms  plan/step= 0.59ms  fwd/step=54.26ms  p50/step=54.71ms  wall= 12.9s
+  rank (decode_total): bsk_2l_1p=6513.8, bs_kernel=6711.2, bsk_2l_dt=6928.9
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/beam_equality/Llama-3-70B-FP8_multi_chain_reasoning.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=64    ]   rank (decode_total): bsk_2l_1p=6513.8, bs_kernel=6711.2, bsk_2l_dt=6928.9
+[W520 13:21:44.737474535 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:21:44.739495225 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:21:45.690280866 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+=== 70B-FP8 multi_few_shot B=4 K=64 max_new=64 ===
+W0520 13:21:47.383000 3646285 torch/distributed/run.py:803] 
+W0520 13:21:47.383000 3646285 torch/distributed/run.py:803] *****************************************
+W0520 13:21:47.383000 3646285 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0520 13:21:47.383000 3646285 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_few_shot']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   64, repeat: 1
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 214830.20it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 217482.43it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=64    ] B=4   K=64  L_shared~5873  L_priv~122   n_leaves=256
+
+--- multi_few_shot [K=64] ---
+  bs_kernel    r=0  prefill= 8386.9ms  decode= 3908.2ms  plan/step= 1.81ms  fwd/step=60.06ms  p50/step=60.69ms  wall= 12.9s
+  bsk_2l_1p    r=0  prefill= 6757.6ms  decode= 3848.8ms  plan/step= 1.15ms  fwd/step=59.77ms  p50/step=60.73ms  wall= 11.0s
+  bsk_2l_dt    r=0  prefill= 6780.8ms  decode= 3628.4ms  plan/step= 2.74ms  fwd/step=54.69ms  p50/step=55.35ms  wall= 10.8s
+  rank (decode_total): bsk_2l_dt=3628.4, bsk_2l_1p=3848.8, bs_kernel=3908.2
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/beam_equality/Llama-3-70B-FP8_multi_few_shot.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=64    ]   rank (decode_total): bsk_2l_dt=3628.4, bsk_2l_1p=3848.8, bs_kernel=3908.2
+[W520 13:23:13.641238106 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:23:13.642840191 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W520 13:23:14.591364973 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+Done. Beam dumps in benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/beam_equality/<model>/<scenario>__<method>.json

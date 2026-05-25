@@ -1,0 +1,131 @@
+=== paged re-run (LCA dedup) Llama-3-70B-Instruct-FP8 2026-05-23T21:22:38+08:00 ===
+=== F1: paged multi_doc_qa K=128 B=1 [--paper-exact --no-stage2] ===
+W0523 21:22:39.904000 1414749 torch/distributed/run.py:803] 
+W0523 21:22:39.904000 1414749 torch/distributed/run.py:803] *****************************************
+W0523 21:22:39.904000 1414749 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 21:22:39.904000 1414749 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_doc_qa']
+methods:   ['paged']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:02,  8.14it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  5.43it/s]Fetching 21 files:  14%|█▍        | 3/21 [00:32<03:59, 13.29s/it]Fetching 21 files:  14%|█▍        | 3/21 [00:31<03:58, 13.28s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:40<03:13, 11.36s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:40<03:13, 11.40s/it]Fetching 21 files:  29%|██▊       | 6/21 [00:41<01:26,  5.76s/it]Fetching 21 files:  29%|██▊       | 6/21 [00:41<01:26,  5.78s/it]Fetching 21 files:  52%|█████▏    | 11/21 [01:02<00:47,  4.79s/it]Fetching 21 files:  52%|█████▏    | 11/21 [01:02<00:47,  4.79s/it]Fetching 21 files:  62%|██████▏   | 13/21 [01:05<00:31,  3.97s/it]Fetching 21 files:  62%|██████▏   | 13/21 [01:06<00:31,  3.98s/it]Fetching 21 files:  76%|███████▌  | 16/21 [01:06<00:12,  2.57s/it]Fetching 21 files: 100%|██████████| 21/21 [01:06<00:00,  3.16s/it]
+Fetching 21 files:  76%|███████▌  | 16/21 [01:06<00:12,  2.57s/it]Fetching 21 files: 100%|██████████| 21/21 [01:06<00:00,  3.17s/it]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_doc_qa             [K=128   ] B=1   K=128 L_shared~80132 L_priv~51    n_leaves=128
+
+--- multi_doc_qa [K=128] ---
+  paged        warmup  wall=119.3s  decode_total=80572.5ms
+  paged        r=0  prefill=36630.1ms  decode=80745.3ms  plan/step= 1.48ms  fwd/step=315.01ms  p50/step=316.88ms  wall=117.9s
+  paged        r=1  prefill=36662.1ms  decode=80730.1ms  plan/step= 1.47ms  fwd/step=314.95ms  p50/step=316.81ms  wall=118.0s
+  paged        r=2  prefill=36680.0ms  decode=80816.8ms  plan/step= 1.55ms  fwd/step=315.20ms  p50/step=317.02ms  wall=118.0s
+  rank (decode_total): paged=80730.1
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/_paged_F1.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_doc_qa             [K=128   ]   rank (decode_total): paged=80730.1
+[W523 21:32:29.857408836 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:32:29.858446738 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:32:29.767043746 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: +3 'paged' rows into benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F1_multi_doc_qa_K128_B1_mn256.csv
+=== F2: paged multi_few_shot K=128 B=4 [--paper-exact --no-stage2] ===
+W0523 21:32:31.634000 1457094 torch/distributed/run.py:803] 
+W0523 21:32:31.634000 1457094 torch/distributed/run.py:803] *****************************************
+W0523 21:32:31.634000 1457094 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 21:32:31.634000 1457094 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_few_shot']
+methods:   ['paged']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 136983.49it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 227011.30it/s]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=128   ] B=4   K=128 L_shared~5956  L_priv~128   n_leaves=512
+
+--- multi_few_shot [K=128] ---
+  paged        warmup  wall= 57.0s  decode_total=41057.8ms
+  paged        r=0  prefill=13660.0ms  decode=41098.3ms  plan/step= 2.75ms  fwd/step=158.17ms  p50/step=161.86ms  wall= 55.4s
+  paged        r=1  prefill=13679.0ms  decode=41110.2ms  plan/step= 2.78ms  fwd/step=158.19ms  p50/step=161.97ms  wall= 55.4s
+  paged        r=2  prefill=13730.4ms  decode=41031.5ms  plan/step= 2.76ms  fwd/step=157.89ms  p50/step=161.58ms  wall= 55.4s
+  rank (decode_total): paged=41031.5
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/_paged_F2.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=128   ]   rank (decode_total): paged=41031.5
+[W523 21:37:01.114601233 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:37:01.169122049 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:37:02.136635374 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: +3 'paged' rows into benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F2_multi_few_shot_K128_B4_mn256.csv
+=== F4: paged self_consistency K=16 B=1 [--no-stage2] ===
+W0523 21:37:03.941000 1476726 torch/distributed/run.py:803] 
+W0523 21:37:03.941000 1476726 torch/distributed/run.py:803] *****************************************
+W0523 21:37:03.941000 1476726 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 21:37:03.941000 1476726 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['self_consistency']
+methods:   ['paged']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 219105.43it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 218020.75it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  self_consistency         [K=16    ] B=1   K=16  L_shared~16384 L_priv~11    n_leaves=16
+
+--- self_consistency [K=16] ---
+  paged        warmup  wall= 17.5s  decode_total=12782.1ms
+  paged        r=0  prefill= 2798.7ms  decode=12665.8ms  plan/step= 0.39ms  fwd/step=49.16ms  p50/step=49.53ms  wall= 15.7s
+  paged        r=1  prefill= 2825.0ms  decode=12663.0ms  plan/step= 0.39ms  fwd/step=49.15ms  p50/step=49.51ms  wall= 15.7s
+  paged        r=2  prefill= 2803.7ms  decode=12660.7ms  plan/step= 0.40ms  fwd/step=49.14ms  p50/step=49.45ms  wall= 15.6s
+  rank (decode_total): paged=12660.7
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/_paged_F4.csv
+
+=== summary (best decode_total per method, ms) ===
+self_consistency         [K=16    ]   rank (decode_total): paged=12660.7
+[W523 21:38:52.163415949 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:38:52.167583364 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:38:53.099753353 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: +3 'paged' rows into benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F4_self_consistency_K16_B1_Lp16384_mn256.csv
+=== F3: paged beam_search K=64 B=4 L_p=16000 ===
+W0523 21:38:54.931000 1484563 torch/distributed/run.py:803] 
+W0523 21:38:54.931000 1484563 torch/distributed/run.py:803] *****************************************
+W0523 21:38:54.931000 1484563 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 21:38:54.931000 1484563 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 209217.06it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 231790.48it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  paged          warmup K=64  L_p=16000  B=4  discard          decode_total=43121.2ms  ( 56.3s wall)
+  paged                 K=64  L_p=16000  B=4  prefill=11123.3ms  decode_total=42896.6ms  per_pt_token= 42.06ms  ( 54.5s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/_paged_F3.csv
+[W523 21:41:34.141535755 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:41:34.141535842 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:41:35.049986145 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: +1 'paged' rows into benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_beam_search_K64_B4_Lp16000_mn256.csv
+=== paged re-run done 2026-05-23T21:41:35+08:00 ===

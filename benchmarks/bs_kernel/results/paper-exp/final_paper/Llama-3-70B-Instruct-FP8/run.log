@@ -1,0 +1,1072 @@
+=== final_paper Llama-3-70B-Instruct-FP8 started 2026-05-23T15:29:39+08:00 ===
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (nproc=2, dtype=bf16, kv=fp8_e4m3)
+=== recalibrating coefficients (fp8_e4m3) ===
+<frozen runpy>:128: RuntimeWarning: 'beam_engine.methods.bs_kernel.calibrate' found in sys.modules after import of package 'beam_engine.methods.bs_kernel', but prior to execution of 'beam_engine.methods.bs_kernel.calibrate'; this may result in unpredictable behaviour
+[calibrate] probing NVIDIA H100 80GB HBM3
+[calibrate] probing dtype=fp16
+  raw decode_launch=33.48 → anchored to launch_us=7.49
+[calibrate] probing dtype=bf16
+[calibrate] probing dtype=fp8_e4m3
+[calibrate] wrote /home/u4320956/.cache/beam_engine/coeffs-NVIDIA_H100_80GB_HBM3.json
+  B_hbm                =  1296859.7 bytes/µs   (1.30 TB/s)
+  merge_launch_us      =     5.4191
+  merge_bw_us_per_row  =   0.003016
+  decode_launch_us     =       7.49
+  per_tile[     bf16][ 16] =      23.27 µs
+  per_tile[     bf16][ 64] =      23.24 µs
+  per_tile[     bf16][128] =      23.82 µs
+  per_tile[     fp16][ 16] =      24.63 µs
+  per_tile[     fp16][ 64] =      23.82 µs
+  per_tile[     fp16][128] =      24.21 µs
+  per_tile[ fp8_e4m3][ 16] =      23.15 µs
+  per_tile[ fp8_e4m3][ 64] =      23.44 µs
+  per_tile[ fp8_e4m3][128] =      31.52 µs
+  decode_us_per_beam[     bf16] =   0.001394
+  decode_us_per_beam[     fp16] =   0.001394
+  decode_us_per_beam[ fp8_e4m3] =   0.001322
+[W523 15:29:45.372302446 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+
+=== F1: multi_doc_qa (K=128, B=1, mn=256, R=128) ===
+W0523 15:29:47.738000 3877060 torch/distributed/run.py:803] 
+W0523 15:29:47.738000 3877060 torch/distributed/run.py:803] *****************************************
+W0523 15:29:47.738000 3877060 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 15:29:47.738000 3877060 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_doc_qa']
+methods:   ['paged', 'bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  5.78it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  5.20it/s]Fetching 21 files:  14%|█▍        | 3/21 [00:35<04:22, 14.61s/it]Fetching 21 files:  14%|█▍        | 3/21 [00:35<04:22, 14.59s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:54<04:36, 16.25s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:54<04:35, 16.24s/it]Fetching 21 files:  52%|█████▏    | 11/21 [01:09<00:51,  5.17s/it]Fetching 21 files: 100%|██████████| 21/21 [01:09<00:00,  3.32s/it]
+Fetching 21 files:  52%|█████▏    | 11/21 [01:09<00:51,  5.17s/it]Fetching 21 files: 100%|██████████| 21/21 [01:09<00:00,  3.31s/it]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_doc_qa             [K=128   ] B=1   K=128 L_shared~80132 L_priv~51    n_leaves=128
+
+--- multi_doc_qa [K=128] ---
+  paged        warmup  wall=126.9s  decode_total=84197.9ms
+  paged        r=0  prefill=36999.6ms  decode=84171.3ms  plan/step=13.53ms  fwd/step=316.39ms  p50/step=330.11ms  wall=121.9s
+  paged        r=1  prefill=37031.1ms  decode=84167.9ms  plan/step=13.56ms  fwd/step=316.35ms  p50/step=330.08ms  wall=122.0s
+  paged        r=2  prefill=36963.0ms  decode=84175.9ms  plan/step=13.57ms  fwd/step=316.37ms  p50/step=330.02ms  wall=122.0s
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.110      0.046      0.061      0.733        28.09
+  pick_ms                     0.091      0.090      0.095      0.109        23.31
+  prefix_plan_ms              0.266      0.018      0.020      0.035        67.73
+  decode_build_ms             0.223      0.224      0.247      0.279        56.90
+  decode_plan_ms              0.014      0.012      0.013      0.016         3.65
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.111      0.046      0.060      0.744        28.26
+  pick_ms                     0.092      0.091      0.096      0.106        23.36
+  prefix_plan_ms              0.219      0.019      0.022      0.031        55.82
+  decode_build_ms             0.224      0.224      0.246      0.278        57.11
+  decode_plan_ms              0.015      0.012      0.013      0.016         3.70
+  bs_kernel    warmup  wall= 77.4s  decode_total=39649.2ms
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.109      0.045      0.064      0.730        27.80
+  pick_ms                     0.091      0.090      0.096      0.106        23.16
+  prefix_plan_ms              0.023      0.018      0.020      0.028         5.84
+  decode_build_ms             0.225      0.223      0.249      0.297        57.35
+  decode_plan_ms              0.014      0.012      0.013      0.016         3.64
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.109      0.045      0.060      0.744        27.76
+  pick_ms                     0.091      0.090      0.096      0.106        23.21
+  prefix_plan_ms              0.023      0.018      0.021      0.029         5.98
+  decode_build_ms             0.225      0.223      0.249      0.289        57.31
+  decode_plan_ms              0.014      0.012      0.013      0.015         3.66
+  bs_kernel    r=0  prefill=36988.0ms  decode=39545.6ms  plan/step= 0.62ms  fwd/step=154.31ms  p50/step=154.77ms  wall= 77.1s
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.110      0.045      0.059      0.735        27.98
+  pick_ms                     0.091      0.090      0.094      0.102        23.09
+  prefix_plan_ms              0.023      0.018      0.020      0.029         5.87
+  decode_build_ms             0.224      0.223      0.244      0.273        57.12
+  decode_plan_ms              0.014      0.012      0.013      0.017         3.65  phase                        mean     median        p90        p99        total
+
+  decomp_ms                   0.109      0.044      0.056      0.743        27.75
+  pick_ms                     0.090      0.089      0.094      0.102        22.98
+  prefix_plan_ms              0.023      0.018      0.020      0.030         5.89
+  decode_build_ms             0.222      0.222      0.242      0.279        56.67
+  decode_plan_ms              0.015      0.012      0.013      0.019         3.70
+  bs_kernel    r=1  prefill=36976.3ms  decode=39437.5ms  plan/step= 0.62ms  fwd/step=153.90ms  p50/step=154.29ms  wall= 77.1s
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.110      0.045      0.058      0.761        27.95
+  pick_ms                     0.091      0.090      0.095      0.103        23.10
+  prefix_plan_ms              0.023      0.018      0.020      0.033         5.85
+  decode_build_ms             0.225      0.224      0.248      0.280        57.42
+  decode_plan_ms              0.014      0.012      0.013      0.018         3.67
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.110      0.045      0.059      0.759        28.01
+  pick_ms                     0.090      0.090      0.094      0.101        23.07
+  prefix_plan_ms              0.023      0.018      0.021      0.030         5.95
+  decode_build_ms             0.226      0.226      0.249      0.284        57.76
+  decode_plan_ms              0.014      0.012      0.013      0.016         3.68
+  bs_kernel    r=2  prefill=36962.2ms  decode=39527.0ms  plan/step= 0.62ms  fwd/step=154.24ms  p50/step=154.79ms  wall= 77.2s
+  bsk_2l_1p    warmup  wall= 85.4s  decode_total=47658.7ms
+  bsk_2l_1p    r=0  prefill=36953.4ms  decode=47577.7ms  plan/step= 0.74ms  fwd/step=185.69ms  p50/step=186.37ms  wall= 85.2s
+  bsk_2l_1p    r=1  prefill=37027.6ms  decode=47838.5ms  plan/step= 0.75ms  fwd/step=186.70ms  p50/step=187.50ms  wall= 85.7s
+  bsk_2l_1p    r=2  prefill=36961.8ms  decode=47568.0ms  plan/step= 0.75ms  fwd/step=185.64ms  p50/step=186.37ms  wall= 85.2s
+  bsk_2l_dt    warmup  wall= 77.2s  decode_total=39387.9ms
+  bsk_2l_dt    r=0  prefill=37012.4ms  decode=39381.9ms  plan/step= 0.59ms  fwd/step=153.70ms  p50/step=154.23ms  wall= 77.4s
+  bsk_2l_dt    r=1  prefill=37023.3ms  decode=39375.8ms  plan/step= 0.59ms  fwd/step=153.68ms  p50/step=154.14ms  wall= 77.1s
+  bsk_2l_dt    r=2  prefill=37051.1ms  decode=39391.4ms  plan/step= 0.59ms  fwd/step=153.74ms  p50/step=154.23ms  wall= 77.1s
+  rank (decode_total): bsk_2l_dt=39375.8, bs_kernel=39437.5, bsk_2l_1p=47568.0, paged=84167.9
+
+
+wrote 12 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F1_multi_doc_qa_K128_B1_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_doc_qa             [K=128   ]   rank (decode_total): bsk_2l_dt=39375.8, bs_kernel=39437.5, bsk_2l_1p=47568.0, paged=84167.9
+[W523 15:55:59.877806614 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 15:55:59.881628829 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 15:56:00.038852234 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  -> F1 CORE COMPLETE at K=128 B=1
+  --- extra sglang methods: mlca fasttree deft ---
+W0523 15:56:02.291000 4067009 torch/distributed/run.py:803] 
+W0523 15:56:02.291000 4067009 torch/distributed/run.py:803] *****************************************
+W0523 15:56:02.291000 4067009 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 15:56:02.291000 4067009 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_doc_qa']
+methods:   ['mlca', 'fasttree', 'deft']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 136558.73it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 223554.27it/s]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_doc_qa             [K=128   ] B=1   K=128 L_shared~80132 L_priv~51    n_leaves=128
+
+--- multi_doc_qa [K=128] ---
+  mlca         r=0  FAILED: ValueError: The dtype of k torch.float8_e4m3fn does not match the kv_data_type torch.bfloat16 specified in plan function.
+  fasttree     r=0  FAILED: RuntimeError: Index put requires the source and destination dtypes match, got Float8_e4m3fn for the destination and BFloat16 for the source.
+  deft         r=0  FAILED: RuntimeError: Index put requires the source and destination dtypes match, got Float8_e4m3fn for the destination and BFloat16 for the source.
+  rank (decode_total): mlca=inf, fasttree=inf, deft=inf
+
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F1_multi_doc_qa_K128_B1_mn256.extra.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_doc_qa             [K=128   ]   rank (decode_total): mlca=inf, fasttree=inf, deft=inf
+[W523 15:58:48.477470749 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 15:58:48.478685442 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 15:58:49.662043774 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== F2: multi_few_shot (K=128, B=16, mn=256, R=2048) ===
+W0523 15:58:53.218000 4086517 torch/distributed/run.py:803] 
+W0523 15:58:53.218000 4086517 torch/distributed/run.py:803] *****************************************
+W0523 15:58:53.218000 4086517 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 15:58:53.218000 4086517 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_few_shot']
+methods:   ['paged', 'bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 222988.31it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 219651.83it/s]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=128   ] B=16  K=128 L_shared~5791  L_priv~135   n_leaves=2048
+
+--- multi_few_shot [K=128] ---
+  paged        r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 74.19 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  bs_kernel    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 74.19 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  bsk_2l_1p    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 74.19 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  bsk_2l_dt    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 74.19 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  rank (decode_total): paged=inf, bs_kernel=inf, bsk_2l_1p=inf, bsk_2l_dt=inf
+
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F2_multi_few_shot_K128_B16_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=128   ]   rank (decode_total): paged=inf, bs_kernel=inf, bsk_2l_1p=inf, bsk_2l_dt=inf
+[W523 15:59:41.906016573 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 15:59:41.173725775 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 15:59:42.130821626 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  -> F2 core incomplete at K=128 B=16 (shrinking)
+
+=== F2: multi_few_shot (K=128, B=8, mn=256, R=1024) ===
+W0523 15:59:44.307000 4093528 torch/distributed/run.py:803] 
+W0523 15:59:44.307000 4093528 torch/distributed/run.py:803] *****************************************
+W0523 15:59:44.307000 4093528 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 15:59:44.307000 4093528 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_few_shot']
+methods:   ['paged', 'bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 127467.99it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 102777.58it/s]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=128   ] B=8   K=128 L_shared~5840  L_priv~137   n_leaves=1024
+
+--- multi_few_shot [K=128] ---
+  paged        r=0  FAILED: DistBackendError: NCCL error in: /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:3690, unhandled cuda error (run with NCCL_DEBUG=INFO for details), NCCL version 2.27.5
+ncclUnhandledCudaError: Call to CUDA function failed.
+Last error:
+Cuda failure 2 'out of memory'
+  bs_kernel    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 366.00 MiB. GPU 0 has a total capacity of 79.10 GiB of which 319.88 MiB is free. Including non-PyTorch memory, this process has 78.78 GiB memory in use. Of the allocated memory 77.54 GiB is allocated by PyTorch, and 3.84 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  bsk_2l_1p    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 366.00 MiB. GPU 0 has a total capacity of 79.10 GiB of which 319.88 MiB is free. Including non-PyTorch memory, this process has 78.78 GiB memory in use. Of the allocated memory 77.54 GiB is allocated by PyTorch, and 3.84 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  bsk_2l_dt    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 366.00 MiB. GPU 0 has a total capacity of 79.10 GiB of which 319.88 MiB is free. Including non-PyTorch memory, this process has 78.78 GiB memory in use. Of the allocated memory 77.54 GiB is allocated by PyTorch, and 3.84 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  rank (decode_total): paged=inf, bs_kernel=inf, bsk_2l_1p=inf, bsk_2l_dt=inf
+
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F2_multi_few_shot_K128_B8_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=128   ]   rank (decode_total): paged=inf, bs_kernel=inf, bsk_2l_1p=inf, bsk_2l_dt=inf
+[W523 16:00:36.588151703 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:00:36.596479952 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:00:37.798717703 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  -> F2 core incomplete at K=128 B=8 (shrinking)
+
+=== F2: multi_few_shot (K=128, B=4, mn=256, R=512) ===
+W0523 16:00:39.000000 4100255 torch/distributed/run.py:803] 
+W0523 16:00:39.000000 4100255 torch/distributed/run.py:803] *****************************************
+W0523 16:00:39.000000 4100255 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:00:39.000000 4100255 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_few_shot']
+methods:   ['paged', 'bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 130877.24it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 125470.63it/s]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=128   ] B=4   K=128 L_shared~5956  L_priv~128   n_leaves=512
+
+--- multi_few_shot [K=128] ---
+  paged        warmup  wall= 58.4s  decode_total=41882.9ms
+  paged        r=0  prefill=13842.0ms  decode=42023.4ms  plan/step= 6.15ms  fwd/step=158.41ms  p50/step=165.53ms  wall= 57.0s
+  paged        r=1  prefill=13777.4ms  decode=41936.8ms  plan/step= 6.16ms  fwd/step=158.06ms  p50/step=165.02ms  wall= 56.4s
+  paged        r=2  prefill=13803.2ms  decode=41931.4ms  plan/step= 6.18ms  fwd/step=158.01ms  p50/step=165.10ms  wall= 56.8s
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.294      0.128      0.768      0.866        74.87
+  pick_ms                     0.154      0.153      0.160      0.170        39.15
+  prefix_plan_ms              0.264      0.020      0.031      0.036        67.39
+  decode_build_ms             0.621      0.625      0.689      0.725       158.36
+  decode_plan_ms              0.020      0.013      0.014      0.017         5.01
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.296      0.130      0.774      0.876        75.41
+  pick_ms                     0.153      0.152      0.159      0.168        39.13
+  prefix_plan_ms              0.208      0.020      0.031      0.034        52.94
+  decode_build_ms             0.619      0.618      0.691      0.738       157.83
+  decode_plan_ms              0.020      0.013      0.014      0.017         5.01
+  bs_kernel    warmup  wall= 44.3s  decode_total=29526.5ms
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.289      0.127      0.750      0.854        73.71
+  pick_ms                     0.152      0.152      0.158      0.163        38.80
+  prefix_plan_ms              0.027      0.020      0.031      0.036         6.90
+  decode_build_ms             0.622      0.624      0.690      0.745       158.52
+  decode_plan_ms              0.019      0.013      0.014      0.015         4.85
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.290      0.128      0.753      0.851        73.97
+  pick_ms                     0.153      0.153      0.158      0.163        39.01
+  prefix_plan_ms              0.027      0.020      0.030      0.035         6.91
+  decode_build_ms             0.627      0.627      0.695      0.754       159.78
+  decode_plan_ms              0.019      0.013      0.014      0.019         4.96
+  bs_kernel    r=0  prefill=13804.1ms  decode=29358.9ms  plan/step= 1.48ms  fwd/step=113.41ms  p50/step=114.82ms  wall= 44.1s
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.293      0.129      0.762      0.863        74.69
+  pick_ms                     0.152      0.152      0.158      0.170        38.88
+  prefix_plan_ms              0.027      0.020      0.030      0.036         6.86
+  decode_build_ms             0.632      0.631      0.704      0.767       161.24
+  decode_plan_ms              0.019      0.013      0.014      0.018         4.88
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.293      0.129      0.761      0.853        74.68
+  pick_ms                     0.153      0.152      0.160      0.171        39.08
+  prefix_plan_ms              0.027      0.020      0.031      0.036         6.95
+  decode_build_ms             0.637      0.639      0.708      0.761       162.49
+  decode_plan_ms              0.019      0.013      0.014      0.017         4.93
+  bs_kernel    r=1  prefill=13771.3ms  decode=29360.9ms  plan/step= 1.49ms  fwd/step=113.40ms  p50/step=114.78ms  wall= 44.0s
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 1/255 (0.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.298      0.131      0.775      0.869        75.88
+  pick_ms                     0.154      0.152      0.161      0.180        39.16
+  prefix_plan_ms              0.027      0.020      0.030      0.034         6.86
+  decode_build_ms             0.628      0.625      0.700      0.767       160.17
+  decode_plan_ms              0.019      0.013      0.014      0.019         4.96
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.294      0.130      0.766      0.853        74.95
+  pick_ms                     0.153      0.152      0.159      0.164        38.94
+  prefix_plan_ms              0.027      0.020      0.031      0.035         6.93
+  decode_build_ms             0.632      0.629      0.706      0.757       161.23
+  decode_plan_ms              0.019      0.013      0.014      0.015         4.93
+  bs_kernel    r=2  prefill=13807.2ms  decode=29372.0ms  plan/step= 1.49ms  fwd/step=113.45ms  p50/step=114.94ms  wall= 44.0s
+  bsk_2l_1p    warmup  wall= 49.9s  decode_total=35283.6ms
+  bsk_2l_1p    r=0  prefill=13804.0ms  decode=35260.1ms  plan/step= 1.91ms  fwd/step=136.12ms  p50/step=138.44ms  wall= 49.8s
+  bsk_2l_1p    r=1  prefill=13825.1ms  decode=35264.9ms  plan/step= 1.93ms  fwd/step=136.12ms  p50/step=138.14ms  wall= 49.9s
+  bsk_2l_1p    r=2  prefill=13794.5ms  decode=35314.4ms  plan/step= 1.93ms  fwd/step=136.31ms  p50/step=138.56ms  wall= 50.0s
+  bsk_2l_dt    warmup  wall= 44.3s  decode_total=29341.1ms
+  bsk_2l_dt    r=0  prefill=13910.3ms  decode=29338.7ms  plan/step= 1.42ms  fwd/step=113.39ms  p50/step=114.80ms  wall= 44.1s
+  bsk_2l_dt    r=1  prefill=13894.2ms  decode=29348.4ms  plan/step= 1.43ms  fwd/step=113.42ms  p50/step=114.82ms  wall= 44.2s
+  bsk_2l_dt    r=2  prefill=13811.2ms  decode=29356.8ms  plan/step= 1.43ms  fwd/step=113.46ms  p50/step=114.92ms  wall= 44.0s
+  rank (decode_total): bsk_2l_dt=29338.7, bs_kernel=29358.9, bsk_2l_1p=35260.1, paged=41931.4
+
+
+wrote 12 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F2_multi_few_shot_K128_B4_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=128   ]   rank (decode_total): bsk_2l_dt=29338.7, bs_kernel=29358.9, bsk_2l_1p=35260.1, paged=41931.4
+[W523 16:14:29.441594810 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:14:30.623848631 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:14:31.554456729 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  -> F2 CORE COMPLETE at K=128 B=4
+  --- extra sglang methods: mlca fasttree deft ---
+W0523 16:14:32.834000 23025 torch/distributed/run.py:803] 
+W0523 16:14:32.834000 23025 torch/distributed/run.py:803] *****************************************
+W0523 16:14:32.834000 23025 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:14:32.834000 23025 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_few_shot']
+methods:   ['mlca', 'fasttree', 'deft']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 205795.29it/s]
+Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 195300.19it/s]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=128   ] B=4   K=128 L_shared~5956  L_priv~128   n_leaves=512
+
+--- multi_few_shot [K=128] ---
+  mlca         r=0  FAILED: ValueError: The dtype of k torch.float8_e4m3fn does not match the kv_data_type torch.bfloat16 specified in plan function.
+  fasttree     r=0  FAILED: RuntimeError: Index put requires the source and destination dtypes match, got Float8_e4m3fn for the destination and BFloat16 for the source.
+  deft         r=0  FAILED: RuntimeError: Index put requires the source and destination dtypes match, got Float8_e4m3fn for the destination and BFloat16 for the source.
+  rank (decode_total): mlca=inf, fasttree=inf, deft=inf
+
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F2_multi_few_shot_K128_B4_mn256.extra.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=128   ]   rank (decode_total): mlca=inf, fasttree=inf, deft=inf
+[W523 16:16:05.215047532 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:16:05.218826225 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:16:06.428624743 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== F3: beam_search (K=64, B=16, L_p=16000, mn=256) ===
+  --- method: paged ---
+W0523 16:16:08.645000 36076 torch/distributed/run.py:803] 
+W0523 16:16:08.645000 36076 torch/distributed/run.py:803] *****************************************
+W0523 16:16:08.645000 36076 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:16:08.645000 36076 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 217482.43it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 219651.83it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  paged          warmup K=64  L_p=16000  B=16   [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.59 GiB. GPU 1 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.59 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_paged_K64_B16.tmp.csv
+[W523 16:16:58.567587207 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:16:58.688264109 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:16:59.569230011 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel ---
+W0523 16:17:00.919000 41127 torch/distributed/run.py:803] 
+W0523 16:17:00.919000 41127 torch/distributed/run.py:803] *****************************************
+W0523 16:17:00.919000 41127 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:17:00.919000 41127 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 229974.89it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 228780.22it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+  bs_kernel      warmup K=64  L_p=16000  B=16 loaded 30 prompts from data/hotpotqa.jsonl
+  [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.59 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_bs_kernel_K64_B16.tmp.csv
+[W523 16:17:49.506858892 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.59 GiB. GPU 1 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[W523 16:17:49.943759287 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:17:50.580715966 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel_2l1p ---
+W0523 16:17:51.744000 47350 torch/distributed/run.py:803] 
+W0523 16:17:51.744000 47350 torch/distributed/run.py:803] *****************************************
+W0523 16:17:51.744000 47350 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:17:51.744000 47350 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2l1p']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 226427.72it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 149288.79it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+  bs_kernel_2l1p warmup K=64  L_p=16000  B=16 loaded 30 prompts from data/hotpotqa.jsonl
+  [bs_kernel_2l1p] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.59 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_bs_kernel_2l1p_K64_B16.tmp.csv
+  [bs_kernel_2l1p] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.59 GiB. GPU 1 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[W523 16:18:40.984717930 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:18:40.311960499 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:18:41.012481068 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel_2ldt ---
+W0523 16:18:43.144000 52740 torch/distributed/run.py:803] 
+W0523 16:18:43.144000 52740 torch/distributed/run.py:803] *****************************************
+W0523 16:18:43.144000 52740 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:18:43.144000 52740 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 228187.52it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 224123.11it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  bs_kernel_2ldt warmup K=64  L_p=16000  B=16   [bs_kernel_2ldt] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.59 GiB. GPU 1 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  [bs_kernel_2ldt] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.59 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_bs_kernel_2ldt_K64_B16.tmp.csv
+[W523 16:19:32.838728627 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:19:32.876013191 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:19:33.010841671 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: mlca ---
+W0523 16:19:35.128000 59251 torch/distributed/run.py:803] 
+W0523 16:19:35.128000 59251 torch/distributed/run.py:803] *****************************************
+W0523 16:19:35.128000 59251 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:19:35.128000 59251 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 131267.34it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 225847.14it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  mlca           warmup K=64  L_p=16000  B=16   [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 87.19 GiB. GPU 1 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 87.19 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_mlca_K64_B16.tmp.csv
+[W523 16:20:23.222578936 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:20:23.359480250 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:20:24.124557747 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: fasttree ---
+W0523 16:20:26.213000 65434 torch/distributed/run.py:803] 
+W0523 16:20:26.213000 65434 torch/distributed/run.py:803] *****************************************
+W0523 16:20:26.213000 65434 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:20:26.213000 65434 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 228780.22it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 214830.20it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  fasttree       warmup K=64  L_p=16000  B=16   [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 87.19 GiB. GPU 1 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[W523 16:21:13.213320079 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 87.19 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_fasttree_K64_B16.tmp.csv
+[W523 16:21:14.753155514 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:21:14.385207409 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: deft ---
+W0523 16:21:16.462000 72165 torch/distributed/run.py:803] 
+W0523 16:21:16.462000 72165 torch/distributed/run.py:803] *****************************************
+W0523 16:21:16.462000 72165 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:21:16.462000 72165 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['deft']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 227011.30it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 221864.95it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+  [deft] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 87.19 GiB. GPU 1 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+loaded 30 prompts from data/hotpotqa.jsonl
+  deft           warmup K=64  L_p=16000  B=16 [W523 16:22:03.316711579 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  [deft] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 87.19 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_deft_K64_B16.tmp.csv
+[W523 16:22:04.009447405 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:22:05.655875379 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  -> F3 core incomplete at K=64 B=16 (shrinking)
+
+=== F3: beam_search (K=64, B=8, L_p=16000, mn=256) ===
+  --- method: paged ---
+W0523 16:22:06.811000 78898 torch/distributed/run.py:803] 
+W0523 16:22:06.811000 78898 torch/distributed/run.py:803] *****************************************
+W0523 16:22:06.811000 78898 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:22:06.811000 78898 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 135300.13it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 224123.11it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  paged          warmup K=64  L_p=16000  B=8    [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 6.84 GiB. GPU 0 has a total capacity of 79.10 GiB of which 5.58 GiB is free. Including non-PyTorch memory, this process has 73.51 GiB memory in use. Of the allocated memory 72.06 GiB is allocated by PyTorch, and 28.44 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 6.84 GiB. GPU 1 has a total capacity of 79.10 GiB of which 5.58 GiB is free. Including non-PyTorch memory, this process has 73.51 GiB memory in use. Of the allocated memory 72.06 GiB is allocated by PyTorch, and 28.44 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_paged_K64_B8.tmp.csv
+[W523 16:22:58.516989819 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:22:58.527428273 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:22:58.405304315 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel ---
+W0523 16:23:00.505000 84793 torch/distributed/run.py:803] 
+W0523 16:23:00.505000 84793 torch/distributed/run.py:803] *****************************************
+W0523 16:23:00.505000 84793 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:23:00.505000 84793 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 137196.86it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 224694.86it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+  bs_kernel      warmup K=64  L_p=16000  B=8  loaded 30 prompts from data/hotpotqa.jsonl
+  [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 6.84 GiB. GPU 1 has a total capacity of 79.10 GiB of which 5.54 GiB is free. Including non-PyTorch memory, this process has 73.55 GiB memory in use. Of the allocated memory 72.10 GiB is allocated by PyTorch, and 29.81 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 6.84 GiB. GPU 0 has a total capacity of 79.10 GiB of which 5.54 GiB is free. Including non-PyTorch memory, this process has 73.55 GiB memory in use. Of the allocated memory 72.10 GiB is allocated by PyTorch, and 29.81 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_bs_kernel_K64_B8.tmp.csv
+[W523 16:23:51.152776423 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:23:51.154986613 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:23:52.204786582 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel_2l1p ---
+W0523 16:23:54.295000 91794 torch/distributed/run.py:803] 
+W0523 16:23:54.295000 91794 torch/distributed/run.py:803] *****************************************
+W0523 16:23:54.295000 91794 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:23:54.295000 91794 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2l1p']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 136770.78it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 222425.21it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  bs_kernel_2l1p warmup K=64  L_p=16000  B=8    [bs_kernel_2l1p] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 6.84 GiB. GPU 0 has a total capacity of 79.10 GiB of which 5.54 GiB is free. Including non-PyTorch memory, this process has 73.55 GiB memory in use. Of the allocated memory 72.10 GiB is allocated by PyTorch, and 29.81 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  [bs_kernel_2l1p] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 6.84 GiB. GPU 1 has a total capacity of 79.10 GiB of which 5.54 GiB is free. Including non-PyTorch memory, this process has 73.55 GiB memory in use. Of the allocated memory 72.10 GiB is allocated by PyTorch, and 29.81 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_bs_kernel_2l1p_K64_B8.tmp.csv
+[W523 16:24:45.647087361 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:24:45.649803900 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:24:46.544154448 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel_2ldt ---
+W0523 16:24:47.670000 97060 torch/distributed/run.py:803] 
+W0523 16:24:47.670000 97060 torch/distributed/run.py:803] *****************************************
+W0523 16:24:47.670000 97060 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:24:47.670000 97060 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 232402.07it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 231790.48it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+  bs_kernel_2ldt warmup K=64  L_p=16000  B=8  loaded 30 prompts from data/hotpotqa.jsonl
+  [bs_kernel_2ldt] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 6.84 GiB. GPU 0 has a total capacity of 79.10 GiB of which 5.54 GiB is free. Including non-PyTorch memory, this process has 73.55 GiB memory in use. Of the allocated memory 72.10 GiB is allocated by PyTorch, and 29.81 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  [bs_kernel_2ldt] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 6.84 GiB. GPU 1 has a total capacity of 79.10 GiB of which 5.54 GiB is free. Including non-PyTorch memory, this process has 73.55 GiB memory in use. Of the allocated memory 72.10 GiB is allocated by PyTorch, and 29.81 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_bs_kernel_2ldt_K64_B8.tmp.csv
+[W523 16:25:38.223349949 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:25:38.224895265 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:25:39.345622416 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: mlca ---
+W0523 16:25:41.466000 104579 torch/distributed/run.py:803] 
+W0523 16:25:41.466000 104579 torch/distributed/run.py:803] *****************************************
+W0523 16:25:41.466000 104579 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:25:41.466000 104579 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 169711.72it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 219105.43it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+  mlca           warmup K=64  L_p=16000  B=8  loaded 30 prompts from data/hotpotqa.jsonl
+  [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.91 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_mlca_K64_B8.tmp.csv
+  [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.91 GiB. GPU 1 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[W523 16:26:28.300462000 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:26:29.623989954 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:26:30.491545401 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: fasttree ---
+W0523 16:26:31.530000 110238 torch/distributed/run.py:803] 
+W0523 16:26:31.530000 110238 torch/distributed/run.py:803] *****************************************
+W0523 16:26:31.530000 110238 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:26:31.530000 110238 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 191479.10it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 228187.52it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  fasttree       warmup K=64  L_p=16000  B=8    [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.91 GiB. GPU 1 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.91 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_fasttree_K64_B8.tmp.csv
+[W523 16:27:20.776304897 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:27:20.875090478 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:27:21.835828841 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: deft ---
+W0523 16:27:22.902000 116747 torch/distributed/run.py:803] 
+W0523 16:27:22.902000 116747 torch/distributed/run.py:803] *****************************************
+W0523 16:27:22.902000 116747 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:27:22.902000 116747 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['deft']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 110238.28it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 85848.33it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+  deft           warmup K=64  L_p=16000  B=8  loaded 30 prompts from data/hotpotqa.jsonl
+  [deft] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.91 GiB. GPU 0 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_deft_K64_B8.tmp.csv
+  [deft] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 43.91 GiB. GPU 1 has a total capacity of 79.10 GiB of which 42.68 GiB is free. Including non-PyTorch memory, this process has 36.41 GiB memory in use. Of the allocated memory 35.81 GiB is allocated by PyTorch, and 12.02 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[W523 16:28:11.081890280 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:28:11.353753036 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:28:12.941557606 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  -> F3 core incomplete at K=64 B=8 (shrinking)
+
+=== F3: beam_search (K=64, B=4, L_p=16000, mn=256) ===
+  --- method: paged ---
+W0523 16:28:14.208000 122801 torch/distributed/run.py:803] 
+W0523 16:28:14.208000 122801 torch/distributed/run.py:803] *****************************************
+W0523 16:28:14.208000 122801 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:28:14.208000 122801 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 146556.38it/s]
+Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 141836.37it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+  paged          warmup K=64  L_p=16000  B=4  loaded 30 prompts from data/hotpotqa.jsonl
+discard          decode_total=44350.7ms  ( 60.4s wall)
+  paged                 K=64  L_p=16000  B=4  prefill=11324.9ms  decode_total=44202.8ms  per_pt_token= 43.34ms  ( 56.1s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_paged_K64_B4.tmp.csv
+[W523 16:31:00.045058934 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:31:00.178185360 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:31:01.077565479 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel ---
+W0523 16:31:03.163000 143895 torch/distributed/run.py:803] 
+W0523 16:31:03.163000 143895 torch/distributed/run.py:803] *****************************************
+W0523 16:31:03.163000 143895 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:31:03.163000 143895 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 233634.97it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 221307.50it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  bs_kernel      warmup K=64  L_p=16000  B=4  
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 29/255 (11.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.516      1.503      1.571      1.659       386.55
+  pick_ms                     0.260      0.280      0.327      0.453        66.38
+  prefix_plan_ms              0.424      0.081      1.022      1.084       107.99
+  decode_build_ms             0.301      0.301      0.312      0.329        76.78
+  decode_plan_ms              0.018      0.014      0.015      0.021         4.54
+discard          decode_total=36084.8ms  ( 50.7s wall)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 29/255 (11.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.540      1.530      1.598      1.686       392.61
+  pick_ms                     0.262      0.281      0.328      0.447        66.76
+  prefix_plan_ms              0.409      0.082      1.038      1.118       104.26
+  decode_build_ms             0.307      0.307      0.317      0.356        78.32
+  decode_plan_ms              0.018      0.014      0.015      0.020         4.58
+  bs_kernel             K=64  L_p=16000  B=4  
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 29/255 (11.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.507      1.500      1.560      1.667       384.32
+  pick_ms                     0.259      0.278      0.329      0.437        65.99
+  prefix_plan_ms              0.190      0.081      1.008      1.061        48.34
+  decode_build_ms             0.299      0.301      0.310      0.316        76.30
+  decode_plan_ms              0.017      0.014      0.015      0.020         4.41
+prefill=11304.2ms  decode_total=35706.9ms  per_pt_token= 35.01ms  ( 47.5s wall)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 29/255 (11.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.527      1.519      1.578      1.661       389.34
+  pick_ms                     0.261      0.282      0.329      0.435        66.50
+  prefix_plan_ms              0.191      0.082      1.023      1.066        48.81
+  decode_build_ms             0.305      0.306      0.316      0.328        77.76
+  decode_plan_ms              0.017      0.014      0.015      0.017         4.42
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_bs_kernel_K64_B4.tmp.csv
+[W523 16:33:30.363308916 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:33:30.387141306 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:33:31.459387863 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel_2l1p ---
+W0523 16:33:33.879000 162281 torch/distributed/run.py:803] 
+W0523 16:33:33.879000 162281 torch/distributed/run.py:803] *****************************************
+W0523 16:33:33.879000 162281 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:33:33.879000 162281 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2l1p']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 224694.86it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 225847.14it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  bs_kernel_2l1p warmup K=64  L_p=16000  B=4  
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 227/255 (89.0%)   plan_info cache hits: 212/255 (83.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.521      1.511      1.577      1.713       387.74
+  pick_ms                     0.107      0.107      0.114      0.120        27.25
+  shared_pack_ms              0.352      0.325      0.548      0.620        89.83
+  shared_plan_ms              0.520      0.075      0.825      0.846       132.62
+  shared_write_ms             0.103      0.102      0.111      0.120        26.24
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 227/255 (89.0%)   plan_info cache hits: 212/255 (83.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.527      1.518      1.585      1.715       389.29
+  pick_ms                     0.107      0.108      0.115      0.127        27.38
+  shared_pack_ms              0.353      0.324      0.553      0.626        90.04
+  shared_plan_ms              0.363      0.073      0.818      0.844        92.45
+  shared_write_ms             0.101      0.099      0.110      0.118        25.78
+discard          decode_total=38451.8ms  ( 52.7s wall)
+  bs_kernel_2l1p        K=64  L_p=16000  B=4  
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 227/255 (89.0%)   plan_info cache hits: 212/255 (83.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.518      1.513      1.579      1.679       387.19
+  pick_ms                     0.106      0.106      0.112      0.122        26.96
+  shared_pack_ms              0.348      0.323      0.533      0.595        88.65
+  shared_plan_ms              0.202      0.074      0.819      0.883        51.48
+  shared_write_ms             0.102      0.101      0.111      0.118        26.11
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 227/255 (89.0%)   plan_info cache hits: 212/255 (83.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.523      1.518      1.575      1.673       388.38
+  pick_ms                     0.106      0.107      0.114      0.121        27.11
+  shared_pack_ms              0.348      0.322      0.536      0.606        88.69
+  shared_plan_ms              0.199      0.072      0.811      0.867        50.78
+  shared_write_ms             0.101      0.099      0.109      0.117        25.75
+prefill=11595.5ms  decode_total=38180.0ms  per_pt_token= 37.43ms  ( 50.2s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_bs_kernel_2l1p_K64_B4.tmp.csv
+[W523 16:36:05.223495264 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:36:05.224862182 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:36:06.461583717 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel_2ldt ---
+W0523 16:36:08.526000 182282 torch/distributed/run.py:803] 
+W0523 16:36:08.526000 182282 torch/distributed/run.py:803] *****************************************
+W0523 16:36:08.526000 182282 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:36:08.526000 182282 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 233634.97it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 231790.48it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  bs_kernel_2ldt warmup K=64  L_p=16000  B=4  
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 29/255 (11.4%)   decode full re-plans: 1/255 (0.4%)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 29/255 (11.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.525      1.515      1.584      1.715       388.98
+  pick_ms                     0.082      0.082      0.087      0.094        21.03
+  prefix_plan_ms              0.425      0.079      1.029      1.094       108.27
+  decode_build_ms             0.300      0.300      0.313      0.332        76.50
+  decode_plan_ms              0.017      0.014      0.014      0.016         4.43
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.532      1.523      1.592      1.699       390.63
+  pick_ms                     0.083      0.082      0.087      0.092        21.13
+  prefix_plan_ms              0.627      0.081      1.023      1.084       159.94
+  decode_build_ms             0.301      0.302      0.313      0.328        76.88
+  decode_plan_ms              0.018      0.014      0.015      0.017         4.51
+discard          decode_total=35976.9ms  ( 49.9s wall)
+  bs_kernel_2ldt        K=64  L_p=16000  B=4  
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 29/255 (11.4%)   decode full re-plans: 1/255 (0.4%)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 255, SHARED: 0)
+
+  -- DEC_TAIL path (255 steps) --
+  prefix re-plans: 29/255 (11.4%)   decode full re-plans: 1/255 (0.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.529      1.523      1.582      1.645       389.98
+  pick_ms                     0.083      0.083      0.087      0.093        21.11
+  prefix_plan_ms              0.189      0.080      1.013      1.062        48.30
+  decode_build_ms             0.301      0.302      0.312      0.329        76.80
+  decode_plan_ms              0.017      0.014      0.015      0.016         4.41
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.531      1.526      1.581      1.678       390.36
+  pick_ms                     0.083      0.083      0.088      0.093        21.18
+  prefix_plan_ms              0.191      0.080      1.026      1.066        48.60
+  decode_build_ms             0.303      0.303      0.315      0.335        77.34
+  decode_plan_ms              0.017      0.014      0.015      0.020         4.38
+prefill=11209.6ms  decode_total=35681.6ms  per_pt_token= 34.98ms  ( 47.4s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_bs_kernel_2ldt_K64_B4.tmp.csv
+[W523 16:38:34.064937259 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:38:34.082263037 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:38:35.082870269 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: mlca ---
+W0523 16:38:37.214000 199037 torch/distributed/run.py:803] 
+W0523 16:38:37.214000 199037 torch/distributed/run.py:803] *****************************************
+W0523 16:38:37.214000 199037 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:38:37.214000 199037 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 106120.94it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 225269.52it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+  mlca           warmup K=64  L_p=16000  B=4  loaded 30 prompts from data/hotpotqa.jsonl
+discard          decode_total=23499.9ms  ( 34.7s wall)
+  mlca                  K=64  L_p=16000  B=4  prefill= 8443.5ms  decode_total=23318.8ms  per_pt_token= 22.86ms  ( 64.6s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_mlca_K64_B4.tmp.csv
+[W523 16:41:11.302531805 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:41:11.304654264 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:41:13.827994752 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: fasttree ---
+W0523 16:41:14.880000 215701 torch/distributed/run.py:803] 
+W0523 16:41:14.880000 215701 torch/distributed/run.py:803] *****************************************
+W0523 16:41:14.880000 215701 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:41:14.880000 215701 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 229974.89it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 248113.76it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  fasttree       warmup K=64  L_p=16000  B=4  discard          decode_total=67507.3ms  ( 79.7s wall)
+  fasttree              K=64  L_p=16000  B=4  prefill= 8666.8ms  decode_total=66643.7ms  per_pt_token= 65.34ms  ( 76.0s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_fasttree_K64_B4.tmp.csv
+[W523 16:44:39.207591410 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:44:39.211368911 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:44:40.170561603 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: deft ---
+W0523 16:44:42.283000 241643 torch/distributed/run.py:803] 
+W0523 16:44:42.283000 241643 torch/distributed/run.py:803] *****************************************
+W0523 16:44:42.283000 241643 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 16:44:42.283000 241643 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['deft']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 139367.70it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 230576.92it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+  deft           warmup K=64  L_p=16000  B=4  loaded 30 prompts from data/hotpotqa.jsonl
+discard          decode_total=54354.0ms  ( 65.9s wall)
+  deft                  K=64  L_p=16000  B=4  prefill= 8500.9ms  decode_total=53652.3ms  per_pt_token= 52.60ms  ( 62.8s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F3_deft_K64_B4.tmp.csv
+[W523 16:47:39.076113101 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:47:39.078507630 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 16:47:40.194788308 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  -> F3 CORE COMPLETE at K=64 B=4
+
+=== done 2026-05-23T16:47:41+08:00 ===
+Results: benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8

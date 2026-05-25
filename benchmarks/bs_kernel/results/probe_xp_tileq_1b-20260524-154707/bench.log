@@ -1,0 +1,113 @@
+=== XP_TILE_Q probe (1B, FA2) 2026-05-24T15:47:07+08:00 ===
+===== reference: mlca + bsk_2l_dt =====
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['mlca', 'bsk_2l_dt']
+max_new:   96, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 109552.72it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=16    ] B=16  K=16  L_shared~40000 L_priv~80    n_leaves=256
+
+--- multi_few_shot [K=16] ---
+  mlca         warmup  wall=  8.9s  decode_total= 1238.5ms
+  mlca         r=0  prefill= 6258.7ms  decode= 1220.5ms  plan/step= 2.80ms  fwd/step= 9.89ms  p50/step=12.79ms  wall=  7.9s
+  mlca         r=1  prefill= 6275.9ms  decode= 1219.9ms  plan/step= 2.79ms  fwd/step= 9.90ms  p50/step=12.79ms  wall=  7.9s
+  bsk_2l_dt    warmup  wall=  8.4s  decode_total= 1705.3ms
+  bsk_2l_dt    r=0  prefill= 6276.7ms  decode= 1676.4ms  plan/step= 1.11ms  fwd/step=16.39ms  p50/step=17.25ms  wall=  8.4s
+  bsk_2l_dt    r=1  prefill= 6247.0ms  decode= 1677.1ms  plan/step= 1.11ms  fwd/step=16.39ms  p50/step=17.26ms  wall=  8.3s
+  rank (decode_total): mlca=1219.9, bsk_2l_dt=1676.4
+
+
+wrote 4 rows to benchmarks/bs_kernel/results/probe_xp_tileq_1b-20260524-154707/ref.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=16    ]   rank (decode_total): mlca=1219.9, bsk_2l_dt=1676.4
+[W524 15:48:31.092981322 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W524 15:48:31.625974784 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+===== bsk_xp_dt  BS_KERNEL_XP_TILE_Q=128 =====
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bsk_xp_dt']
+max_new:   96, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 107153.75it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=16    ] B=16  K=16  L_shared~40000 L_priv~80    n_leaves=256
+
+--- multi_few_shot [K=16] ---
+  bsk_xp_dt    warmup  wall=  9.1s  decode_total= 1462.2ms
+  bsk_xp_dt    r=0  prefill= 6258.3ms  decode= 1419.5ms  plan/step= 1.12ms  fwd/step=13.66ms  p50/step=14.58ms  wall=  8.1s
+  bsk_xp_dt    r=1  prefill= 6270.8ms  decode= 1420.7ms  plan/step= 1.13ms  fwd/step=13.67ms  p50/step=14.57ms  wall=  8.1s
+  rank (decode_total): bsk_xp_dt=1419.5
+
+
+wrote 2 rows to benchmarks/bs_kernel/results/probe_xp_tileq_1b-20260524-154707/xp_tq128.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=16    ]   rank (decode_total): bsk_xp_dt=1419.5
+[W524 15:49:31.956438228 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W524 15:49:31.414133327 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+===== bsk_xp_dt  BS_KERNEL_XP_TILE_Q=64 =====
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bsk_xp_dt']
+max_new:   96, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 109145.46it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=16    ] B=16  K=16  L_shared~40000 L_priv~80    n_leaves=256
+
+--- multi_few_shot [K=16] ---
+  bsk_xp_dt    warmup  wall=  9.0s  decode_total= 1341.3ms
+  bsk_xp_dt    r=0  prefill= 6245.9ms  decode= 1298.1ms  plan/step= 1.13ms  fwd/step=12.38ms  p50/step=13.28ms  wall=  7.9s
+  bsk_xp_dt    r=1  prefill= 6262.7ms  decode= 1297.3ms  plan/step= 1.13ms  fwd/step=12.37ms  p50/step=13.28ms  wall=  8.0s
+  rank (decode_total): bsk_xp_dt=1297.3
+
+
+wrote 2 rows to benchmarks/bs_kernel/results/probe_xp_tileq_1b-20260524-154707/xp_tq64.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=16    ]   rank (decode_total): bsk_xp_dt=1297.3
+[W524 15:50:30.582265688 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W524 15:50:31.124292659 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+===== bsk_xp_dt  BS_KERNEL_XP_TILE_Q=0 =====
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bsk_xp_dt']
+max_new:   96, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 109963.03it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=16    ] B=16  K=16  L_shared~40000 L_priv~80    n_leaves=256
+
+--- multi_few_shot [K=16] ---
+  bsk_xp_dt    warmup  wall=  9.0s  decode_total= 1339.1ms
+  bsk_xp_dt    r=0  prefill= 6261.7ms  decode= 1297.7ms  plan/step= 1.12ms  fwd/step=12.38ms  p50/step=13.28ms  wall=  8.0s
+  bsk_xp_dt    r=1  prefill= 6269.4ms  decode= 1292.0ms  plan/step= 1.13ms  fwd/step=12.32ms  p50/step=13.21ms  wall=  8.0s
+  rank (decode_total): bsk_xp_dt=1292.0
+
+
+wrote 2 rows to benchmarks/bs_kernel/results/probe_xp_tileq_1b-20260524-154707/xp_tq0.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=16    ]   rank (decode_total): bsk_xp_dt=1292.0
+[W524 15:51:30.492147962 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W524 15:51:31.044929371 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+Done. benchmarks/bs_kernel/results/probe_xp_tileq_1b-20260524-154707

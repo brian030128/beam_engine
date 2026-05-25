@@ -1,0 +1,4 @@
+scenario,k_override,method,repeat,n_leaves,prefill_shared_ms,prefill_private_ms,decode_total_ms,decode_p50_ms,decode_p99_ms,n_decode_steps,plan_mean_ms,plan_p50_ms,plan_p99_ms,plan_total_ms,forward_mean_ms,forward_p50_ms,forward_p99_ms,forward_total_ms,alloc_mean_ms,alloc_total_ms,topk_mean_ms,topk_total_ms,dispatch_total_ms
+multi_doc_qa,128,paged,0,128,1196.2001,587.3366,14228.1447,55.6979,56.5379,255,1.2507,1.2477,1.3618,318.9256,54.4163,54.3213,55.1593,13876.1512,0.0096,2.4539,0.1068,27.2418,0.0000
+multi_doc_qa,128,paged,1,128,1196.2559,587.4383,14235.2518,55.7248,56.6648,255,1.2632,1.2525,1.4202,322.1287,54.4307,54.3358,55.1677,13879.8229,0.0103,2.6172,0.1071,27.3133,0.0000
+multi_doc_qa,128,paged,2,128,1210.8002,593.0873,14236.0892,55.7145,56.7712,255,1.2693,1.2562,1.5197,323.6825,54.4269,54.3315,55.2280,13878.8576,0.0102,2.5955,0.1082,27.5882,0.0000

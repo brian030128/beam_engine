@@ -1,0 +1,24 @@
+=== profiling 2L (bsk_2l_dt) ===
+=== profiling cross-prompt 3L (bs_kernel + knob) ===
+=== analysis ===
+
+2L total DRAM read = 155.004 GB  (across all profiled kernels)
+     40.906 GB  nvjet_hsh_192x192_64x4_1x2_h_bz_coopB_TNN
+     40.391 GB  nvjet_hsh_192x192_64x4_2x1_v_bz_coopB_TNN
+     26.182 GB  void flashinfer::activation::act_and_mul_kernel<__half, &silu>(T1 *, const T1 *,
+     13.093 GB  kernel_cutlass_kernel_flashinfernormkernelsfused_add_rmsnormFusedAddRMSNormKerne
+      7.915 GB  nvjet_hsh_128x256_64x4_2x1_v_bz_coopA_TNN
+      6.393 GB  void flashinfer::PrefillWithKVCacheKernel<flashinfer::SparseCollectiveMainloop<P
+      5.476 GB  nvjet_hsh_256x128_64x4_1x2_h_bz_coopA_TNT
+      4.100 GB  void flashinfer::BatchQKApplyRotaryPosIdsKernel<(bool)0, (unsigned int)64, (unsi
+
+3L total DRAM read = 154.861 GB  (across all profiled kernels)
+     41.077 GB  nvjet_hsh_192x192_64x4_1x2_h_bz_coopB_TNN
+     40.487 GB  nvjet_hsh_192x192_64x4_2x1_v_bz_coopB_TNN
+     26.174 GB  void flashinfer::activation::act_and_mul_kernel<__half, &silu>(T1 *, const T1 *,
+     13.088 GB  kernel_cutlass_kernel_flashinfernormkernelsfused_add_rmsnormFusedAddRMSNormKerne
+      7.917 GB  nvjet_hsh_128x256_64x4_2x1_v_bz_coopA_TNN
+      6.393 GB  void flashinfer::PrefillWithKVCacheKernel<flashinfer::SparseCollectiveMainloop<P
+      5.408 GB  nvjet_hsh_256x128_64x4_1x2_h_bz_coopA_TNT
+      4.098 GB  void flashinfer::BatchQKApplyRotaryPosIdsKernel<(bool)0, (unsigned int)64, (unsi
+Done. benchmarks/bs_kernel/results/prof_xprompt_3l_dram-20260524-122459

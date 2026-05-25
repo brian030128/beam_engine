@@ -1,0 +1,5 @@
+
+========== FastTree §4.1 paper-exact  ·  128 leaves / scenario ==========
+model          scenario                 method     decode_total  plan_total   fwd_total  plan%   fwd%  p50/step
+
+full CSVs: benchmarks/bs_kernel/results/paper_exact-20260514-170122

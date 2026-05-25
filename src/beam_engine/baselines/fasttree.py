@@ -198,21 +198,61 @@ def _build_combined_radix_tree_pages(
     Each prompt's K beams share ``shared_prefix_per_prompt[b]`` (aliased
     in by reference) and have their own ``tails_per_beam_per_prompt[b][k]``.
     Request IDs span ``[0, B*K)``: prompt b's beams have IDs
-    ``[b*K, (b+1)*K)``. Virtual root has ``seqlen=0`` and ``num_children=B``.
+    ``[b*K, (b+1)*K)``.
+
+    Cross-prompt LCA absorption: when the B prompts' ``shared_prefix``
+    lists share a common page-ID prefix (e.g. a deduplicated sys
+    allocated once at the workload level by ``tree_driver`` multi-level
+    mode), the virtual root takes that prefix as its run instead of
+    being empty. Each per-prompt subtree then starts from its
+    LCA-stripped remainder. Falls back to ``seqlen=0`` virtual root
+    when no common prefix exists — the original behavior.
     """
     B = len(shared_prefix_per_prompt)
+
+    # Cross-prompt LCA over the B shared_prefix page lists.
+    lca_len = 0
+    if B >= 1:
+        first = shared_prefix_per_prompt[0]
+        min_len = min(len(p) for p in shared_prefix_per_prompt)
+        while lca_len < min_len:
+            page = first[lca_len]
+            same = True
+            for b in range(1, B):
+                if shared_prefix_per_prompt[b][lca_len] != page:
+                    same = False
+                    break
+            if not same:
+                break
+            lca_len += 1
+
     virtual_root = KVTreeNode()
     virtual_root.parent = -1
     virtual_root.id = 0
-    virtual_root.seqlen = 0
     virtual_root.num_children = B
-    virtual_root.requests = []
+    if lca_len > 0:
+        virtual_root.seqlen = lca_len
+        # All B*K beams attend to the shared root pages.
+        virtual_root.requests = list(range(B * K))
+        lca_pages = shared_prefix_per_prompt[0][:lca_len]
+    else:
+        virtual_root.seqlen = 0
+        virtual_root.requests = []
+        lca_pages = []
     combined_nodes: list[KVTreeNode] = [virtual_root]
-    combined_pages: list[list[int]] = [[]]
+    combined_pages: list[list[int]] = [lca_pages]
 
     for b in range(B):
+        # Pass the LCA-stripped shared_prefix to the per-prompt builder.
+        # Aliasing is safe because the sub-builder treats its prefix as
+        # read-only (the slice is a fresh list; no mutation downstream).
+        sub_prefix = (
+            shared_prefix_per_prompt[b][lca_len:]
+            if lca_len > 0
+            else shared_prefix_per_prompt[b]
+        )
         sub_nodes, sub_pages = _build_radix_tree_pages_single(
-            shared_prefix_per_prompt[b], tails_per_beam_per_prompt[b],
+            sub_prefix, tails_per_beam_per_prompt[b],
         )
         offset = len(combined_nodes)
         for n in sub_nodes:

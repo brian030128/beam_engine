@@ -1,0 +1,29 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+<frozen runpy>:128: RuntimeWarning: 'beam_engine.methods.bs_kernel.autotune' found in sys.modules after import of package 'beam_engine.methods.bs_kernel', but prior to execution of 'beam_engine.methods.bs_kernel.autotune'; this may result in unpredictable behaviour
+[autotune] loading meta-llama/Llama-3.1-8B ...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 18293.95it/s]
+[calibrate] reusing cache at /home/u4320956/.cache/beam_engine/coeffs-NVIDIA_H100_80GB_HBM3.json
+[autotune] starting from physics-calibrated coefficients
+[autotune] using defaults for per_tile_us={16: 0.6, 64: 1.4, 128: 2.4}
+[autotune] running 12 cells × 3 strategies
+[autotune] measured 36 (cell, strategy) pairs:
+  K= 16 L_p= 2048  per_beam= 10.80  shared_2l_1pool= 10.90  shared_2l_2pool= 10.85  oracle=per_beam
+  K= 16 L_p= 8192  per_beam= 12.63  shared_2l_1pool= 11.57  shared_2l_2pool= 11.55  oracle=shared_2l_2pool
+  K= 16 L_p=32768  per_beam= 14.14  shared_2l_1pool= 11.99  shared_2l_2pool= 12.02  oracle=shared_2l_1pool
+  K= 16 L_p=65536  per_beam= 14.12  shared_2l_1pool= 11.98  shared_2l_2pool= 12.02  oracle=shared_2l_1pool
+  K= 32 L_p= 2048  per_beam= 12.68  shared_2l_1pool= 12.32  shared_2l_2pool= 12.24  oracle=shared_2l_2pool
+  K= 32 L_p= 8192  per_beam= 16.68  shared_2l_1pool= 13.71  shared_2l_2pool= 13.63  oracle=shared_2l_2pool
+  K= 32 L_p=32768  per_beam= 19.12  shared_2l_1pool= 14.24  shared_2l_2pool= 14.25  oracle=shared_2l_1pool
+  K= 32 L_p=65536  per_beam= 19.14  shared_2l_1pool= 14.27  shared_2l_2pool= 14.25  oracle=shared_2l_2pool
+  K= 64 L_p= 2048  per_beam= 18.57  shared_2l_1pool= 16.89  shared_2l_2pool= 16.94  oracle=shared_2l_1pool
+  K= 64 L_p= 8192  per_beam= 26.50  shared_2l_1pool= 19.68  shared_2l_2pool= 19.60  oracle=shared_2l_2pool
+  K= 64 L_p=32768  per_beam= 30.42  shared_2l_1pool= 19.48  shared_2l_2pool= 19.49  oracle=shared_2l_1pool
+  K= 64 L_p=65536  per_beam= 30.36  shared_2l_1pool= 19.54  shared_2l_2pool= 19.57  oracle=shared_2l_1pool
+[autotune] best share_extra_us=100.0 dual_pool_extra_us=0.0  avg regret=+0.15%  worst=+0.68% (12 cells)
+
+[autotune] tuned coefficients:
+  share_extra_us     = 100.0
+  dual_pool_extra_us = 0.0
+[autotune] wrote /home/u4320956/.cache/beam_engine/coeffs-NVIDIA_H100_80GB_HBM3.json

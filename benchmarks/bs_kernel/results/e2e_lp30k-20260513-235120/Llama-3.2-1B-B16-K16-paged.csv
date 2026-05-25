@@ -1,0 +1,2 @@
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
+paged,16,30000,16,128,4715.0589,7106.6025,55.9575,3.4973

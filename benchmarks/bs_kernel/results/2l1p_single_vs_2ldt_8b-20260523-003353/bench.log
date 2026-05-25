@@ -1,0 +1,158 @@
+=== 2l1p_single vs 2ldt | 8B | started 2026-05-23T00:33:53+08:00 ===
+grid:   L_p=8192, max_new=256
+cells:  (K=16,B∈{1,4,32}) (K=32,B∈{1,4}) (K=64,B∈{1,4})
+model:  meta-llama/Llama-3.1-8B
+GPU:    NVIDIA H100 80GB HBM3
+flashinfer diff (single_launch must be live):
+
+=== bs_kernel_2l1p_single_K16_B1 | max_pages=1792 ===
+no valid methods in ['bs_kernel_2l1p_single']; valid: ['paged', 'tree', 'fasttree', 'deft', 'mlca', 'adaptive_pool', 'bs_kernel', 'bs_kernel_2l1p', 'bs_kernel_2ldt', 'bs_kernel_3l1p', 'bs_kernel_3ldt', 'bs_kernel_4l1p', 'bs_kernel_4ldt', 'dbs_paged', 'dbs_tree', 'dbs_fasttree', 'dbs_mlca', 'dbs_adaptive_pool', 'dbs_bs_kernel']
+[W523 00:33:59.224471250 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  >>> bs_kernel_2l1p_single_K16_B1: python exited with 2
+
+=== bs_kernel_2l1p_single_K16_B4 | max_pages=4096 ===
+no valid methods in ['bs_kernel_2l1p_single']; valid: ['paged', 'tree', 'fasttree', 'deft', 'mlca', 'adaptive_pool', 'bs_kernel', 'bs_kernel_2l1p', 'bs_kernel_2ldt', 'bs_kernel_3l1p', 'bs_kernel_3ldt', 'bs_kernel_4l1p', 'bs_kernel_4ldt', 'dbs_paged', 'dbs_tree', 'dbs_fasttree', 'dbs_mlca', 'dbs_adaptive_pool', 'dbs_bs_kernel']
+[W523 00:34:04.506265124 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  >>> bs_kernel_2l1p_single_K16_B4: python exited with 2
+
+=== bs_kernel_2l1p_single_K16_B32 | max_pages=25600 ===
+no valid methods in ['bs_kernel_2l1p_single']; valid: ['paged', 'tree', 'fasttree', 'deft', 'mlca', 'adaptive_pool', 'bs_kernel', 'bs_kernel_2l1p', 'bs_kernel_2ldt', 'bs_kernel_3l1p', 'bs_kernel_3ldt', 'bs_kernel_4l1p', 'bs_kernel_4ldt', 'dbs_paged', 'dbs_tree', 'dbs_fasttree', 'dbs_mlca', 'dbs_adaptive_pool', 'dbs_bs_kernel']
+[W523 00:34:09.439839920 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  >>> bs_kernel_2l1p_single_K16_B32: python exited with 2
+
+=== bs_kernel_2l1p_single_K32_B1 | max_pages=2048 ===
+no valid methods in ['bs_kernel_2l1p_single']; valid: ['paged', 'tree', 'fasttree', 'deft', 'mlca', 'adaptive_pool', 'bs_kernel', 'bs_kernel_2l1p', 'bs_kernel_2ldt', 'bs_kernel_3l1p', 'bs_kernel_3ldt', 'bs_kernel_4l1p', 'bs_kernel_4ldt', 'dbs_paged', 'dbs_tree', 'dbs_fasttree', 'dbs_mlca', 'dbs_adaptive_pool', 'dbs_bs_kernel']
+[W523 00:34:14.251214537 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  >>> bs_kernel_2l1p_single_K32_B1: python exited with 2
+
+=== bs_kernel_2l1p_single_K32_B4 | max_pages=5120 ===
+no valid methods in ['bs_kernel_2l1p_single']; valid: ['paged', 'tree', 'fasttree', 'deft', 'mlca', 'adaptive_pool', 'bs_kernel', 'bs_kernel_2l1p', 'bs_kernel_2ldt', 'bs_kernel_3l1p', 'bs_kernel_3ldt', 'bs_kernel_4l1p', 'bs_kernel_4ldt', 'dbs_paged', 'dbs_tree', 'dbs_fasttree', 'dbs_mlca', 'dbs_adaptive_pool', 'dbs_bs_kernel']
+[W523 00:34:19.060822156 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  >>> bs_kernel_2l1p_single_K32_B4: python exited with 2
+
+=== bs_kernel_2l1p_single_K64_B1 | max_pages=2560 ===
+no valid methods in ['bs_kernel_2l1p_single']; valid: ['paged', 'tree', 'fasttree', 'deft', 'mlca', 'adaptive_pool', 'bs_kernel', 'bs_kernel_2l1p', 'bs_kernel_2ldt', 'bs_kernel_3l1p', 'bs_kernel_3ldt', 'bs_kernel_4l1p', 'bs_kernel_4ldt', 'dbs_paged', 'dbs_tree', 'dbs_fasttree', 'dbs_mlca', 'dbs_adaptive_pool', 'dbs_bs_kernel']
+[W523 00:34:24.884955028 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  >>> bs_kernel_2l1p_single_K64_B1: python exited with 2
+
+=== bs_kernel_2l1p_single_K64_B4 | max_pages=7168 ===
+no valid methods in ['bs_kernel_2l1p_single']; valid: ['paged', 'tree', 'fasttree', 'deft', 'mlca', 'adaptive_pool', 'bs_kernel', 'bs_kernel_2l1p', 'bs_kernel_2ldt', 'bs_kernel_3l1p', 'bs_kernel_3ldt', 'bs_kernel_4l1p', 'bs_kernel_4ldt', 'dbs_paged', 'dbs_tree', 'dbs_fasttree', 'dbs_mlca', 'dbs_adaptive_pool', 'dbs_bs_kernel']
+[W523 00:34:28.733776358 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  >>> bs_kernel_2l1p_single_K64_B4: python exited with 2
+
+=== bs_kernel_2ldt_K16_B1 | max_pages=1792 ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 256
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 138550.58it/s]
+Model loaded.
+
+  bs_kernel_2ldt warmup K=16  L_p=8192   B=1  discard          decode_total= 2883.6ms  (  4.5s wall)
+  bs_kernel_2ldt        K=16  L_p=8192   B=1  prefill=  213.9ms  decode_total= 2689.6ms  per_pt_token= 10.55ms  (  3.0s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b-20260523-003353/bs_kernel_2ldt_K16_B1.csv
+[W523 00:34:49.087829708 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== bs_kernel_2ldt_K16_B4 | max_pages=4096 ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 256
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 5398.07it/s]
+Model loaded.
+
+  bs_kernel_2ldt warmup K=16  L_p=8192   B=4  discard          decode_total= 3515.0ms  (  5.6s wall)
+  bs_kernel_2ldt        K=16  L_p=8192   B=4  prefill=  847.4ms  decode_total= 3369.6ms  per_pt_token=  3.30ms  (  4.4s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b-20260523-003353/bs_kernel_2ldt_K16_B4.csv
+[W523 00:35:10.904275631 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== bs_kernel_2ldt_K16_B32 | max_pages=25600 ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 256
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 157465.34it/s]
+Model loaded.
+
+  bs_kernel_2ldt warmup K=16  L_p=8192   B=32   [bs_kernel_2ldt] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB. GPU 0 has a total capacity of 79.10 GiB of which 1.61 GiB is free. Including non-PyTorch memory, this process has 77.47 GiB memory in use. Of the allocated memory 76.80 GiB is allocated by PyTorch, and 19.68 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b-20260523-003353/bs_kernel_2ldt_K16_B32.csv
+[W523 00:35:22.307018125 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== bs_kernel_2ldt_K32_B1 | max_pages=2048 ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 256
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 155344.59it/s]
+Model loaded.
+
+  bs_kernel_2ldt warmup K=32  L_p=8192   B=1  discard          decode_total= 2808.1ms  (  4.2s wall)
+  bs_kernel_2ldt        K=32  L_p=8192   B=1  prefill=  215.9ms  decode_total= 2661.1ms  per_pt_token= 10.44ms  (  3.0s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b-20260523-003353/bs_kernel_2ldt_K32_B1.csv
+[W523 00:35:40.832924952 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== bs_kernel_2ldt_K32_B4 | max_pages=5120 ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 256
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 140662.63it/s]
+Model loaded.
+
+  bs_kernel_2ldt warmup K=32  L_p=8192   B=4  discard          decode_total= 3879.5ms  (  5.9s wall)
+  bs_kernel_2ldt        K=32  L_p=8192   B=4  prefill=  846.7ms  decode_total= 3738.6ms  per_pt_token=  3.67ms  (  4.8s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b-20260523-003353/bs_kernel_2ldt_K32_B4.csv
+[W523 00:36:01.675976624 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== bs_kernel_2ldt_K64_B1 | max_pages=2560 ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 256
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 151767.58it/s]
+Model loaded.
+
+  bs_kernel_2ldt warmup K=64  L_p=8192   B=1  discard          decode_total= 3102.4ms  (  4.5s wall)
+  bs_kernel_2ldt        K=64  L_p=8192   B=1  prefill=  216.6ms  decode_total= 2958.9ms  per_pt_token= 11.60ms  (  3.3s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b-20260523-003353/bs_kernel_2ldt_K64_B1.csv
+[W523 00:36:19.702538200 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== bs_kernel_2ldt_K64_B4 | max_pages=7168 ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 256
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 149311.79it/s]
+Model loaded.
+
+  bs_kernel_2ldt warmup K=64  L_p=8192   B=4  discard          decode_total= 5195.9ms  (  7.3s wall)
+  bs_kernel_2ldt        K=64  L_p=8192   B=4  prefill=  845.3ms  decode_total= 5057.4ms  per_pt_token=  4.96ms  (  6.1s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b-20260523-003353/bs_kernel_2ldt_K64_B4.csv
+[W523 00:36:43.472548765 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== merging CSVs to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b-20260523-003353/merged.csv ===
+
+=== merged results ===
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms,plan_mean_ms,plan_total_ms,forward_mean_ms,forward_total_ms,cow_mean_ms,cow_total_ms,topk_mean_ms,topk_total_ms,fork_mean_ms,fork_total_ms
+bs_kernel_2ldt,16,8192,1,256,213.8794,2689.6054,10.5475,10.5475,0.6066,154.6931,9.0002,2295.0448,0.4474,114.0883,0.4058,103.4784,0.0747,19.0360
+bs_kernel_2ldt,16,8192,4,256,847.4202,3369.5945,13.2141,3.3035,1.4789,377.1218,10.6337,2711.5969,0.4548,115.9667,0.4903,125.0352,0.1434,36.5657
+bs_kernel_2ldt,32,8192,1,256,215.9161,2661.0818,10.4356,10.4356,0.6933,176.7874,8.6933,2216.7997,0.5077,129.4612,0.4325,110.2797,0.0960,24.4862
+bs_kernel_2ldt,32,8192,4,256,846.6503,3738.6487,14.6614,3.6653,1.8032,459.8106,11.3825,2902.5292,0.5326,135.8034,0.7110,181.3013,0.2193,55.9177
+bs_kernel_2ldt,64,8192,1,256,216.5807,2958.8715,11.6034,11.6034,0.8072,205.8277,9.5079,2424.5200,0.6097,155.4785,0.5235,133.4960,0.1423,36.2795
+bs_kernel_2ldt,64,8192,4,256,845.3352,5057.3896,19.8329,4.9582,2.2720,579.3549,15.2595,3891.1615,0.6777,172.8090,1.2345,314.7882,0.3763,95.9536
+
+Done. Results: benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b-20260523-003353

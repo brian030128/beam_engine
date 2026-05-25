@@ -1,0 +1,77 @@
+=== bs_8b_lp4k started 2026-05-14T22:25:25+08:00 ===
+config:  L_p=4096, K=32, B=32, max_new=256
+methods: fasttree bs_kernel paged mlca
+--warmup (1 discarded + 1 measured per method)
+model:   meta-llama/Llama-3.1-8B
+GPU:     NVIDIA H100 80GB HBM3
+
+=== running method: fasttree ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 256
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 27911.28it/s]
+Model loaded.
+
+  fasttree       warmup K=32  L_p=4096   B=32   [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 3.50 GiB. GPU 0 has a total capacity of 79.10 GiB of which 2.14 GiB is free. Including non-PyTorch memory, this process has 76.95 GiB memory in use. Of the allocated memory 76.25 GiB is allocated by PyTorch, and 45.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/bs_8b_lp4k-20260514-222525/fasttree.csv
+[W514 22:25:43.916050554 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: bs_kernel ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 256
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 137313.52it/s]
+Model loaded.
+
+  bs_kernel      warmup K=32  L_p=4096   B=32   [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 3.50 GiB. GPU 0 has a total capacity of 79.10 GiB of which 2.06 GiB is free. Including non-PyTorch memory, this process has 77.03 GiB memory in use. Of the allocated memory 76.31 GiB is allocated by PyTorch, and 60.96 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/bs_8b_lp4k-20260514-222525/bs_kernel.csv
+[W514 22:25:56.653184318 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: paged ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 256
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 27364.97it/s]
+Model loaded.
+
+  paged          warmup K=32  L_p=4096   B=32   [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 3.50 GiB. GPU 0 has a total capacity of 79.10 GiB of which 2.14 GiB is free. Including non-PyTorch memory, this process has 76.95 GiB memory in use. Of the allocated memory 76.26 GiB is allocated by PyTorch, and 37.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/bs_8b_lp4k-20260514-222525/paged.csv
+[W514 22:26:09.722547013 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: mlca ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 256
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 104619.83it/s]
+Model loaded.
+
+  mlca           warmup K=32  L_p=4096   B=32   [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 3.50 GiB. GPU 0 has a total capacity of 79.10 GiB of which 2.14 GiB is free. Including non-PyTorch memory, this process has 76.95 GiB memory in use. Of the allocated memory 76.27 GiB is allocated by PyTorch, and 29.58 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/bs_8b_lp4k-20260514-222525/mlca.csv
+[W514 22:26:23.827571890 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== merging CSVs to benchmarks/bs_kernel/results/bs_8b_lp4k-20260514-222525/merged.csv ===
+
+=== merged results ===
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
+
+Done. Results: benchmarks/bs_kernel/results/bs_8b_lp4k-20260514-222525

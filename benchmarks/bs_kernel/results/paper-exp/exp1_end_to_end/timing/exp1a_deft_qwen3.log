@@ -1,0 +1,95 @@
+=== exp1a DeFT Qwen3-4B run 2026-05-18T23:28:17+08:00 ===
+model: Qwen/Qwen3-4B
+HF_HOME: /work/u4320956/hf
+GPU:   NVIDIA H100 80GB HBM3
+
+############ MODEL: Qwen3-4B ############
+  multi_level_system  (B=4, K=64)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: Qwen/Qwen3-4B  (tp_size=1)
+scenarios: ['multi_level_system']
+methods:   ['deft']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 87992.39it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=4   K=64  L_shared~2521  L_priv~80    n_leaves=256
+
+--- multi_level_system [K=64] ---
+  deft         warmup  wall= 10.5s  decode_total= 8377.0ms
+  deft         r=0  prefill=  501.6ms  decode= 7883.5ms  plan/step= 0.74ms  fwd/step=29.95ms  p50/step=31.04ms  wall=  8.7s
+  rank (decode_total): deft=7883.5
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Qwen3-4B_level_system_deft.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): deft=7883.5
+[W518 23:28:48.159979944 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  appended → benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Qwen3-4B.csv
+  multi_chain_reasoning  (B=8, K=64)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: Qwen/Qwen3-4B  (tp_size=1)
+scenarios: ['multi_chain_reasoning']
+methods:   ['deft']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 127529.51it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=64    ] B=8   K=64  L_shared~2581  L_priv~23    n_leaves=512
+  multi_chain_reasoning (stage2) [K=64    ] B=8   K=1   L_shared~19430 L_priv~    0 n_leaves=8
+
+--- multi_chain_reasoning [K=64] ---
+  deft         warmup  wall= 36.1s  decode_total=29710.2ms
+  deft         r=0  prefill= 4344.5ms  decode=29279.6ms  plan/step= 0.91ms  fwd/step=56.25ms  p50/step=64.86ms  wall= 34.5s
+  rank (decode_total): deft=29279.6
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Qwen3-4B_chain_reasoning_deft.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=64    ]   rank (decode_total): deft=29279.6
+[W518 23:30:10.318307319 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  appended → benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Qwen3-4B.csv
+  multi_few_shot  (B=8, K=64)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: Qwen/Qwen3-4B  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['deft']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 122960.05it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=64    ] B=8   K=64  L_shared~6362  L_priv~126   n_leaves=512
+
+--- multi_few_shot [K=64] ---
+  deft         warmup  wall= 25.7s  decode_total=21494.8ms
+  deft         r=0  prefill= 2421.6ms  decode=21082.8ms  plan/step= 1.42ms  fwd/step=80.91ms  p50/step=82.16ms  wall= 24.1s
+  rank (decode_total): deft=21082.8
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Qwen3-4B_few_shot_deft.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=64    ]   rank (decode_total): deft=21082.8
+[W518 23:31:12.905042352 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  appended → benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Qwen3-4B.csv
+Done. Results: benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing

@@ -1,0 +1,4 @@
+scenario,k_override,method,repeat,n_leaves,prefill_shared_ms,prefill_private_ms,decode_total_ms,decode_p50_ms,decode_p99_ms,n_decode_steps,plan_mean_ms,plan_p50_ms,plan_p99_ms,plan_total_ms,forward_mean_ms,forward_p50_ms,forward_p99_ms,forward_total_ms,alloc_mean_ms,alloc_total_ms,topk_mean_ms,topk_total_ms,dispatch_total_ms
+multi_chain_reasoning,64,bs_kernel,0,2048,2175.0670,520.4280,2152.8724,23.1375,30.1255,126,4.1465,2.8377,12.7527,522.4641,12.6228,18.5148,20.1822,1590.4677,0.0229,2.8876,0.2804,35.3363,0.0000
+multi_chain_reasoning,64,bsk_2l_1p,0,2048,1342.6202,502.7590,1981.9860,19.7733,24.9260,126,4.1892,3.0249,6.8451,527.8371,11.2194,11.3172,17.6170,1413.6426,0.0234,2.9530,0.2845,35.8429,0.0000
+multi_chain_reasoning,64,bsk_2l_dt,0,2048,1324.0354,507.2471,2686.0881,23.2361,32.4567,126,3.4303,2.8782,13.8603,432.2206,17.5580,19.1142,20.1816,2212.3115,0.0232,2.9192,0.2928,36.8970,0.0000

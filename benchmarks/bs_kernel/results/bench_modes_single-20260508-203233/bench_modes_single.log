@@ -1,0 +1,20 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 cells × 8 modes = 8 runs
+modes: ['picker', 'PER_BEAM', 'SHARED_2L_1POOL', 'SHARED_2L_2POOL', 'SHARED_3L_1POOL', 'SHARED_3L_2POOL', 'SHARED_2L_DEC_TAIL', 'SHARED_3L_DEC_TAIL']
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 20000.09it/s]
+Model loaded.
+
+  picker                 K=64  L_p=8192   B=32 prefill= 2288.5ms  decode_total= 12859.2ms  per_pt_token=  1.58ms  picks=[d2_dec_tail=26,d2_p1=12,d3_p1=217]  ( 15.5s wall)
+  PER_BEAM               K=64  L_p=8192   B=32 prefill= 1451.9ms  decode_total= 43663.5ms  per_pt_token=  5.35ms  picks=[per_beam=255]  ( 45.4s wall)
+  SHARED_2L_1POOL        K=64  L_p=8192   B=32 prefill= 1458.1ms  decode_total= 12396.7ms  per_pt_token=  1.52ms  picks=[d2_p1=255]  ( 14.1s wall)
+  SHARED_2L_2POOL        K=64  L_p=8192   B=32 prefill= 1453.6ms  decode_total= 15317.9ms  per_pt_token=  1.88ms  picks=[d2_p2=255]  ( 17.0s wall)
+  SHARED_3L_1POOL        K=64  L_p=8192   B=32 prefill= 1454.9ms  decode_total= 12754.3ms  per_pt_token=  1.56ms  picks=[d2_p1=16,d3_p1=239]  ( 14.5s wall)
+  SHARED_3L_2POOL        K=64  L_p=8192   B=32 prefill= 1454.5ms  decode_total= 15344.5ms  per_pt_token=  1.88ms  picks=[d2_p2=16,d3_p2=239]  ( 17.0s wall)
+  SHARED_2L_DEC_TAIL     K=64  L_p=8192   B=32 prefill= 1458.9ms  decode_total= 10849.6ms  per_pt_token=  1.33ms  picks=[d2_dec_tail=255]  ( 12.7s wall)
+  SHARED_3L_DEC_TAIL     K=64  L_p=8192   B=32 prefill= 1460.1ms  decode_total= 12629.1ms  per_pt_token=  1.55ms  picks=[d2_dec_tail=16,d3_dec_tail=239]  ( 14.3s wall)
+
+wrote 8 rows to benchmarks/bs_kernel/results/bench_modes_single-20260508-203233/bench_modes_single.csv
+[W508 20:35:13.762184002 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

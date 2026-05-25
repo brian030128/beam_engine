@@ -1,0 +1,2 @@
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms,plan_mean_ms,plan_total_ms,forward_mean_ms,forward_total_ms,cow_mean_ms,cow_total_ms,topk_mean_ms,topk_total_ms,fork_mean_ms,fork_total_ms
+fasttree,16,4096,32,256,4102.4880,10291.6204,40.3593,1.2612,7.8363,1998.2532,27.9571,7129.0638,1.2232,311.9106,1.6619,423.7921,1.6670,425.0788

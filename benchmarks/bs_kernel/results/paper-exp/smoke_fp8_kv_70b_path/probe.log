@@ -1,0 +1,49 @@
+=== fp8-KV smoke on 1B started 2026-05-21T02:26:46+08:00 ===
+BE_DTYPE=bf16 BE_KV_DTYPE=fp8_e4m3
+model: meta-llama/Llama-3.1-8B  (tp_size=1)
+scenarios: ['multi_level_system']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   16, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 1497.72it/s]
+Model loaded.
+
+k_overrides: [8]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=8     ] B=2   K=8   L_shared~2516  L_priv~80    n_leaves=16
+
+--- multi_level_system [K=8] ---
+  bs_kernel    warmup  wall=  1.5s  decode_total=  220.4ms
+  bs_kernel    r=0  prefill=  172.4ms  decode=  141.9ms  plan/step= 0.53ms  fwd/step= 8.82ms  p50/step= 9.20ms  wall=  0.4s
+  bsk_2l_1p    warmup  wall=  0.4s  decode_total=  141.2ms
+  bsk_2l_1p    r=0  prefill=  172.1ms  decode=  141.2ms  plan/step= 0.52ms  fwd/step= 8.79ms  p50/step= 9.19ms  wall=  0.4s
+  bsk_2l_dt    warmup  wall=  0.5s  decode_total=  179.9ms
+  bsk_2l_dt    r=0  prefill=  171.0ms  decode=  147.4ms  plan/step= 0.44ms  fwd/step= 9.28ms  p50/step= 9.57ms  wall=  0.5s
+  rank (decode_total): bsk_2l_1p=141.2, bs_kernel=141.9, bsk_2l_dt=147.4
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/smoke_fp8_kv_70b_path/sglang.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=8     ]   rank (decode_total): bsk_2l_1p=141.2, bs_kernel=141.9, bsk_2l_dt=147.4
+[W521 02:27:00.521123011 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+--- beam_search via bench_batched.py ---
+grid: 1 (K,L_p,B) cells × 3 methods = 3 runs
+methods: ['bs_kernel', 'bs_kernel_2l1p', 'bs_kernel_2ldt']
+max_new: 16
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 104147.50it/s]
+Model loaded.
+
+  bs_kernel      warmup K=8   L_p=2048   B=2  discard          decode_total=13815.2ms  ( 15.0s wall)
+  bs_kernel             K=8   L_p=2048   B=2  prefill=  101.0ms  decode_total=  162.5ms  per_pt_token=  5.42ms  (  0.4s wall)
+  bs_kernel_2l1p warmup K=8   L_p=2048   B=2  discard          decode_total=  161.6ms  (  0.4s wall)
+  bs_kernel_2l1p        K=8   L_p=2048   B=2  prefill=  100.9ms  decode_total=  161.8ms  per_pt_token=  5.39ms  (  0.4s wall)
+  bs_kernel_2ldt warmup K=8   L_p=2048   B=2  discard          decode_total=  203.2ms  (  0.4s wall)
+  bs_kernel_2ldt        K=8   L_p=2048   B=2  prefill=  101.5ms  decode_total=  171.3ms  per_pt_token=  5.71ms  (  0.4s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/smoke_fp8_kv_70b_path/batched.csv
+[W521 02:27:27.066639788 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+=== done 2026-05-21T02:27:27+08:00 ===

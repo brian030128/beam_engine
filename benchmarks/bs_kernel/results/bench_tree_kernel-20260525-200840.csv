@@ -1,0 +1,113 @@
+family,shape,kernel,ms,n_leaves,n_levels,total_pages,picker,oracle,bs_vs_paged,regret,picker_optimal,motivation
+flat_beam,flat_lp8k_k16,paged,0.07606399804353714,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7607406497802942,1.0011123555027757,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,mlca,0.15361600369215012,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7607406497802942,1.0011123555027757,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,fasttree,0.06270400062203407,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7607406497802942,1.0011123555027757,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,bs_kernel,0.04320000112056732,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7607406497802942,1.0011123555027757,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,bs_2l1p,0.04315200075507164,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7607406497802942,1.0011123555027757,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,bs_2dt,0.06417599692940712,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7607406497802942,1.0011123555027757,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,bs_3dt,nan,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7607406497802942,1.0011123555027757,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp32k_k16,paged,0.2718399912118912,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.260410503070116,0.9800639690920713,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,mlca,0.4947360008955002,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.260410503070116,0.9800639690920713,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,fasttree,0.16942399740219116,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.260410503070116,0.9800639690920713,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,bs_kernel,0.08337600156664848,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.260410503070116,0.9800639690920713,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,bs_2l1p,0.09059199690818787,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.260410503070116,0.9800639690920713,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,bs_2dt,0.08507199957966805,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.260410503070116,0.9800639690920713,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,bs_3dt,nan,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.260410503070116,0.9800639690920713,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp8k_k4,paged,0.033904001116752625,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.0772750316901787,1.0102722318730077,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,mlca,0.14209599792957306,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.0772750316901787,1.0102722318730077,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,fasttree,0.06123200058937073,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.0772750316901787,1.0102722318730077,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,bs_kernel,0.03147200122475624,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.0772750316901787,1.0102722318730077,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,bs_2l1p,0.03115200065076351,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.0772750316901787,1.0102722318730077,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,bs_2dt,0.06335999816656113,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.0772750316901787,1.0102722318730077,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,bs_3dt,nan,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.0772750316901787,1.0102722318730077,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k64,paged,0.2568800002336502,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.6993087719535422,1.014492755200728,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,mlca,0.1879040002822876,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.6993087719535422,1.014492755200728,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,fasttree,0.21704000234603882,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.6993087719535422,1.014492755200728,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,bs_kernel,0.06943999975919724,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.6993087719535422,1.014492755200728,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,bs_2l1p,0.2683040052652359,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.6993087719535422,1.014492755200728,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,bs_2dt,0.06844799965620041,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.6993087719535422,1.014492755200728,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,bs_3dt,nan,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.6993087719535422,1.014492755200728,yes,"medium prefix, wide K=64 fan-out"
+batched_beam,bbeam_b20_lp8k_k16,paged,1.3661280274391174,320,2,11840,SHARED_2L_1POOL,bs_2l1p,3.817365004547104,1.0005367550789157,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,mlca,0.9043039977550507,320,2,11840,SHARED_2L_1POOL,bs_2l1p,3.817365004547104,1.0005367550789157,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,fasttree,0.4244160056114197,320,2,11840,SHARED_2L_1POOL,bs_2l1p,3.817365004547104,1.0005367550789157,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,bs_kernel,0.35787199437618256,320,2,11840,SHARED_2L_1POOL,bs_2l1p,3.817365004547104,1.0005367550789157,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,bs_2l1p,0.357680007815361,320,2,11840,SHARED_2L_1POOL,bs_2l1p,3.817365004547104,1.0005367550789157,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,bs_2dt,0.35921600461006165,320,2,11840,SHARED_2L_1POOL,bs_2l1p,3.817365004547104,1.0005367550789157,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,bs_3dt,nan,320,2,11840,SHARED_2L_1POOL,bs_2l1p,3.817365004547104,1.0005367550789157,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b8_lp16k_k32,paged,2.1863839626312256,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.498298818507133,0.9996160484592208,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,mlca,0.7120639979839325,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.498298818507133,0.9996160484592208,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,fasttree,1.8267040252685547,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.498298818507133,0.9996160484592208,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,bs_kernel,0.29158399999141693,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.498298818507133,0.9996160484592208,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,bs_2l1p,0.5565600097179413,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.498298818507133,0.9996160484592208,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,bs_2dt,0.2916959971189499,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.498298818507133,0.9996160484592208,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,bs_3dt,nan,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.498298818507133,0.9996160484592208,yes,"B=8 prompts × K=32, long prefix"
+diverse_groups,dbs_g4_k4,paged,0.07864000275731087,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6025432211325499,1.0022875991051998,yes,1 prefix → 4 diversity groups → 4 beams each (16 leaves)
+diverse_groups,dbs_g4_k4,mlca,0.1724800020456314,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6025432211325499,1.0022875991051998,yes,1 prefix → 4 diversity groups → 4 beams each (16 leaves)
+diverse_groups,dbs_g4_k4,fasttree,0.05945600010454655,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6025432211325499,1.0022875991051998,yes,1 prefix → 4 diversity groups → 4 beams each (16 leaves)
+diverse_groups,dbs_g4_k4,bs_kernel,0.04907200112938881,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6025432211325499,1.0022875991051998,yes,1 prefix → 4 diversity groups → 4 beams each (16 leaves)
+diverse_groups,dbs_g4_k4,bs_2l1p,0.04896000027656555,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6025432211325499,1.0022875991051998,yes,1 prefix → 4 diversity groups → 4 beams each (16 leaves)
+diverse_groups,dbs_g4_k4,bs_2dt,0.06620799750089645,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6025432211325499,1.0022875991051998,yes,1 prefix → 4 diversity groups → 4 beams each (16 leaves)
+diverse_groups,dbs_g4_k4,bs_3dt,0.07076800242066383,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6025432211325499,1.0022875991051998,yes,1 prefix → 4 diversity groups → 4 beams each (16 leaves)
+diverse_groups,dbs_g4_k5,paged,0.12806399911642075,20,3,676,SHARED_2L_1POOL,bs_2l1p,2.3139635381426267,1.0002891866999435,yes,1 prefix → 4 diversity groups → 5 beams each (20 leaves)
+diverse_groups,dbs_g4_k5,mlca,0.17497600615024567,20,3,676,SHARED_2L_1POOL,bs_2l1p,2.3139635381426267,1.0002891866999435,yes,1 prefix → 4 diversity groups → 5 beams each (20 leaves)
+diverse_groups,dbs_g4_k5,fasttree,0.08134400099515915,20,3,676,SHARED_2L_1POOL,bs_2l1p,2.3139635381426267,1.0002891866999435,yes,1 prefix → 4 diversity groups → 5 beams each (20 leaves)
+diverse_groups,dbs_g4_k5,bs_kernel,0.055344000458717346,20,3,676,SHARED_2L_1POOL,bs_2l1p,2.3139635381426267,1.0002891866999435,yes,1 prefix → 4 diversity groups → 5 beams each (20 leaves)
+diverse_groups,dbs_g4_k5,bs_2l1p,0.05532800033688545,20,3,676,SHARED_2L_1POOL,bs_2l1p,2.3139635381426267,1.0002891866999435,yes,1 prefix → 4 diversity groups → 5 beams each (20 leaves)
+diverse_groups,dbs_g4_k5,bs_2dt,0.07172800227999687,20,3,676,SHARED_2L_1POOL,bs_2l1p,2.3139635381426267,1.0002891866999435,yes,1 prefix → 4 diversity groups → 5 beams each (20 leaves)
+diverse_groups,dbs_g4_k5,bs_3dt,0.09185599908232689,20,3,676,SHARED_2L_1POOL,bs_2l1p,2.3139635381426267,1.0002891866999435,yes,1 prefix → 4 diversity groups → 5 beams each (20 leaves)
+diverse_groups,dbs_g4_k6,paged,0.12972799688577652,24,3,696,SHARED_2L_DEC_TAIL,bs_2l1p,2.031062009820647,1.078044856398259,NO,1 prefix → 4 diversity groups → 6 beams each (24 leaves)
+diverse_groups,dbs_g4_k6,mlca,0.1802399978041649,24,3,696,SHARED_2L_DEC_TAIL,bs_2l1p,2.031062009820647,1.078044856398259,NO,1 prefix → 4 diversity groups → 6 beams each (24 leaves)
+diverse_groups,dbs_g4_k6,fasttree,0.1759360060095787,24,3,696,SHARED_2L_DEC_TAIL,bs_2l1p,2.031062009820647,1.078044856398259,NO,1 prefix → 4 diversity groups → 6 beams each (24 leaves)
+diverse_groups,dbs_g4_k6,bs_kernel,0.06387200206518173,24,3,696,SHARED_2L_DEC_TAIL,bs_2l1p,2.031062009820647,1.078044856398259,NO,1 prefix → 4 diversity groups → 6 beams each (24 leaves)
+diverse_groups,dbs_g4_k6,bs_2l1p,0.059248000383377075,24,3,696,SHARED_2L_DEC_TAIL,bs_2l1p,2.031062009820647,1.078044856398259,NO,1 prefix → 4 diversity groups → 6 beams each (24 leaves)
+diverse_groups,dbs_g4_k6,bs_2dt,0.06353599950671196,24,3,696,SHARED_2L_DEC_TAIL,bs_2l1p,2.031062009820647,1.078044856398259,NO,1 prefix → 4 diversity groups → 6 beams each (24 leaves)
+diverse_groups,dbs_g4_k6,bs_3dt,0.09860799834132195,24,3,696,SHARED_2L_DEC_TAIL,bs_2l1p,2.031062009820647,1.078044856398259,NO,1 prefix → 4 diversity groups → 6 beams each (24 leaves)
+diverse_groups,dbs_g4_k8,paged,0.13423999398946762,32,3,736,SHARED_2L_DEC_TAIL,bs_2dt,2.104866896343052,0.9982469188425175,yes,1 prefix → 4 diversity groups → 8 beams each (32 leaves)
+diverse_groups,dbs_g4_k8,mlca,0.18318399786949158,32,3,736,SHARED_2L_DEC_TAIL,bs_2dt,2.104866896343052,0.9982469188425175,yes,1 prefix → 4 diversity groups → 8 beams each (32 leaves)
+diverse_groups,dbs_g4_k8,fasttree,0.18343999981880188,32,3,736,SHARED_2L_DEC_TAIL,bs_2dt,2.104866896343052,0.9982469188425175,yes,1 prefix → 4 diversity groups → 8 beams each (32 leaves)
+diverse_groups,dbs_g4_k8,bs_kernel,0.06377600133419037,32,3,736,SHARED_2L_DEC_TAIL,bs_2dt,2.104866896343052,0.9982469188425175,yes,1 prefix → 4 diversity groups → 8 beams each (32 leaves)
+diverse_groups,dbs_g4_k8,bs_2l1p,0.263824000954628,32,3,736,SHARED_2L_DEC_TAIL,bs_2dt,2.104866896343052,0.9982469188425175,yes,1 prefix → 4 diversity groups → 8 beams each (32 leaves)
+diverse_groups,dbs_g4_k8,bs_2dt,0.06388800218701363,32,3,736,SHARED_2L_DEC_TAIL,bs_2dt,2.104866896343052,0.9982469188425175,yes,1 prefix → 4 diversity groups → 8 beams each (32 leaves)
+diverse_groups,dbs_g4_k8,bs_3dt,0.06864000111818314,32,3,736,SHARED_2L_DEC_TAIL,bs_2dt,2.104866896343052,0.9982469188425175,yes,1 prefix → 4 diversity groups → 8 beams each (32 leaves)
+diverse_groups,dbs_g8_k8,paged,0.2649120092391968,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3796694033019747,1.0002041665181172,yes,1 prefix → 8 diversity groups → 8 beams each (64 leaves)
+diverse_groups,dbs_g8_k8,mlca,0.21598400175571442,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3796694033019747,1.0002041665181172,yes,1 prefix → 8 diversity groups → 8 beams each (64 leaves)
+diverse_groups,dbs_g8_k8,fasttree,0.2239679992198944,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3796694033019747,1.0002041665181172,yes,1 prefix → 8 diversity groups → 8 beams each (64 leaves)
+diverse_groups,dbs_g8_k8,bs_kernel,0.07838400080800056,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3796694033019747,1.0002041665181172,yes,1 prefix → 8 diversity groups → 8 beams each (64 leaves)
+diverse_groups,dbs_g8_k8,bs_2l1p,0.27928000688552856,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3796694033019747,1.0002041665181172,yes,1 prefix → 8 diversity groups → 8 beams each (64 leaves)
+diverse_groups,dbs_g8_k8,bs_2dt,0.07836800068616867,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3796694033019747,1.0002041665181172,yes,1 prefix → 8 diversity groups → 8 beams each (64 leaves)
+diverse_groups,dbs_g8_k8,bs_3dt,0.09385599941015244,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3796694033019747,1.0002041665181172,yes,1 prefix → 8 diversity groups → 8 beams each (64 leaves)
+multi_chain,chain_b32_c4,paged,0.3161599934101105,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2339202631105428,1.0037608409853387,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,mlca,0.7370560169219971,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2339202631105428,1.0037608409853387,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,fasttree,0.3056799918413162,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2339202631105428,1.0037608409853387,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,bs_kernel,0.25622400641441345,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2339202631105428,1.0037608409853387,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,bs_2l1p,0.2552639991044998,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2339202631105428,1.0037608409853387,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,bs_2dt,0.25644800066947937,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2339202631105428,1.0037608409853387,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,bs_3dt,nan,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2339202631105428,1.0037608409853387,yes,32 questions × 4 chains (multi_chain_reasoning)
+long_decode,ld_lp8k_tail2k,paged,0.1034879982471466,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1435643382984797,0.9966519978572196,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,mlca,0.27719999849796295,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1435643382984797,0.9966519978572196,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,fasttree,0.13660800457000732,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1435643382984797,0.9966519978572196,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,bs_kernel,0.0904959999024868,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1435643382984797,0.9966519978572196,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,bs_2l1p,0.09079999849200249,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1435643382984797,0.9966519978572196,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,bs_2dt,0.09833599999547005,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1435643382984797,0.9966519978572196,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,bs_3dt,nan,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1435643382984797,0.9966519978572196,yes,"L_p=8k, 2k-token tails, K=16"
+adversarial,adv_tiny_prefix,paged,0.030688000842928886,16,2,96,PER_BEAM,paged,0.9989583557233244,1.0010427304308611,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,mlca,0.06470400094985962,16,2,96,PER_BEAM,paged,0.9989583557233244,1.0010427304308611,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,fasttree,0.058560000732541084,16,2,96,PER_BEAM,paged,0.9989583557233244,1.0010427304308611,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,bs_kernel,0.0307200001552701,16,2,96,PER_BEAM,paged,0.9989583557233244,1.0010427304308611,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,bs_2l1p,0.03415999934077263,16,2,96,PER_BEAM,paged,0.9989583557233244,1.0010427304308611,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,bs_2dt,0.05873600021004677,16,2,96,PER_BEAM,paged,0.9989583557233244,1.0010427304308611,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,bs_3dt,nan,16,2,96,PER_BEAM,paged,0.9989583557233244,1.0010427304308611,yes,L_p=256 ≪ tail×K
+wide_fanout,wide_k128,paged,0.5146560072898865,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.758284242000872,0.9792843461207827,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,mlca,0.24340800195932388,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.758284242000872,0.9792843461207827,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,fasttree,0.40721599757671356,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.758284242000872,0.9792843461207827,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,bs_kernel,0.10815999656915665,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.758284242000872,0.9792843461207827,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,bs_2l1p,0.29151999950408936,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.758284242000872,0.9792843461207827,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,bs_2dt,0.11044799908995628,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.758284242000872,0.9792843461207827,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,bs_3dt,nan,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.758284242000872,0.9792843461207827,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k256,paged,1.034175992012024,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.560086069428918,1.0023279852681115,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,mlca,0.33796799182891846,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.560086069428918,1.0023279852681115,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,fasttree,0.5510720014572144,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.560086069428918,1.0023279852681115,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,bs_kernel,0.18599999696016312,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.560086069428918,1.0023279852681115,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,bs_2l1p,0.3179520070552826,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.560086069428918,1.0023279852681115,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,bs_2dt,0.18556799739599228,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.560086069428918,1.0023279852681115,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,bs_3dt,nan,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.560086069428918,1.0023279852681115,yes,"L_p=8k, K=256 fan-out"

@@ -1,0 +1,13 @@
+K,L_p,max_new,model_pick,oracle_pick,regret_pct,t_per_beam_ms,t_shared_2l_1pool_ms,t_shared_2l_2pool_ms
+16,2048,16,per_beam,per_beam,0.00,10.6621,10.8285,10.8004
+16,8192,16,shared_2l_1pool,shared_2l_1pool,0.00,12.6385,11.5153,11.5169
+16,32768,16,shared_2l_1pool,shared_2l_1pool,0.00,21.2238,14.2319,14.2362
+16,65536,16,shared_2l_1pool,shared_2l_1pool,0.00,34.2479,19.0452,19.0702
+32,2048,16,shared_2l_1pool,shared_2l_2pool,0.05,12.4826,12.3561,12.3496
+32,8192,16,shared_2l_1pool,shared_2l_2pool,0.03,16.7550,13.8224,13.8185
+32,32768,16,shared_2l_1pool,shared_2l_2pool,0.23,34.4547,18.2083,18.1667
+32,65536,16,shared_2l_1pool,shared_2l_2pool,0.07,61.4907,26.2599,26.2411
+64,2048,16,shared_2l_1pool,shared_2l_1pool,0.00,18.4793,16.8991,16.9035
+64,8192,16,shared_2l_1pool,shared_2l_2pool,0.10,26.6138,19.7065,19.6861
+64,32768,16,shared_2l_1pool,shared_2l_1pool,0.00,59.4597,26.3390,26.4223
+64,65536,16,shared_2l_1pool,shared_2l_1pool,0.00,113.9864,44.4006,44.5614

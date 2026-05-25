@@ -12,9 +12,17 @@
 
 export BE_PICKER_SINGLE_LAUNCH=1
 
-# K and L_p are env-overridable (F4_K / F4_LP) so the 70B 1p-vs-paged
-# crossover can be probed at larger K without editing the lib.
-K=${F4_K:-16}; B=1; MN=256; LP=${F4_LP:-16384}
+# K, B and L_p are env-overridable (F4_K / F4_B / F4_LP) so the 1p-vs-paged
+# crossover can be probed at larger K/L_p, and B>1 exercises cross-prompt
+# prefix sharing (multilevel TreeSpec page dedup), without editing the lib.
+K=${F4_K:-16}; B=${F4_B:-1}; MN=${F4_MN:-256}; LP=${F4_LP:-16384}
+REPEAT=${F4_REPEAT:-3}   # long-decode cells override to 2 (runs are <0.2% variance)
+# Data-draw seeds (defaults to the model's SEEDS, else "0"). The F4 prefix is
+# truncated to BE_SELF_CONSISTENCY_LP, so every draw is shape-identical and
+# only the GSM8K exemplars filling the prefix change. Long-decode timing is
+# essentially content-independent, so draws here are for the example-count
+# statistic + a tiny variance estimate, not to move the median.
+F4_SEEDS=${F4_SEEDS:-${SEEDS:-0}}
 export BE_SELF_CONSISTENCY_LP="$LP"
 OUT_DIR="benchmarks/bs_kernel/results/paper-exp/final_paper/${MODEL_TAG}"
 mkdir -p "$OUT_DIR" slurm/logs
@@ -26,6 +34,7 @@ SC_CORE_CSV="$(echo "$SC_CORE" | tr ' ' ',')"
     echo "=== final_paper F4 (self_consistency) ${MODEL_TAG} started $(date -Iseconds) ==="
     echo "model: $BE_MODEL (nproc=$NPROC, dtype=$BE_DTYPE, kv=$BE_KV_DTYPE)"
     echo "cell: self_consistency K=${K} B=${B} L_p=${LP} mn=${MN}, picker single_launch on"
+    echo "data draws: F4_SEEDS=[$F4_SEEDS], per-draw repeats=$REPEAT"
     echo "core: $SC_CORE   extra: ${SC_EXTRA:-<none>}"
 } | tee -a "$LOG"
 
@@ -38,7 +47,7 @@ rm -f "$csv"
 torchrun --standalone --nproc_per_node="$NPROC" \
     benchmarks/bs_kernel/bench_sglang_e2e.py \
     --methods $SC_CORE \
-    --no-stage2 --max-new "$MN" --repeat 3 --warmup \
+    --no-stage2 --max-new "$MN" --repeat "$REPEAT" --warmup --data-seeds "$F4_SEEDS" \
     --scenarios self_consistency --k-override "$K" --b-override "$B" \
     --out "$csv" 2>&1 | tee -a "$LOG" || true
 
@@ -56,7 +65,7 @@ if [[ -n "${SC_EXTRA// }" ]]; then
     torchrun --standalone --nproc_per_node="$NPROC" \
         benchmarks/bs_kernel/bench_sglang_e2e.py \
         --methods $SC_EXTRA \
-        --no-stage2 --max-new "$MN" --repeat 3 --warmup \
+        --no-stage2 --max-new "$MN" --repeat "$REPEAT" --warmup --data-seeds "$F4_SEEDS" \
         --scenarios self_consistency --k-override "$K" --b-override "$B" \
         --out "$etmp" 2>&1 | tee -a "$LOG" \
         || echo "  (extra pass crashed/partial; core kept)" | tee -a "$LOG"

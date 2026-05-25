@@ -1,0 +1,2 @@
+scenario,k_override,method,repeat,n_leaves,prefill_shared_ms,prefill_private_ms,decode_total_ms,decode_p50_ms,decode_p99_ms,n_decode_steps,plan_mean_ms,plan_p50_ms,plan_p99_ms,plan_total_ms,forward_mean_ms,forward_p50_ms,forward_p99_ms,forward_total_ms,alloc_mean_ms,alloc_total_ms,topk_mean_ms,topk_total_ms
+multi_chain_reasoning,64,mlca,0,512,5338.9687,491.2452,18879.9091,35.0045,54.4211,510,5.2837,6.5561,7.5382,2694.7083,31.5711,27.9604,46.7004,16101.2536,0.0126,6.4202,0.1384,70.5745

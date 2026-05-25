@@ -1,0 +1,64 @@
+=== F2 full-cell smoke 1B + FA2 (K=16 B=16 sys=fewshot=20k tree-root) 2026-05-24T15:36:17+08:00 ===
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['paged', 'fasttree', 'deft', 'mlca', 'bs_kernel', 'bsk_2l_dt', 'bsk_xp_dt']
+max_new:   96, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 40665.00it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=16    ] B=16  K=16  L_shared~40000 L_priv~80    n_leaves=256
+
+--- multi_few_shot [K=16] ---
+  paged        warmup  wall= 13.4s  decode_total= 5526.2ms
+  paged        r=0  prefill= 6392.8ms  decode= 5513.3ms  plan/step= 2.68ms  fwd/step=55.20ms  p50/step=57.89ms  wall= 13.0s
+  paged        r=1  prefill= 6397.7ms  decode= 5509.7ms  plan/step= 2.66ms  fwd/step=55.18ms  p50/step=57.87ms  wall= 12.6s
+  fasttree     warmup  wall=  9.1s  decode_total= 2132.6ms
+  fasttree     r=0  prefill= 6364.4ms  decode= 1663.4ms  plan/step= 4.83ms  fwd/step=12.52ms  p50/step=17.39ms  wall=  8.6s
+  fasttree     r=1  prefill= 6359.3ms  decode= 1652.6ms  plan/step= 4.65ms  fwd/step=12.59ms  p50/step=17.20ms  wall=  8.7s
+  deft         warmup  wall= 14.3s  decode_total= 7253.1ms
+  deft         r=0  prefill= 6421.9ms  decode= 7196.5ms  plan/step= 1.32ms  fwd/step=74.28ms  p50/step=75.64ms  wall= 14.4s
+  deft         r=1  prefill= 6347.6ms  decode= 7199.3ms  plan/step= 1.36ms  fwd/step=74.27ms  p50/step=75.67ms  wall= 14.2s
+  mlca         warmup  wall=  8.1s  decode_total= 1262.5ms
+  mlca         r=0  prefill= 6362.8ms  decode= 1231.7ms  plan/step= 2.94ms  fwd/step= 9.87ms  p50/step=12.91ms  wall=  8.2s
+  mlca         r=1  prefill= 6327.2ms  decode= 1236.6ms  plan/step= 2.94ms  fwd/step= 9.93ms  p50/step=12.91ms  wall=  8.2s
+
+[bs_kernel plan-trace] 95 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 0, XPROMPT: 95)
+
+  -- XPROMPT cross-prompt 3L path (95 steps) --
+  L0=single sys group (all B*K); sys lca_pages seen: [1250]
+  struct (L0/L1/lca) cache hits: 94/95 (98.9%)   pack cache hits: 94/95 (98.9%)   plan-state cache hits: 94/95 (98.9%)
+  bs_kernel    warmup  wall=  8.9s  decode_total= 1492.9ms
+
+[bs_kernel plan-trace] 95 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 0, XPROMPT: 95)
+
+  -- XPROMPT cross-prompt 3L path (95 steps) --
+  L0=single sys group (all B*K); sys lca_pages seen: [1250]
+  struct (L0/L1/lca) cache hits: 94/95 (98.9%)   pack cache hits: 94/95 (98.9%)   plan-state cache hits: 94/95 (98.9%)
+  bs_kernel    r=0  prefill= 6372.4ms  decode= 1460.2ms  plan/step= 1.40ms  fwd/step=13.82ms  p50/step=14.85ms  wall=  8.4s
+
+[bs_kernel plan-trace] 95 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 0, XPROMPT: 95)
+
+  -- XPROMPT cross-prompt 3L path (95 steps) --
+  L0=single sys group (all B*K); sys lca_pages seen: [1250]
+  struct (L0/L1/lca) cache hits: 94/95 (98.9%)   pack cache hits: 94/95 (98.9%)   plan-state cache hits: 94/95 (98.9%)
+  bs_kernel    r=1  prefill= 6322.1ms  decode= 1450.2ms  plan/step= 1.40ms  fwd/step=13.71ms  p50/step=14.85ms  wall=  8.3s
+  bsk_2l_dt    warmup  wall=  8.6s  decode_total= 1685.6ms
+  bsk_2l_dt    r=0  prefill= 6340.9ms  decode= 1686.1ms  plan/step= 1.20ms  fwd/step=16.39ms  p50/step=17.32ms  wall=  8.7s
+  bsk_2l_dt    r=1  prefill= 6319.7ms  decode= 1685.5ms  plan/step= 1.20ms  fwd/step=16.38ms  p50/step=17.32ms  wall=  8.5s
+  bsk_xp_dt    warmup  wall=  8.8s  decode_total= 1431.9ms
+  bsk_xp_dt    r=0  prefill= 6323.0ms  decode= 1438.4ms  plan/step= 1.21ms  fwd/step=13.77ms  p50/step=14.65ms  wall=  8.8s
+  bsk_xp_dt    r=1  prefill= 6350.2ms  decode= 1431.6ms  plan/step= 1.21ms  fwd/step=13.70ms  p50/step=14.66ms  wall=  8.3s
+  rank (decode_total): mlca=1231.7, bsk_xp_dt=1431.6, bs_kernel=1450.2, fasttree=1652.6, bsk_2l_dt=1685.5, paged=5509.7, deft=7196.5
+
+
+wrote 14 rows to benchmarks/bs_kernel/results/smoke_f2_fa2_1b-20260524-153617/F2_smoke.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=16    ]   rank (decode_total): mlca=1231.7, bsk_xp_dt=1431.6, bs_kernel=1450.2, fasttree=1652.6, bsk_2l_dt=1685.5, paged=5509.7, deft=7196.5
+[W524 15:40:26.410832112 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W524 15:40:27.963648347 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+Done. benchmarks/bs_kernel/results/smoke_f2_fa2_1b-20260524-153617

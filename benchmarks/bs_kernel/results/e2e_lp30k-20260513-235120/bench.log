@@ -1,0 +1,534 @@
+=== bench_e2e_lp30k started 2026-05-13T23:51:20+08:00 ===
+config: L_p=30000, max_new=128, methods=(paged mlca fasttree bs_kernel)
+cells:  (B,K) in (16,16) (16,32) (32,16) (32,32)
+models: Llama-3.2-1B, Llama-3.1-8B
+GPU:    NVIDIA H100 80GB HBM3
+
+############ MODEL: Llama-3.2-1B ############
+=== Llama-3.2-1B-B16-K16-paged  max_pages=6000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 31300.78it/s]
+Model loaded.
+
+  paged          K=16  L_p=30000  B=16 prefill= 4715.1ms  decode_total= 7106.6ms  per_pt_token=  3.50ms  ( 12.2s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B16-K16-paged.csv
+[W513 23:51:42.401610645 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B16-K16-mlca  max_pages=6000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 22830.58it/s]
+Model loaded.
+
+  mlca           K=16  L_p=30000  B=16 prefill= 4696.9ms  decode_total= 5443.8ms  per_pt_token=  2.68ms  ( 10.5s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B16-K16-mlca.csv
+[W513 23:52:06.236188527 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B16-K16-fasttree  max_pages=6000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 38733.68it/s]
+Model loaded.
+
+  fasttree       K=16  L_p=30000  B=16 prefill= 4710.2ms  decode_total= 2835.2ms  per_pt_token=  1.40ms  (  7.9s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B16-K16-fasttree.csv
+[W513 23:52:23.069242057 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B16-K16-bs_kernel  max_pages=6000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 19482.50it/s]
+Model loaded.
+
+  bs_kernel      K=16  L_p=30000  B=16 prefill= 4721.6ms  decode_total= 2567.9ms  per_pt_token=  1.26ms  (  7.7s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B16-K16-bs_kernel.csv
+[W513 23:52:40.930892015 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B16-K32-paged  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 11292.36it/s]
+Model loaded.
+
+  paged          K=32  L_p=30000  B=16 prefill= 4712.2ms  decode_total=13664.9ms  per_pt_token=  6.72ms  ( 18.7s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B16-K32-paged.csv
+[W513 23:53:07.682405443 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B16-K32-mlca  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 72673.58it/s]
+Model loaded.
+
+  mlca           K=32  L_p=30000  B=16 prefill= 4710.6ms  decode_total= 6408.6ms  per_pt_token=  3.15ms  ( 11.5s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B16-K32-mlca.csv
+[W513 23:53:28.158074856 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B16-K32-fasttree  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 19290.49it/s]
+Model loaded.
+
+  fasttree       K=32  L_p=30000  B=16 prefill= 4706.5ms  decode_total= 6077.8ms  per_pt_token=  2.99ms  ( 11.1s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B16-K32-fasttree.csv
+[W513 23:53:48.219302045 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B16-K32-bs_kernel  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 59675.06it/s]
+Model loaded.
+
+  bs_kernel      K=32  L_p=30000  B=16 prefill= 4860.4ms  decode_total= 3566.0ms  per_pt_token=  1.75ms  (  8.8s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B16-K32-bs_kernel.csv
+[W513 23:54:06.020578396 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B32-K16-paged  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 35035.95it/s]
+Model loaded.
+
+  paged          K=16  L_p=30000  B=32   [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 14.65 GiB. GPU 0 has a total capacity of 79.10 GiB of which 6.93 GiB is free. Including non-PyTorch memory, this process has 72.16 GiB memory in use. Of the allocated memory 71.44 GiB is allocated by PyTorch, and 69.88 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B32-K16-paged.csv
+[W513 23:54:17.164033427 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B32-K16-mlca  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 22429.43it/s]
+Model loaded.
+
+  mlca           K=16  L_p=30000  B=32   [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 14.65 GiB. GPU 0 has a total capacity of 79.10 GiB of which 6.93 GiB is free. Including non-PyTorch memory, this process has 72.16 GiB memory in use. Of the allocated memory 71.45 GiB is allocated by PyTorch, and 61.63 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B32-K16-mlca.csv
+[W513 23:54:28.288197991 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B32-K16-fasttree  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 27465.04it/s]
+Model loaded.
+
+  fasttree       K=16  L_p=30000  B=32   [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 14.65 GiB. GPU 0 has a total capacity of 79.10 GiB of which 6.95 GiB is free. Including non-PyTorch memory, this process has 72.14 GiB memory in use. Of the allocated memory 71.43 GiB is allocated by PyTorch, and 57.88 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B32-K16-fasttree.csv
+[W513 23:54:39.373747022 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B32-K16-bs_kernel  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 69573.76it/s]
+Model loaded.
+
+  bs_kernel      K=16  L_p=30000  B=32   [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 14.65 GiB. GPU 0 has a total capacity of 79.10 GiB of which 6.83 GiB is free. Including non-PyTorch memory, this process has 72.26 GiB memory in use. Of the allocated memory 71.49 GiB is allocated by PyTorch, and 113.00 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B32-K16-bs_kernel.csv
+[W513 23:54:50.640522191 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B32-K32-paged  max_pages=16000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 28095.82it/s]
+Model loaded.
+
+  paged          K=32  L_p=30000  B=32   [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 14.65 GiB. GPU 0 has a total capacity of 79.10 GiB of which 4.43 GiB is free. Including non-PyTorch memory, this process has 74.66 GiB memory in use. Of the allocated memory 73.94 GiB is allocated by PyTorch, and 69.88 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B32-K32-paged.csv
+[W513 23:55:02.874573536 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B32-K32-mlca  max_pages=16000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 21275.46it/s]
+Model loaded.
+
+  mlca           K=32  L_p=30000  B=32   [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 14.65 GiB. GPU 0 has a total capacity of 79.10 GiB of which 4.43 GiB is free. Including non-PyTorch memory, this process has 74.66 GiB memory in use. Of the allocated memory 73.95 GiB is allocated by PyTorch, and 61.63 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B32-K32-mlca.csv
+[W513 23:55:13.966387899 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B32-K32-fasttree  max_pages=16000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 22158.59it/s]
+Model loaded.
+
+  fasttree       K=32  L_p=30000  B=32   [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 14.65 GiB. GPU 0 has a total capacity of 79.10 GiB of which 4.45 GiB is free. Including non-PyTorch memory, this process has 74.64 GiB memory in use. Of the allocated memory 73.93 GiB is allocated by PyTorch, and 57.88 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B32-K32-fasttree.csv
+[W513 23:55:24.099924556 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.2-1B-B32-K32-bs_kernel  max_pages=16000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 128
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 11872.27it/s]
+Model loaded.
+
+  bs_kernel      K=32  L_p=30000  B=32   [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 14.65 GiB. GPU 0 has a total capacity of 79.10 GiB of which 4.33 GiB is free. Including non-PyTorch memory, this process has 74.76 GiB memory in use. Of the allocated memory 73.99 GiB is allocated by PyTorch, and 113.00 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.2-1B-B32-K32-bs_kernel.csv
+[W513 23:55:35.244958967 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+############ MODEL: Llama-3.1-8B ############
+=== Llama-3.1-8B-B16-K16-paged  max_pages=6000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 25129.27it/s]
+Model loaded.
+
+  paged          K=16  L_p=30000  B=16   [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 1.99 GiB. GPU 0 has a total capacity of 79.10 GiB of which 1.80 GiB is free. Including non-PyTorch memory, this process has 77.29 GiB memory in use. Of the allocated memory 76.69 GiB is allocated by PyTorch, and 16.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B16-K16-paged.csv
+[W513 23:55:47.370295307 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B16-K16-mlca  max_pages=6000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 21320.40it/s]
+Model loaded.
+
+  mlca           K=16  L_p=30000  B=16   [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 1.99 GiB. GPU 0 has a total capacity of 79.10 GiB of which 1.80 GiB is free. Including non-PyTorch memory, this process has 77.29 GiB memory in use. Of the allocated memory 76.69 GiB is allocated by PyTorch, and 16.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B16-K16-mlca.csv
+[W513 23:55:59.759535350 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B16-K16-fasttree  max_pages=6000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 148830.14it/s]
+Model loaded.
+
+  fasttree       K=16  L_p=30000  B=16   [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 1.99 GiB. GPU 0 has a total capacity of 79.10 GiB of which 1.80 GiB is free. Including non-PyTorch memory, this process has 77.29 GiB memory in use. Of the allocated memory 76.69 GiB is allocated by PyTorch, and 16.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B16-K16-fasttree.csv
+[W513 23:56:12.941645750 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B16-K16-bs_kernel  max_pages=6000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 31687.74it/s]
+Model loaded.
+
+  bs_kernel      K=16  L_p=30000  B=16   [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 1.99 GiB. GPU 0 has a total capacity of 79.10 GiB of which 1.80 GiB is free. Including non-PyTorch memory, this process has 77.29 GiB memory in use. Of the allocated memory 76.69 GiB is allocated by PyTorch, and 16.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B16-K16-bs_kernel.csv
+[W513 23:56:24.143545495 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B16-K32-paged  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 26730.79it/s]
+Model loaded.
+
+  paged          K=32  L_p=30000  B=16   [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 2.15 GiB. GPU 0 has a total capacity of 79.10 GiB of which 1.25 GiB is free. Including non-PyTorch memory, this process has 77.84 GiB memory in use. Of the allocated memory 77.23 GiB is allocated by PyTorch, and 14.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B16-K32-paged.csv
+[W513 23:56:36.353389522 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B16-K32-mlca  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 147403.65it/s]
+Model loaded.
+
+  mlca           K=32  L_p=30000  B=16   [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 2.15 GiB. GPU 0 has a total capacity of 79.10 GiB of which 1.25 GiB is free. Including non-PyTorch memory, this process has 77.84 GiB memory in use. Of the allocated memory 77.23 GiB is allocated by PyTorch, and 14.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B16-K32-mlca.csv
+[W513 23:56:48.583459795 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B16-K32-fasttree  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 30676.43it/s]
+Model loaded.
+
+  fasttree       K=32  L_p=30000  B=16   [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 2.15 GiB. GPU 0 has a total capacity of 79.10 GiB of which 1.25 GiB is free. Including non-PyTorch memory, this process has 77.84 GiB memory in use. Of the allocated memory 77.23 GiB is allocated by PyTorch, and 14.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B16-K32-fasttree.csv
+[W513 23:57:00.599158806 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B16-K32-bs_kernel  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 30393.51it/s]
+Model loaded.
+
+  bs_kernel      K=32  L_p=30000  B=16   [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 2.15 GiB. GPU 0 has a total capacity of 79.10 GiB of which 1.25 GiB is free. Including non-PyTorch memory, this process has 77.84 GiB memory in use. Of the allocated memory 77.23 GiB is allocated by PyTorch, and 14.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B16-K32-bs_kernel.csv
+[W513 23:57:12.606031472 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B32-K16-paged  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 26965.13it/s]
+Model loaded.
+
+  paged          K=16  L_p=30000  B=32   [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 3.98 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.85 GiB is free. Including non-PyTorch memory, this process has 75.24 GiB memory in use. Of the allocated memory 74.64 GiB is allocated by PyTorch, and 15.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B32-K16-paged.csv
+[W513 23:57:24.728742357 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B32-K16-mlca  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 140235.09it/s]
+Model loaded.
+
+  mlca           K=16  L_p=30000  B=32   [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 3.98 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.85 GiB is free. Including non-PyTorch memory, this process has 75.24 GiB memory in use. Of the allocated memory 74.64 GiB is allocated by PyTorch, and 15.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B32-K16-mlca.csv
+[W513 23:57:37.815494882 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B32-K16-fasttree  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 22299.34it/s]
+Model loaded.
+
+  fasttree       K=16  L_p=30000  B=32   [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 3.98 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.85 GiB is free. Including non-PyTorch memory, this process has 75.24 GiB memory in use. Of the allocated memory 74.64 GiB is allocated by PyTorch, and 15.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B32-K16-fasttree.csv
+[W513 23:57:49.810304426 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B32-K16-bs_kernel  max_pages=10000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 27827.11it/s]
+Model loaded.
+
+  bs_kernel      K=16  L_p=30000  B=32   [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 3.98 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.85 GiB is free. Including non-PyTorch memory, this process has 75.24 GiB memory in use. Of the allocated memory 74.64 GiB is allocated by PyTorch, and 15.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B32-K16-bs_kernel.csv
+[W513 23:58:01.935128852 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B32-K32-paged  max_pages=16000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 66672.46it/s]
+Model loaded.
+
+  paged          K=32  L_p=30000  B=32   [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.29 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.46 GiB is free. Including non-PyTorch memory, this process has 75.63 GiB memory in use. Of the allocated memory 75.03 GiB is allocated by PyTorch, and 9.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B32-K32-paged.csv
+[W513 23:58:13.891446262 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B32-K32-mlca  max_pages=16000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 21640.41it/s]
+Model loaded.
+
+  mlca           K=32  L_p=30000  B=32   [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.29 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.46 GiB is free. Including non-PyTorch memory, this process has 75.63 GiB memory in use. Of the allocated memory 75.03 GiB is allocated by PyTorch, and 9.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B32-K32-mlca.csv
+[W513 23:58:25.041432242 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B32-K32-fasttree  max_pages=16000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 36214.56it/s]
+Model loaded.
+
+  fasttree       K=32  L_p=30000  B=32   [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.29 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.46 GiB is free. Including non-PyTorch memory, this process has 75.63 GiB memory in use. Of the allocated memory 75.03 GiB is allocated by PyTorch, and 9.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B32-K32-fasttree.csv
+[W513 23:58:37.077484064 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Llama-3.1-8B-B32-K32-bs_kernel  max_pages=16000 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 128
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 42019.44it/s]
+Model loaded.
+
+  bs_kernel      K=32  L_p=30000  B=32   [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.29 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.46 GiB is free. Including non-PyTorch memory, this process has 75.63 GiB memory in use. Of the allocated memory 75.03 GiB is allocated by PyTorch, and 9.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+wrote 0 rows to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/Llama-3.1-8B-B32-K32-bs_kernel.csv
+[W513 23:58:49.039284049 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== merging CSVs to benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120/merged.csv ===
+
+=== merged results ===
+model,method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
+Llama-3.2-1B,bs_kernel,16,30000,16,128,4721.6268,2567.8700,20.2194,1.2637
+Llama-3.2-1B,fasttree,16,30000,16,128,4710.2337,2835.2404,22.3247,1.3953
+Llama-3.2-1B,mlca,16,30000,16,128,4696.8667,5443.8263,42.8648,2.6790
+Llama-3.2-1B,paged,16,30000,16,128,4715.0589,7106.6025,55.9575,3.4973
+Llama-3.2-1B,bs_kernel,32,30000,16,128,4860.4063,3566.0352,28.0790,1.7549
+Llama-3.2-1B,fasttree,32,30000,16,128,4706.5045,6077.8383,47.8570,2.9911
+Llama-3.2-1B,mlca,32,30000,16,128,4710.5587,6408.6102,50.4615,3.1538
+Llama-3.2-1B,paged,32,30000,16,128,4712.1740,13664.9424,107.5980,6.7249
+
+Done. Results: benchmarks/bs_kernel/results/e2e_lp30k-20260513-235120

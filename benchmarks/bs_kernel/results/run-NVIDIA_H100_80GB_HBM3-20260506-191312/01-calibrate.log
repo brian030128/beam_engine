@@ -1,0 +1,13 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+<frozen runpy>:128: RuntimeWarning: 'beam_engine.methods.bs_kernel.calibrate' found in sys.modules after import of package 'beam_engine.methods.bs_kernel', but prior to execution of 'beam_engine.methods.bs_kernel.calibrate'; this may result in unpredictable behaviour
+[calibrate] probing NVIDIA H100 80GB HBM3
+[calibrate] wrote /home/u4320956/.cache/beam_engine/coeffs-NVIDIA_H100_80GB_HBM3.json
+  B_hbm        =  1298707.0 bytes/µs   (1.30 TB/s)
+  launch_us    =       7.31
+  sync_us      =       6.38
+  merge_us     =       6.81
+  per_tile[ 16] =      29.33 µs
+  per_tile[ 64] =      26.92 µs
+  per_tile[128] =      27.33 µs

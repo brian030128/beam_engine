@@ -1,0 +1,13 @@
+scenario,method,repeat,n_leaves,prefill_shared_ms,prefill_private_ms,decode_total_ms,decode_p50_ms,decode_p99_ms,n_decode_steps
+multi_level_system,bs_kernel,0,128,1087.9220,147.6745,11102.3415,9.9595,44.9313,15
+multi_level_system,paged,0,128,173.4040,143.9274,193.0006,12.6628,13.4117,15
+multi_level_system,mlca,0,128,178.9837,144.0822,174.9950,11.5240,12.0299,15
+multi_chain_reasoning,bs_kernel,0,128,1460.4560,0.0000,289.0899,19.0549,20.6912,15
+multi_chain_reasoning,paged,0,128,1459.4339,0.0000,202.5037,13.3845,13.6101,15
+multi_chain_reasoning,mlca,0,128,1467.2724,0.0000,413.0196,27.2852,28.9906,15
+multi_few_shot,bs_kernel,0,128,604.6191,170.0380,167.7500,10.9906,11.5637,15
+multi_few_shot,paged,0,128,605.9415,173.3309,274.8505,18.1997,19.1387,15
+multi_few_shot,mlca,0,128,606.1780,173.9321,251.9882,16.4550,18.1722,15
+multi_document,bs_kernel,0,128,755.2985,159.8035,213.0404,13.6834,15.2143,15
+multi_document,paged,0,128,753.2198,162.4000,222.0982,14.0674,17.4254,15
+multi_document,mlca,0,128,752.9442,156.2675,287.5575,18.5082,20.8810,15

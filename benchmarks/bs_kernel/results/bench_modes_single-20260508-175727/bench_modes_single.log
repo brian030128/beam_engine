@@ -1,0 +1,18 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 cells × 6 modes = 6 runs
+modes: ['picker', 'PER_BEAM', 'SHARED_2L_1POOL', 'SHARED_2L_2POOL', 'SHARED_3L_1POOL', 'SHARED_3L_2POOL']
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 18034.48it/s]
+Model loaded.
+
+  picker             K=64  L_p=8192   B=32 prefill= 2289.5ms  decode_total= 12759.3ms  per_pt_token=  1.56ms  ( 15.4s wall)
+  PER_BEAM           K=64  L_p=8192   B=32 prefill= 1453.5ms  decode_total= 43771.8ms  per_pt_token=  5.36ms  ( 45.5s wall)
+  SHARED_2L_1POOL    K=64  L_p=8192   B=32 prefill= 1452.1ms  decode_total= 13674.5ms  per_pt_token=  1.68ms  ( 15.4s wall)
+  SHARED_2L_2POOL    K=64  L_p=8192   B=32 prefill= 1457.6ms  decode_total= 15221.7ms  per_pt_token=  1.87ms  ( 16.9s wall)
+  SHARED_3L_1POOL    K=64  L_p=8192   B=32   [SHARED_3L_1POOL] FAILED: ValueError: no strategy available after filtering
+  SHARED_3L_2POOL    K=64  L_p=8192   B=32   [SHARED_3L_2POOL] FAILED: ValueError: no strategy available after filtering
+
+wrote 4 rows to benchmarks/bs_kernel/results/bench_modes_single-20260508-175727/bench_modes_single.csv
+[W508 17:59:14.284423470 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

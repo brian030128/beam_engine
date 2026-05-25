@@ -1,0 +1,4 @@
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms,plan_mean_ms,plan_total_ms,forward_mean_ms,forward_total_ms,cow_mean_ms,cow_total_ms,topk_mean_ms,topk_total_ms,fork_mean_ms,fork_total_ms
+bs_kernel,8,2048,2,16,100.9790,162.5021,10.8335,5.4167,1.0880,16.3207,8.7283,130.9242,0.6074,9.1114,0.2683,4.0243,0.1278,1.9177
+bs_kernel_2l1p,8,2048,2,16,100.8828,161.8136,10.7876,5.3938,1.0711,16.0664,8.7005,130.5074,0.6074,9.1104,0.2668,4.0018,0.1285,1.9278
+bs_kernel_2ldt,8,2048,2,16,101.5311,171.3402,11.4227,5.7113,1.0143,15.2144,9.3963,140.9441,0.6056,9.0846,0.2654,3.9803,0.1278,1.9168

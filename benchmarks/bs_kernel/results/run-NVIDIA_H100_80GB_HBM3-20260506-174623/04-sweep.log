@@ -1,0 +1,115 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 12 configs × 1 methods = 12 runs
+methods: ['paged']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 141961.06it/s]
+Model loaded.
+
+  paged          K=16  L_p=2048  max_new=16   prefill= 955.8ms  decode= 10.98ms p50  (  1.3s wall)
+  paged          K=16  L_p=8192  max_new=16   prefill= 235.8ms  decode= 12.65ms p50  (  0.4s wall)
+  paged          K=16  L_p=32768 max_new=16   prefill=1586.4ms  decode= 20.16ms p50  (  1.9s wall)
+  paged          K=16  L_p=65536 max_new=16   prefill=4829.7ms  decode= 31.51ms p50  (  5.3s wall)
+  paged          K=32  L_p=2048  max_new=16   prefill=  48.4ms  decode= 13.23ms p50  (  0.3s wall)
+  paged          K=32  L_p=8192  max_new=16   prefill= 235.6ms  decode= 17.13ms p50  (  0.5s wall)
+  paged          K=32  L_p=32768 max_new=16   prefill=1589.8ms  decode= 33.20ms p50  (  2.1s wall)
+  paged          K=32  L_p=65536 max_new=16   prefill=4846.6ms  decode= 58.03ms p50  (  5.7s wall)
+  paged          K=64  L_p=2048  max_new=16   prefill=  47.5ms  decode= 20.33ms p50  (  0.4s wall)
+  paged          K=64  L_p=8192  max_new=16   prefill= 236.4ms  decode= 27.60ms p50  (  0.7s wall)
+  paged          K=64  L_p=32768 max_new=16   prefill=1598.1ms  decode= 56.88ms p50  (  2.5s wall)
+  paged          K=64  L_p=65536 max_new=16   prefill=4849.4ms  decode=107.52ms p50  (  6.5s wall)
+
+wrote 12 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-174623/04-sweep-paged.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 12 configs × 1 methods = 12 runs
+methods: ['tree']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 21173.63it/s]
+Model loaded.
+
+  tree           K=16  L_p=2048  max_new=16   prefill= 954.6ms  decode= 10.96ms p50  (  1.3s wall)
+  tree           K=16  L_p=8192  max_new=16   prefill= 231.0ms  decode= 15.77ms p50  (  0.5s wall)
+  tree           K=16  L_p=32768 max_new=16   prefill=1499.6ms  decode= 34.35ms p50  (  2.0s wall)
+  tree           K=16  L_p=65536 max_new=16   prefill=4529.0ms  decode= 59.57ms p50  (  5.4s wall)
+  tree           K=32  L_p=2048  max_new=16   prefill=  47.3ms  decode= 13.48ms p50  (  0.3s wall)
+  tree           K=32  L_p=8192  max_new=16   prefill= 227.1ms  decode= 22.75ms p50  (  0.6s wall)
+  tree           K=32  L_p=32768 max_new=16   prefill=1499.2ms  decode= 59.21ms p50  (  2.4s wall)
+  tree           K=32  L_p=65536 max_new=16   prefill=4519.9ms  decode=109.32ms p50  (  6.2s wall)
+  tree           K=64  L_p=2048  max_new=16   prefill=  47.4ms  decode= 18.35ms p50  (  0.3s wall)
+  tree           K=64  L_p=8192  max_new=16   prefill= 230.4ms  decode= 37.00ms p50  (  0.8s wall)
+  tree           K=64  L_p=32768 max_new=16   prefill=1500.4ms  decode=109.97ms p50  (  3.2s wall)
+  tree           K=64  L_p=65536 max_new=16   prefill=4526.2ms  decode=211.11ms p50  (  7.7s wall)
+
+wrote 12 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-174623/04-sweep-tree.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 12 configs × 1 methods = 12 runs
+methods: ['adaptive_pool']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 23057.14it/s]
+Model loaded.
+
+  adaptive_pool  K=16  L_p=2048  max_new=16   prefill= 997.8ms  decode= 11.15ms p50  (  1.3s wall)
+  adaptive_pool  K=16  L_p=8192  max_new=16   prefill= 236.4ms  decode= 11.87ms p50  (  0.4s wall)
+  adaptive_pool  K=16  L_p=32768 max_new=16   prefill=1589.2ms  decode= 15.13ms p50  (  1.8s wall)
+  adaptive_pool  K=16  L_p=65536 max_new=16   prefill=4844.9ms  decode= 20.11ms p50  (  5.2s wall)
+  adaptive_pool  K=32  L_p=2048  max_new=16   prefill=  47.3ms  decode= 12.83ms p50  (  0.3s wall)
+  adaptive_pool  K=32  L_p=8192  max_new=16   prefill= 236.0ms  decode= 13.56ms p50  (  0.4s wall)
+  adaptive_pool  K=32  L_p=32768 max_new=16   prefill=1589.8ms  decode= 18.00ms p50  (  1.9s wall)
+  adaptive_pool  K=32  L_p=65536 max_new=16   prefill=4855.5ms  decode= 26.01ms p50  (  5.3s wall)
+  adaptive_pool  K=64  L_p=2048  max_new=16   prefill=  47.9ms  decode= 17.55ms p50  (  0.3s wall)
+  adaptive_pool  K=64  L_p=8192  max_new=16   prefill= 235.7ms  decode= 19.45ms p50  (  0.5s wall)
+  adaptive_pool  K=64  L_p=32768 max_new=16   prefill=1602.0ms  decode= 25.83ms p50  (  2.0s wall)
+  adaptive_pool  K=64  L_p=65536 max_new=16   prefill=4853.2ms  decode= 43.99ms p50  (  5.5s wall)
+
+wrote 12 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-174623/04-sweep-adaptive_pool.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 12 configs × 1 methods = 12 runs
+methods: ['bs_kernel']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 100081.01it/s]
+Model loaded.
+
+  bs_kernel      K=16  L_p=2048  max_new=16   prefill= 944.0ms  decode= 10.57ms p50  (  1.3s wall)
+  bs_kernel      K=16  L_p=8192  max_new=16   prefill= 238.0ms  decode= 11.67ms p50  (  0.4s wall)
+  bs_kernel      K=16  L_p=32768 max_new=16   prefill=1581.2ms  decode= 14.51ms p50  (  1.8s wall)
+  bs_kernel      K=16  L_p=65536 max_new=16   prefill=4845.8ms  decode= 19.06ms p50  (  5.2s wall)
+  bs_kernel      K=32  L_p=2048  max_new=16   prefill=  47.3ms  decode= 12.57ms p50  (  0.3s wall)
+  bs_kernel      K=32  L_p=8192  max_new=16   prefill= 234.8ms  decode= 13.62ms p50  (  0.4s wall)
+  bs_kernel      K=32  L_p=32768 max_new=16   prefill=1600.6ms  decode= 18.21ms p50  (  1.9s wall)
+  bs_kernel      K=32  L_p=65536 max_new=16   prefill=4850.9ms  decode= 26.08ms p50  (  5.3s wall)
+  bs_kernel      K=64  L_p=2048  max_new=16   prefill=  48.1ms  decode= 17.31ms p50  (  0.3s wall)
+  bs_kernel      K=64  L_p=8192  max_new=16   prefill= 234.7ms  decode= 19.54ms p50  (  0.5s wall)
+  bs_kernel      K=64  L_p=32768 max_new=16   prefill=1589.0ms  decode= 26.12ms p50  (  2.0s wall)
+  bs_kernel      K=64  L_p=65536 max_new=16   prefill=4865.3ms  decode= 44.10ms p50  (  5.5s wall)
+
+wrote 12 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-174623/04-sweep-bs_kernel.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 12 configs × 1 methods = 12 runs
+methods: ['fasttree']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 21991.11it/s]
+Model loaded.
+
+  fasttree       K=16  L_p=2048  max_new=16   prefill= 953.8ms  decode= 12.17ms p50  (  1.7s wall)
+  fasttree       K=16  L_p=8192  max_new=16   prefill= 228.8ms  decode= 16.18ms p50  (  0.5s wall)
+  fasttree       K=16  L_p=32768 max_new=16   prefill=1501.5ms  decode= 36.86ms p50  (  2.1s wall)
+  fasttree       K=16  L_p=65536 max_new=16   prefill=4534.5ms  decode= 59.89ms p50  (  5.5s wall)
+  fasttree       K=32  L_p=2048  max_new=16   prefill=  46.7ms  decode= 14.15ms p50  (  0.3s wall)
+  fasttree       K=32  L_p=8192  max_new=16   prefill= 231.2ms  decode= 23.99ms p50  (  0.6s wall)
+  fasttree       K=32  L_p=32768 max_new=16   prefill=1506.2ms  decode= 60.35ms p50  (  2.5s wall)
+  fasttree       K=32  L_p=65536 max_new=16   prefill=4537.6ms  decode=110.67ms p50  (  6.3s wall)
+  fasttree       K=64  L_p=2048  max_new=16   prefill=  47.4ms  decode= 17.41ms p50  (  0.4s wall)
+  fasttree       K=64  L_p=8192  max_new=16   prefill= 230.4ms  decode= 34.27ms p50  (  0.8s wall)
+  fasttree       K=64  L_p=32768 max_new=16   prefill=1509.7ms  decode= 92.58ms p50  (  3.0s wall)
+  fasttree       K=64  L_p=65536 max_new=16   prefill=4540.0ms  decode=182.70ms p50  (  7.5s wall)
+
+wrote 12 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-174623/04-sweep-fasttree.csv

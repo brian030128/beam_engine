@@ -1,0 +1,43 @@
+=== paged per-phase trace 2026-05-17T19:35:37+08:00 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_few_shot']
+methods:   ['paged']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 21061.78it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=64    ] B=32  K=64  L_shared~5851  L_priv~130   n_leaves=2048
+
+--- multi_few_shot [K=64] ---
+
+[paged plan-trace] 255 steps
+  phase                mean     median        p90        p99        total
+  pass1_ms            0.639      0.635      0.654      0.688       162.94
+  pass2_ms           13.881     13.866     14.142     14.285      3539.65
+  h2d_ms              0.293      0.289      0.298      0.384        74.65
+  plan_call_ms        5.234      4.639      4.802      4.959      1334.77
+  paged        warmup  wall= 28.8s  decode_total=24794.5ms
+
+[paged plan-trace] 255 steps
+  phase                mean     median        p90        p99        total
+  pass1_ms            0.651      0.647      0.669      0.697       165.90
+  pass2_ms           13.889     13.897     14.126     14.271      3541.69
+  h2d_ms              0.298      0.291      0.306      0.399        75.91
+  plan_call_ms        5.540      4.658      4.817      4.961      1412.78
+  paged        r=0  prefill= 2458.2ms  decode=24893.3ms  plan/step=22.90ms  fwd/step=74.20ms  p50/step=95.05ms  wall= 28.0s
+  rank (decode_total): paged=24893.3
+
+
+wrote 1 rows to /tmp/_paged_trace.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=64    ]   rank (decode_total): paged=24893.3
+[W517 19:36:42.659101498 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+Done.

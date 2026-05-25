@@ -1,0 +1,186 @@
+=== mlca SM90 cache grid 2026-05-17T20:33:55+08:00 ===
+GPU: NVIDIA H100 80GB HBM3
+
+    [Llama-3.2-1B / multi_level_system B=4]
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_level_system']
+methods:   ['mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 101944.89it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=4   K=64  L_shared~2515  L_priv~80    n_leaves=256
+
+--- multi_level_system [K=64] ---
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         warmup  wall=  3.7s  decode_total= 2510.5ms
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         r=0  prefill=  147.3ms  decode= 2450.8ms  plan/step= 0.81ms  fwd/step= 8.65ms  p50/step=10.22ms  wall=  2.7s
+  rank (decode_total): mlca=2450.8
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Llama-3.2-1B_level_system_mlca_smcache.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): mlca=2450.8
+[W517 20:34:10.318798364 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+    [Llama-3.2-1B / multi_chain_reasoning B=32]
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_chain_reasoning']
+methods:   ['mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 21509.25it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=64    ] B=32  K=64  L_shared~2574  L_priv~23    n_leaves=2048
+  multi_chain_reasoning (stage2) [K=64    ] B=32  K=1   L_shared~19368 L_priv~    0 n_leaves=32
+
+--- multi_chain_reasoning [K=64] ---
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         warmup  wall= 30.7s  decode_total=24021.4ms
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         r=0  prefill= 4700.7ms  decode=23988.5ms  plan/step= 2.42ms  fwd/step=44.30ms  p50/step=40.51ms  wall= 29.8s
+  rank (decode_total): mlca=23988.5
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Llama-3.2-1B_chain_reasoning_mlca_smcache.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=64    ]   rank (decode_total): mlca=23988.5
+[W517 20:35:20.865274610 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+    [Llama-3.2-1B / multi_few_shot B=32]
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_few_shot']
+methods:   ['mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 76458.67it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=64    ] B=32  K=64  L_shared~5851  L_priv~130   n_leaves=2048
+
+--- multi_few_shot [K=64] ---
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         warmup  wall= 23.8s  decode_total=19684.2ms
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         r=0  prefill= 2465.2ms  decode=19670.3ms  plan/step= 4.05ms  fwd/step=72.52ms  p50/step=75.99ms  wall= 22.8s
+  rank (decode_total): mlca=19670.3
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Llama-3.2-1B_few_shot_mlca_smcache.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=64    ]   rank (decode_total): mlca=19670.3
+[W517 20:36:16.930272370 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+    [Llama-3.1-8B / multi_level_system B=4]
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B
+scenarios: ['multi_level_system']
+methods:   ['mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 46603.38it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=4   K=64  L_shared~2515  L_priv~80    n_leaves=256
+
+--- multi_level_system [K=64] ---
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         warmup  wall=  8.1s  decode_total= 6151.2ms
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         r=0  prefill=  763.5ms  decode= 6109.6ms  plan/step= 0.84ms  fwd/step=22.96ms  p50/step=24.73ms  wall=  7.1s
+  rank (decode_total): mlca=6109.6
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Llama-3.1-8B_level_system_mlca_smcache.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): mlca=6109.6
+[W517 20:36:46.749645234 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+    [Llama-3.1-8B / multi_chain_reasoning B=8]
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B
+scenarios: ['multi_chain_reasoning']
+methods:   ['mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 34533.94it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=64    ] B=8   K=64  L_shared~2573  L_priv~23    n_leaves=512
+  multi_chain_reasoning (stage2) [K=64    ] B=8   K=1   L_shared~19367 L_priv~    0 n_leaves=8
+
+--- multi_chain_reasoning [K=64] ---
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         warmup  wall= 24.8s  decode_total=17278.8ms
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         r=0  prefill= 5827.9ms  decode=17230.4ms  plan/step= 0.91ms  fwd/step=32.71ms  p50/step=29.46ms  wall= 23.8s
+  rank (decode_total): mlca=17230.4
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Llama-3.1-8B_chain_reasoning_mlca_smcache.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=64    ]   rank (decode_total): mlca=17230.4
+[W517 20:37:47.620431088 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+    [Llama-3.1-8B / multi_few_shot B=8]
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B
+scenarios: ['multi_few_shot']
+methods:   ['mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 49878.21it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=64    ] B=8   K=64  L_shared~5874  L_priv~122   n_leaves=512
+
+--- multi_few_shot [K=64] ---
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         warmup  wall= 18.4s  decode_total=13775.0ms
+[mlca plan-cache] hits=254 misses=1 hit-rate=99.6%
+  mlca         r=0  prefill= 3152.5ms  decode=13633.6ms  plan/step= 1.29ms  fwd/step=51.94ms  p50/step=52.98ms  wall= 17.3s
+  rank (decode_total): mlca=13633.6
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Llama-3.1-8B_few_shot_mlca_smcache.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=64    ]   rank (decode_total): mlca=13633.6
+[W517 20:38:35.143294925 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+Done.

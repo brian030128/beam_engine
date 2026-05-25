@@ -47,7 +47,9 @@ from beam_engine.methods.bs_kernel.driver import BsKernelBackend
 from beam_engine.models import load_model_for_causal_lm
 from beam_engine.tree_driver import tree_batch_decode
 
-from sglang_workloads import SCENARIO_BUILDERS, build_multi_chain_reasoning_stage2
+from sglang_workloads import (
+    SCENARIO_BUILDERS, build_multi_chain_reasoning_stage2, _pad_or_truncate,
+)
 
 
 MODEL_NAME = os.environ.get("BE_MODEL", "meta-llama/Llama-3.2-1B")
@@ -82,6 +84,24 @@ _BSK_FORCED: dict[str, Strategy] = {
 # run. Patch is process-global; only enable in a process that runs ONLY
 # the patched alias to avoid contaminating other backends.
 _BSK_SINGLE_LAUNCH: set[str] = {"bsk_2l_1p_single"}
+
+# bs_kernel step-scheduled aliases (ablation): instead of letting the
+# cost-model picker choose per step, force a hand-picked strategy crossover
+# keyed on the decode-step index. Each maps to a list of
+# ``(start_step, Strategy)`` thresholds; the strategy with the greatest
+# ``start_step <= step`` is forced (last applicable persists to end-of-run).
+# The switch step is env-overridable via ``BE_BSK_SCHED_SWITCH`` (default
+# 2000) so the crossover can be probed without a code edit. ``bsk_sched_1p_dt``
+# = SHARED_2L_1POOL for the first ``BE_BSK_SCHED_SWITCH`` decode steps, then
+# SHARED_2L_DEC_TAIL for the rest (1POOL is single-launch when
+# BE_PICKER_SINGLE_LAUNCH=1, matching the bsk_2l_1p_single baseline).
+_SCHED_SWITCH = int(os.environ.get("BE_BSK_SCHED_SWITCH", "2000"))
+_BSK_SCHEDULED: dict[str, list[tuple[int, Strategy]]] = {
+    "bsk_sched_1p_dt": [
+        (0, Strategy.SHARED_2L_1POOL),
+        (_SCHED_SWITCH, Strategy.SHARED_2L_DEC_TAIL),
+    ],
+}
 
 
 def _maybe_patch_picker_single_launch() -> None:
@@ -153,6 +173,12 @@ def _make_backend(name: str):
             coefficients=coeff,
             available_strategies={_BSK_FORCED[name]},
         )
+    if name in _BSK_SCHEDULED:
+        coeff = load_or_defaults(torch.device(DEVICE), MODEL_NAME, tp_size=get_tp_world_size())
+        return BsKernelBackend(
+            coefficients=coeff,
+            strategy_schedule=_BSK_SCHEDULED[name],
+        )
     return {
         "fasttree": FastTreeBackend,
         "paged":    PagedBackend,
@@ -170,6 +196,8 @@ BACKEND_FACTORIES: dict[str, object] = {
 }
 for _name in _BSK_FORCED:
     BACKEND_FACTORIES[_name] = None  # also routed through _make_backend
+for _name in _BSK_SCHEDULED:
+    BACKEND_FACTORIES[_name] = None  # step-scheduled, routed through _make_backend
 
 
 @dataclass
@@ -178,6 +206,7 @@ class Row:
     method: str
     repeat_idx: int
     k_override: int   # 0 means "natural / unset"; otherwise the K used
+    data_seed: int    # which data draw (0 = the reference / original draw)
     n_leaves: int
     prefill_shared_ms: float
     prefill_private_ms: float
@@ -205,6 +234,40 @@ class Row:
     # the relevant TRACE_PLAN env var to be on (otherwise stays 0).
     # build_indices_ms = plan_total_ms - dispatch_total_ms.
     dispatch_total_ms: float = 0.0
+
+
+def _spec_ref_shape(spec):
+    """Reference shape of a 2-level (PromptGroup) spec: per group, the
+    (shared_len, private_len) token counts. Private prefixes are uniform
+    within a group (TreeSpec.validate), so one private_len per group
+    suffices. Returns None for multilevel specs (those are already padded
+    to a uniform leaf depth by the builder)."""
+    if spec.is_multilevel:
+        return None
+    return [
+        (len(g.shared_prefix_ids), len(g.private_prefix_ids_per_leaf[0]))
+        for g in spec.groups
+    ]
+
+
+def _conform_spec_to_ref(spec, ref) -> None:
+    """Pad/truncate every group's shared + private token lists to the
+    reference shape (in place). This makes a resampled data draw feed the
+    model the *exact same token-length shape* as the seed-0 draw, so only
+    the text content differs across draws — attention timing (which depends
+    on token counts, not content) is held fixed. No-op when ``ref`` is None
+    (multilevel) or already matches."""
+    if ref is None:
+        return
+    if len(spec.groups) != len(ref):
+        raise ValueError(
+            f"conform: group count {len(spec.groups)} != reference {len(ref)}"
+        )
+    for g, (shared_len, priv_len) in zip(spec.groups, ref):
+        g.shared_prefix_ids = _pad_or_truncate(g.shared_prefix_ids, shared_len)
+        g.private_prefix_ids_per_leaf = [
+            _pad_or_truncate(p, priv_len) for p in g.private_prefix_ids_per_leaf
+        ]
 
 
 def _phase_stats(xs: list[float]) -> tuple[float, float, float, float]:
@@ -308,6 +371,32 @@ def _run_one(
             kv_dtype=_kv_dtype,
         )
         t = _merge_timings(t, result2.timings)
+    # Optional per-step timing dump (BE_DUMP_STEP_TIMINGS=<dir>): write the
+    # full per-decode-step plan/forward/total streams so the 1POOL-vs-DEC_TAIL
+    # forward-time-vs-tail-length crossover can be analysed offline. One CSV
+    # per (scenario, method); last (measured) repeat wins. Rank-0 only.
+    _step_dir = os.environ.get("BE_DUMP_STEP_TIMINGS", "")
+    if _step_dir and (not torch.distributed.is_initialized()
+                      or torch.distributed.get_rank() == 0):
+        os.makedirs(_step_dir, exist_ok=True)
+        tag = scenario_name or f"B{spec.B}K{spec.K}"
+        spath = os.path.join(_step_dir, f"{tag}__{method_name}.csv")
+        _ds = t.get("decode_step_ms", [])
+        _pl = t.get("plan_ms", [])
+        _fw = t.get("forward_ms", [])
+        # Per-step picked strategy (bs_kernel / forced / scheduled backends).
+        _st = getattr(backend, "_picked_strategy_log", [])
+        with open(spath, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["step", "decode_step_ms", "plan_ms", "forward_ms", "strategy"])
+            for i in range(len(_ds)):
+                w.writerow([
+                    i,
+                    _ds[i],
+                    _pl[i] if i < len(_pl) else "",
+                    _fw[i] if i < len(_fw) else "",
+                    _st[i] if i < len(_st) else "",
+                ])
     decode_steps = t["decode_step_ms"]
     decode_total = sum(decode_steps)
     sorted_d = sorted(decode_steps)
@@ -343,6 +432,7 @@ def _run_one(
         method=method_name,
         repeat_idx=0,  # filled in by caller
         k_override=0,  # filled in by caller
+        data_seed=0,   # filled in by caller
         n_leaves=spec.n_leaves,
         prefill_shared_ms=float(t["prefill_shared_ms"]),
         prefill_private_ms=float(t["prefill_private_ms"]),
@@ -357,6 +447,46 @@ def _run_one(
         dispatch_total_ms=dispatch_total_ms,
     )
     return row, decode_steps
+
+
+def _write_results_csv(out_path, rows) -> None:
+    """Write all accumulated rows to ``out_path`` (full rewrite). Called
+    incrementally after each method so partial results survive a timeout
+    (e.g. a slow deft method on a long-decode 70B cell) — the bench used to
+    write only once at the very end, losing everything on a SLURM time-out."""
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow([
+            "scenario", "k_override", "method", "repeat", "data_seed",
+            "n_leaves", "prefill_shared_ms", "prefill_private_ms",
+            "decode_total_ms", "decode_p50_ms", "decode_p99_ms",
+            "n_decode_steps",
+            "plan_mean_ms", "plan_p50_ms", "plan_p99_ms", "plan_total_ms",
+            "forward_mean_ms", "forward_p50_ms", "forward_p99_ms", "forward_total_ms",
+            "alloc_mean_ms", "alloc_total_ms",
+            "topk_mean_ms", "topk_total_ms",
+            "dispatch_total_ms",
+        ])
+        for r in rows:
+            w.writerow([
+                r.scenario, r.k_override, r.method, r.repeat_idx, r.data_seed,
+                r.n_leaves,
+                f"{r.prefill_shared_ms:.4f}",
+                f"{r.prefill_private_ms:.4f}",
+                f"{r.decode_total_ms:.4f}",
+                f"{r.decode_p50_ms:.4f}",
+                f"{r.decode_p99_ms:.4f}",
+                r.n_decode_steps,
+                f"{r.plan_mean_ms:.4f}", f"{r.plan_p50_ms:.4f}",
+                f"{r.plan_p99_ms:.4f}",  f"{r.plan_total_ms:.4f}",
+                f"{r.forward_mean_ms:.4f}", f"{r.forward_p50_ms:.4f}",
+                f"{r.forward_p99_ms:.4f}",  f"{r.forward_total_ms:.4f}",
+                f"{r.alloc_mean_ms:.4f}",   f"{r.alloc_total_ms:.4f}",
+                f"{r.topk_mean_ms:.4f}",    f"{r.topk_total_ms:.4f}",
+                f"{r.dispatch_total_ms:.4f}",
+            ])
 
 
 def main():
@@ -375,6 +505,15 @@ def main():
     )
     ap.add_argument("--max-new", type=int, default=256)
     ap.add_argument("--repeat", type=int, default=3)
+    ap.add_argument(
+        "--data-seeds", default="0",
+        help="comma-separated list of data-draw seeds (e.g. '0,1,2'). Each "
+             "seed resamples the underlying GSM8K/HotpotQA text for the SAME "
+             "workload shape: seed 0 is the reference draw (reproduces the "
+             "single-draw numbers), and every other seed's spec is conformed "
+             "to seed 0's per-group token lengths so the model input shape is "
+             "identical across draws. Rows are tagged with data_seed.",
+    )
     ap.add_argument("--out", default=None)
     ap.add_argument("--warmup", action="store_true",
                     help="discard the first iteration of each method")
@@ -422,6 +561,12 @@ def main():
         k_overrides: list[int | None] = [int(x) for x in args.k_override.split(",")]
     else:
         k_overrides = [None]
+    data_seeds: list[int] = [int(x) for x in args.data_seeds.split(",") if x.strip() != ""]
+    if not data_seeds:
+        data_seeds = [0]
+    # The first seed is the reference draw whose token-length shape every
+    # other draw is conformed to. Keep it first (seed 0 by convention).
+    ref_seed = data_seeds[0]
 
     # Bind to the per-rank device under torchrun; a no-op for single-GPU
     # invocation (init_tp short-circuits when WORLD_SIZE=1).
@@ -449,32 +594,61 @@ def main():
     _say("Model loaded.\n")
 
     _say(f"k_overrides: {k_overrides}")
+    _say(f"data_seeds: {data_seeds}  (seed {ref_seed} = reference shape)")
     _say("Building TreeSpecs (this tokenizes the inputs)...")
-    # specs keyed by (scenario_name, k_override)
-    specs: dict[tuple[str, int | None], object] = {}
-    stage2_specs: dict[tuple[str, int | None], object] = {}
+    # specs keyed by (scenario_name, k_override, data_seed). Seed ref_seed is
+    # built first and its per-group token-length shape becomes the reference
+    # that every other seed is conformed to (so all draws feed the model the
+    # same shape; only the text content differs).
+    import inspect
+    specs: dict[tuple[str, int | None, int], object] = {}
+    stage2_specs: dict[tuple[str, int | None, int], object] = {}
     for k_override in k_overrides:
         for name in args.scenarios:
-            builder_kwargs: dict = dict(
-                k_override=k_override, b_override=args.b_override,
-                paper_exact=args.paper_exact,
-            )
-            # Only builders that grew a tree_root kwarg accept it; the
-            # others fall back to the legacy form.
-            import inspect
-            if "tree_root" in inspect.signature(
-                SCENARIO_BUILDERS[name]
-            ).parameters:
-                builder_kwargs["tree_root"] = args.tree_root
-            spec = SCENARIO_BUILDERS[name](tok, **builder_kwargs)
-            spec.validate()
-            specs[(name, k_override)] = spec
-            if spec.is_multilevel:
-                # Walk the tree to derive equivalent per-group shape
-                # metrics for logging — ancestor+leaf-parent tokens =
-                # "shared", leaf tokens = "private".
+            builder = SCENARIO_BUILDERS[name]
+            accepts = inspect.signature(builder).parameters
+            ko_tag = "natural" if k_override is None else f"K={k_override}"
+            ref_shape = None
+            ref_shape_s2 = None
+            for si, seed in enumerate(data_seeds):
+                builder_kwargs: dict = dict(
+                    k_override=k_override, b_override=args.b_override,
+                    paper_exact=args.paper_exact,
+                )
+                # Only builders that grew these kwargs accept them; the
+                # others fall back to the legacy form.
+                if "tree_root" in accepts:
+                    builder_kwargs["tree_root"] = args.tree_root
+                if "data_seed" in accepts:
+                    builder_kwargs["data_seed"] = seed
+                spec = builder(tok, **builder_kwargs)
+                if si == 0:
+                    ref_shape = _spec_ref_shape(spec)
+                else:
+                    _conform_spec_to_ref(spec, ref_shape)
+                spec.validate()
+                specs[(name, k_override, seed)] = spec
+
+                # Optional stage-2 spec for paper-exact multi_chain_reasoning.
+                if args.paper_exact and name == "multi_chain_reasoning" and not args.no_stage2:
+                    s2 = build_multi_chain_reasoning_stage2(
+                        tok, stage1_chain_len=args.max_new,
+                        b_override=args.b_override,
+                        num_chains=spec.K,  # match stage 1's chain count
+                    )
+                    if si == 0:
+                        ref_shape_s2 = _spec_ref_shape(s2)
+                    else:
+                        _conform_spec_to_ref(s2, ref_shape_s2)
+                    s2.validate()
+                    stage2_specs[(name, k_override, seed)] = s2
+
+            # Log the reference draw's shape (identical for every seed after
+            # conforming) plus the draw count.
+            spec0 = specs[(name, k_override, ref_seed)]
+            if spec0.is_multilevel:
                 from beam_engine.tree_driver import _enumerate_leaf_parents
-                lps, anc_paths = _enumerate_leaf_parents(spec.root)
+                lps, anc_paths = _enumerate_leaf_parents(spec0.root)
                 L_s_mean = sum(
                     sum(len(a.token_ids) for a in path) + len(lp.token_ids)
                     for lp, path in zip(lps, anc_paths)
@@ -484,26 +658,18 @@ def main():
                 ) / max(1, len(lps))
             else:
                 L_s_mean = sum(
-                    len(g.shared_prefix_ids) for g in spec.groups
-                ) / spec.B
+                    len(g.shared_prefix_ids) for g in spec0.groups
+                ) / spec0.B
                 L_p_mean = sum(
-                    len(g.private_prefix_ids_per_leaf[0]) for g in spec.groups
-                ) / spec.B
-            ko_tag = "natural" if k_override is None else f"K={k_override}"
+                    len(g.private_prefix_ids_per_leaf[0]) for g in spec0.groups
+                ) / spec0.B
             _say(
-                f"  {name:<24} [{ko_tag:<8}] B={spec.B:<3d} K={spec.K:<3d} "
+                f"  {name:<24} [{ko_tag:<8}] B={spec0.B:<3d} K={spec0.K:<3d} "
                 f"L_shared~{int(L_s_mean):<5d} L_priv~{int(L_p_mean):<5d} "
-                f"n_leaves={spec.n_leaves}"
+                f"n_leaves={spec0.n_leaves}  draws={len(data_seeds)}"
             )
-            # Optional stage-2 spec for paper-exact multi_chain_reasoning.
-            if args.paper_exact and name == "multi_chain_reasoning" and not args.no_stage2:
-                s2 = build_multi_chain_reasoning_stage2(
-                    tok, stage1_chain_len=args.max_new,
-                    b_override=args.b_override,
-                    num_chains=spec.K,  # match stage 1's chain count
-                )
-                s2.validate()
-                stage2_specs[(name, k_override)] = s2
+            if (name, k_override, ref_seed) in stage2_specs:
+                s2 = stage2_specs[(name, k_override, ref_seed)]
                 L_s2 = sum(len(g.shared_prefix_ids) for g in s2.groups) / s2.B
                 _say(
                     f"  {name + ' (stage2)':<24} [{ko_tag:<8}] B={s2.B:<3d} K={s2.K:<3d} "
@@ -515,59 +681,74 @@ def main():
     per_scenario_summary: list[str] = []
     for k_override in k_overrides:
         for sname in args.scenarios:
-            spec = specs[(sname, k_override)]
             ko_tag = "natural" if k_override is None else f"K={k_override}"
             _say(f"--- {sname} [{ko_tag}] ---")
+            # best decode_total per method, taken across all data draws.
             per_method_best: dict[str, float] = {}
-            for mname in args.methods:
-                iters = args.repeat + (1 if args.warmup else 0)
-                best_total = float("inf")
-                for r in range(iters):
-                    try:
+            for seed in data_seeds:
+                spec = specs[(sname, k_override, seed)]
+                if len(data_seeds) > 1:
+                    _say(f"  [draw seed={seed}]")
+                for mname in args.methods:
+                    # Warm up only on the reference draw: every draw shares the
+                    # same token-length shape (conformed), so the Triton-JIT /
+                    # CUDA-graph capture absorbed by the warmup is already done
+                    # by the time later seeds run. This keeps extra draws cheap.
+                    do_warmup = args.warmup and seed == data_seeds[0]
+                    iters = args.repeat + (1 if do_warmup else 0)
+                    best_total = per_method_best.get(mname, float("inf"))
+                    for r in range(iters):
+                        try:
+                            gc.collect()
+                            torch.cuda.empty_cache()
+                            t0 = time.perf_counter()
+                            row, _decode = _run_one(
+                                model, config, spec, mname, args.max_new,
+                                scenario_name=sname,
+                                two_stage_spec=stage2_specs.get((sname, k_override, seed)),
+                                tokenizer=tok,
+                            )
+                            wall = time.perf_counter() - t0
+                        except Exception as e:
+                            import traceback as _tb
+                            _say(f"  {mname:<12} seed={seed} r={r}  FAILED: {type(e).__name__}: {e}")
+                            if os.environ.get("BE_TRACEBACK_ON_FAIL", "0") != "0":
+                                _say(_tb.format_exc())
+                            gc.collect()
+                            torch.cuda.empty_cache()
+                            break
                         gc.collect()
                         torch.cuda.empty_cache()
-                        t0 = time.perf_counter()
-                        row, _decode = _run_one(
-                            model, config, spec, mname, args.max_new,
-                            scenario_name=sname,
-                            two_stage_spec=stage2_specs.get((sname, k_override)),
-                            tokenizer=tok,
+                        if do_warmup and r == 0:
+                            _say(f"  {mname:<12} seed={seed} warmup  wall={wall:5.1f}s  decode_total={row.decode_total_ms:7.1f}ms")
+                            continue
+                        effective_r = r - (1 if do_warmup else 0)
+                        row.scenario = sname
+                        row.repeat_idx = effective_r
+                        row.k_override = 0 if k_override is None else int(k_override)
+                        row.data_seed = seed
+                        rows.append(row)
+                        if row.decode_total_ms < best_total:
+                            best_total = row.decode_total_ms
+                        total_ms = (
+                            row.prefill_shared_ms + row.prefill_private_ms + row.decode_total_ms
                         )
-                        wall = time.perf_counter() - t0
-                    except Exception as e:
-                        import traceback as _tb
-                        _say(f"  {mname:<12} r={r}  FAILED: {type(e).__name__}: {e}")
-                        if os.environ.get("BE_TRACEBACK_ON_FAIL", "0") != "0":
-                            _say(_tb.format_exc())
-                        gc.collect()
-                        torch.cuda.empty_cache()
-                        break
-                    gc.collect()
-                    torch.cuda.empty_cache()
-                    if args.warmup and r == 0:
-                        _say(f"  {mname:<12} warmup  wall={wall:5.1f}s  decode_total={row.decode_total_ms:7.1f}ms")
-                        continue
-                    effective_r = r - (1 if args.warmup else 0)
-                    row.scenario = sname
-                    row.repeat_idx = effective_r
-                    row.k_override = 0 if k_override is None else int(k_override)
-                    rows.append(row)
-                    if row.decode_total_ms < best_total:
-                        best_total = row.decode_total_ms
-                    total_ms = (
-                        row.prefill_shared_ms + row.prefill_private_ms + row.decode_total_ms
-                    )
-                    _say(
-                        f"  {mname:<12} r={effective_r}  "
-                        f"prefill={row.prefill_shared_ms + row.prefill_private_ms:7.1f}ms  "
-                        f"decode={row.decode_total_ms:7.1f}ms  "
-                        f"plan/step={row.plan_mean_ms:5.2f}ms  "
-                        f"fwd/step={row.forward_mean_ms:5.2f}ms  "
-                        f"p50/step={row.decode_p50_ms:5.2f}ms  "
-                        f"wall={wall:5.1f}s"
-                    )
-                per_method_best[mname] = best_total
-            # Per-scenario ranking summary.
+                        _say(
+                            f"  {mname:<12} seed={seed} r={effective_r}  "
+                            f"prefill={row.prefill_shared_ms + row.prefill_private_ms:7.1f}ms  "
+                            f"decode={row.decode_total_ms:7.1f}ms  "
+                            f"plan/step={row.plan_mean_ms:5.2f}ms  "
+                            f"fwd/step={row.forward_mean_ms:5.2f}ms  "
+                            f"p50/step={row.decode_p50_ms:5.2f}ms  "
+                            f"wall={wall:5.1f}s"
+                        )
+                    per_method_best[mname] = best_total
+                    # Flush results so far so a later slow/hung method (deft on a
+                    # long-decode 70B cell) timing out doesn't discard the methods
+                    # that already completed.
+                    if is_rank0 and args.out is not None:
+                        _write_results_csv(args.out, rows)
+            # Per-scenario ranking summary (best across all draws).
             if per_method_best:
                 ranking = sorted(per_method_best.items(), key=lambda kv: kv[1])
                 line = f"  rank (decode_total): " + ", ".join(
@@ -587,39 +768,7 @@ def main():
             gpu = torch.cuda.get_device_name().replace(" ", "_")
             ts = time.strftime("%Y%m%d-%H%M%S")
             out = results_dir / f"bench_sglang_e2e-{gpu}-{ts}.csv"
-        out = Path(out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with out.open("w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow([
-                "scenario", "k_override", "method", "repeat",
-                "n_leaves", "prefill_shared_ms", "prefill_private_ms",
-                "decode_total_ms", "decode_p50_ms", "decode_p99_ms",
-                "n_decode_steps",
-                "plan_mean_ms", "plan_p50_ms", "plan_p99_ms", "plan_total_ms",
-                "forward_mean_ms", "forward_p50_ms", "forward_p99_ms", "forward_total_ms",
-                "alloc_mean_ms", "alloc_total_ms",
-                "topk_mean_ms", "topk_total_ms",
-                "dispatch_total_ms",
-            ])
-            for r in rows:
-                w.writerow([
-                    r.scenario, r.k_override, r.method, r.repeat_idx,
-                    r.n_leaves,
-                    f"{r.prefill_shared_ms:.4f}",
-                    f"{r.prefill_private_ms:.4f}",
-                    f"{r.decode_total_ms:.4f}",
-                    f"{r.decode_p50_ms:.4f}",
-                    f"{r.decode_p99_ms:.4f}",
-                    r.n_decode_steps,
-                    f"{r.plan_mean_ms:.4f}", f"{r.plan_p50_ms:.4f}",
-                    f"{r.plan_p99_ms:.4f}",  f"{r.plan_total_ms:.4f}",
-                    f"{r.forward_mean_ms:.4f}", f"{r.forward_p50_ms:.4f}",
-                    f"{r.forward_p99_ms:.4f}",  f"{r.forward_total_ms:.4f}",
-                    f"{r.alloc_mean_ms:.4f}",   f"{r.alloc_total_ms:.4f}",
-                    f"{r.topk_mean_ms:.4f}",    f"{r.topk_total_ms:.4f}",
-                    f"{r.dispatch_total_ms:.4f}",
-                ])
+        _write_results_csv(out, rows)
         print(f"\nwrote {len(rows)} rows to {out}\n")
 
         print("=== summary (best decode_total per method, ms) ===")

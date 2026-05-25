@@ -63,9 +63,12 @@ _GSM8K_URL = (
 # ``paper_exact`` variants below use the rendered template / 20-shot
 # example bundles / Llama-3-paper segments at their *natural* length.
 # The fixed-length constants are kept for the legacy / parity path.
-SYS_LEN = 4096
+import os as _os
+# Env-overridable so prefix-shape sweeps (e.g. sys vs prompt length) don't
+# need code edits. Defaults preserve the historic parity workload.
+SYS_LEN = int(_os.environ.get("BE_SYS_LEN", "4096"))
 QUESTION_LEN = 80
-FEWSHOT_LEN = 2560
+FEWSHOT_LEN = int(_os.environ.get("BE_FEWSHOT_LEN", "2560"))
 DOC_BUNDLE_LEN = 4400
 CHAIN_PROMPT_PRIVATE_LEN = 80   # the question part of "sys + question"
 
@@ -133,21 +136,27 @@ def _gsm8k_questions(tokenizer, n_min: int = 256) -> list[list[int]]:
     return out
 
 
-def _gsm8k_qa_concatenated(tokenizer, target_len: int) -> list[int]:
+def _gsm8k_qa_concatenated(tokenizer, target_len: int, data_seed: int = 0) -> list[int]:
     """Concatenate GSM8K Q+A pairs until we hit ``target_len`` tokens,
     then truncate (used to synthesize fewshot bundles and doc bundles).
+
+    ``data_seed!=0`` shuffles the GSM8K exemplar order so a different draw
+    fills the prefix with different problems; the result is always
+    truncated/padded to exactly ``target_len`` tokens, so the shape is
+    identical across seeds. ``data_seed=0`` keeps the original file order.
     """
     _ensure_gsm8k()
-    ids: list[int] = []
     with _GSM8K_PATH.open() as f:
-        for line in f:
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            text = f"Question: {row['question']}\nAnswer: {row['answer']}\n\n"
-            ids.extend(tokenizer.encode(text, add_special_tokens=False))
-            if len(ids) >= target_len:
-                break
+        lines = [ln for ln in f if ln.strip()]
+    if data_seed != 0:
+        random.Random(2000 + data_seed).shuffle(lines)
+    ids: list[int] = []
+    for line in lines:
+        row = json.loads(line)
+        text = f"Question: {row['question']}\nAnswer: {row['answer']}\n\n"
+        ids.extend(tokenizer.encode(text, add_special_tokens=False))
+        if len(ids) >= target_len:
+            break
     return _pad_or_truncate(ids, target_len)
 
 
@@ -212,6 +221,7 @@ def build_multi_level_system(
     b_override: int | None = None,
     paper_exact: bool = False,
     tree_root: bool = False,
+    data_seed: int = 0,
 ) -> TreeSpec:
     """B sys-prompts × K questions each. Natural (B=4, K=32) = 128
     leaves. ``k_override`` flips kernel phase; ``b_override`` lets B
@@ -274,6 +284,7 @@ def build_multi_few_shot(
     b_override: int | None = None,
     paper_exact: bool = False,
     tree_root: bool = False,
+    data_seed: int = 0,
 ) -> TreeSpec:
     """1 sys × 8 fewshot bundles × 16 questions = 128 leaves.
 
@@ -304,6 +315,8 @@ def build_multi_few_shot(
         stride = FEWSHOT_NUM_SHOTS + K
         if paper_exact:
             rows = _gsm8k_raw_questions(B * stride)
+            if data_seed != 0:
+                random.Random(1000 + data_seed).shuffle(rows)
             bundle_ids_raw: list[list[int]] = []
             leaf_ids_raw: list[list[list[int]]] = []  # [B][K]
             for b in range(B):
@@ -328,7 +341,7 @@ def build_multi_few_shot(
             questions = _gsm8k_questions(tokenizer, n_min=B * K)
             with _GSM8K_PATH.open() as f:
                 all_lines = [ln for ln in f if ln.strip()]
-            rng = random.Random(0)
+            rng = random.Random(data_seed)
             bundle_ids_raw = []
             for _ in range(B):
                 rng.shuffle(all_lines)
@@ -364,6 +377,12 @@ def build_multi_few_shot(
         # Stride = num_shots + num_questions per bench_multi_few_shot.py.
         stride = FEWSHOT_NUM_SHOTS + K
         rows = _gsm8k_raw_questions(B * stride)
+        # data_seed!=0 reshuffles which GSM8K rows land in which bundle so a
+        # different draw uses different exemplars; seed 0 keeps the original
+        # in-file order. (GSM8K test is only 1319 rows, so B*stride>1319 cells
+        # already reuse rows; the shuffle just re-pairs them.)
+        if data_seed != 0:
+            random.Random(1000 + data_seed).shuffle(rows)
         groups: list[PromptGroup] = []
         for b in range(B):
             offset = stride * b
@@ -399,7 +418,7 @@ def build_multi_few_shot(
     fewshots: list[list[int]] = []
     with _GSM8K_PATH.open() as f:
         all_lines = [l for l in f if l.strip()]
-    rng = random.Random(0)
+    rng = random.Random(data_seed)
     for i in range(B):
         rng.shuffle(all_lines)
         text_acc = ""
@@ -424,6 +443,7 @@ def build_multi_chain_reasoning(
     k_override: int | None = None,
     b_override: int | None = None,
     paper_exact: bool = False,
+    data_seed: int = 0,
 ) -> TreeSpec:
     """B (sys+question) × K chains. Natural (B=32, K=4) = 128 leaves.
 
@@ -480,6 +500,7 @@ def build_multi_document(
     k_override: int | None = None,
     b_override: int | None = None,
     paper_exact: bool = False,
+    data_seed: int = 0,
 ) -> TreeSpec:
     """B doc-bundles × K questions. Natural (B=16, K=8) = 128 leaves.
 
@@ -502,7 +523,7 @@ def build_multi_document(
             )
         payload = json.loads(DOC_SEGMENTS_PATH.read_text())
         segments: list[str] = payload["documents"]
-        rng = random.Random(0)
+        rng = random.Random(data_seed)
         # Pre-tokenise each segment once.
         seg_ids = [
             tokenizer.encode(s, add_special_tokens=False) for s in segments
@@ -539,7 +560,7 @@ def build_multi_document(
     _ensure_gsm8k()
     with _GSM8K_PATH.open() as f:
         all_lines = [l for l in f if l.strip()]
-    rng = random.Random(1)
+    rng = random.Random(1 + data_seed)
     groups = []
     for b in range(B):
         rng.shuffle(all_lines)
@@ -635,6 +656,7 @@ def build_multi_doc_qa(
     b_override: int | None = None,
     paper_exact: bool = False,
     tree_root: bool = False,
+    data_seed: int = 0,
 ) -> TreeSpec:
     """B hotpot doc-sets × K questions each — RAG-style multi-doc QA.
 
@@ -653,6 +675,12 @@ def build_multi_doc_qa(
     through doc-set lines (and shifts the question slice so groups
     don't share leaves verbatim). ``paper_exact`` is ignored — the
     hotpot text is already real, no synthetic variant exists.
+
+    ``data_seed`` selects a *different doc-set draw* for the same shape:
+    group ``b`` reads line ``b + data_seed*B`` (mod #lines). ``data_seed=0``
+    reproduces the original single-draw behaviour. The harness conforms
+    every draw to the seed-0 token-length shape, so different seeds vary
+    only the text, never the model input shape.
     """
     K = k_override if k_override is not None else 8
     B = b_override if b_override is not None else 1
@@ -677,7 +705,10 @@ def build_multi_doc_qa(
     per_group_shared: list[list[int]] = []
     per_group_priv: list[list[list[int]]] = []  # [B][K]
     for b in range(B):
-        row = lines[b % len(lines)]
+        # data_seed advances the doc-set window by a full batch so distinct
+        # draws read distinct lines; b=0,seed=0 -> line 0 (original behaviour).
+        line_idx = (b + data_seed * B) % len(lines)
+        row = lines[line_idx]
         questions = row["questions"]
         if K > len(questions):
             raise ValueError(
@@ -685,7 +716,7 @@ def build_multi_doc_qa(
                 f"rerun build_hotpotqa_multi_q.py with --questions-per >= {K}"
             )
         # Shift slice across doc-sets so each group has distinct questions.
-        offset = (b // len(lines)) * K
+        offset = (line_idx // len(lines)) * K
         q_slice = questions[offset % len(questions) : (offset % len(questions)) + K]
         if len(q_slice) < K:
             # wrap around — fewer than K questions left from this offset
@@ -736,6 +767,7 @@ def build_self_consistency(
     b_override: int | None = None,
     paper_exact: bool = False,
     tree_root: bool = False,
+    data_seed: int = 0,
 ) -> TreeSpec:
     """Best-of-N / self-consistency sampling — a STATIC 2-level tree.
 
@@ -760,7 +792,7 @@ def build_self_consistency(
     B = b_override if b_override is not None else 1
     Lp = int(os.environ.get("BE_SELF_CONSISTENCY_LP", "8192"))
 
-    shared = _gsm8k_qa_concatenated(tokenizer, Lp)  # ~Lp tokens, padded
+    shared = _gsm8k_qa_concatenated(tokenizer, Lp, data_seed=data_seed)  # ~Lp tokens, padded
     common_tail = tokenizer.encode(
         "\nLet's think step by step.\n", add_special_tokens=False,
     )

@@ -1,0 +1,18 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 cells × 6 modes = 6 runs
+modes: ['picker', 'PER_BEAM', 'SHARED_2L_1POOL', 'SHARED_2L_2POOL', 'SHARED_3L_1POOL', 'SHARED_3L_2POOL']
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 14505.99it/s]
+Model loaded.
+
+  picker             K=64  L_p=8192   B=32 prefill= 2295.0ms  decode_total= 12802.5ms  per_pt_token=  1.57ms  picks=[d2_p1=18,d3_p1=236,d3_p2=1]  ( 15.4s wall)
+  PER_BEAM           K=64  L_p=8192   B=32 prefill= 1443.8ms  decode_total= 43762.1ms  per_pt_token=  5.36ms  picks=[per_beam=255]  ( 45.5s wall)
+  SHARED_2L_1POOL    K=64  L_p=8192   B=32 prefill= 1449.4ms  decode_total= 13688.2ms  per_pt_token=  1.68ms  picks=[d2_p1=255]  ( 15.4s wall)
+  SHARED_2L_2POOL    K=64  L_p=8192   B=32 prefill= 1454.0ms  decode_total= 15307.8ms  per_pt_token=  1.88ms  picks=[d2_p2=255]  ( 17.0s wall)
+  SHARED_3L_1POOL    K=64  L_p=8192   B=32 prefill= 1452.4ms  decode_total= 12716.3ms  per_pt_token=  1.56ms  picks=[d2_p1=16,d3_p1=239]  ( 14.4s wall)
+  SHARED_3L_2POOL    K=64  L_p=8192   B=32 prefill= 1462.7ms  decode_total= 15431.5ms  per_pt_token=  1.89ms  picks=[d2_p2=16,d3_p2=239]  ( 17.1s wall)
+
+wrote 6 rows to benchmarks/bs_kernel/results/bench_modes_single-20260508-181155/bench_modes_single.csv
+[W508 18:14:09.763508148 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

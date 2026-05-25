@@ -271,6 +271,36 @@ class Coefficients:
     # vec_size-multiples (typically 8 tokens for fp16/head_dim=128/GQA).
     cta_tile_kv_decode: int = 8
 
+    # Picker hysteresis margin against switching to a DEC_TAIL strategy.
+    # ``pick_strategy_batch`` multiplies every DEC_TAIL-family candidate's
+    # *comparison* cost by ``(1 + dec_tail_switch_margin)`` in the argmin, so
+    # DEC_TAIL is selected only when it beats the best non-DEC_TAIL candidate
+    # by at least this fraction. 0.0 = pure argmin (legacy behavior). A small
+    # positive value (e.g. 0.10) delays the 1POOL→DEC_TAIL flip to a longer
+    # tail: on long-decode self_consistency the picker flips ~2k steps before
+    # the measured per-step crossover (DEC_TAIL's tail split-K is priced a bit
+    # too cheap), and this margin shifts the switch back without re-deriving
+    # the tail cost terms. Env-overridable via BS_KERNEL_DEC_TAIL_MARGIN at
+    # coefficient load (see calibrate.load_or_defaults). Affects only the pick;
+    # the raw cost is still reported in ``estimated_us`` / ``debug``.
+    dec_tail_switch_margin: float = 0.0
+
+    # Fused-tail inefficiency fraction (1POOL only). The fused-cascade 1POOL
+    # kernel reads each beam's per-beam tail KV inside the same launch as the
+    # shared-prefix MMA, so the tail can't get its own split-K grid and streams
+    # at lower effective bandwidth than DEC_TAIL's dedicated CTA_Q=1 decode
+    # kernel. Modeled as a penalty ``frac × (Σ tail tokens) × bytes_per_kv /
+    # B_hbm`` added to the 1POOL cost. ~0 for short tails (the paper's picker
+    # cells), so it doesn't perturb their picks; it grows with tail length and
+    # is what makes the modeled 1POOL→DEC_TAIL crossover land near the measured
+    # ~4k-token per-step crossover on long-decode self_consistency (instead of
+    # relying on the discontinuous wave-quantization additive cliff). 0.0 =
+    # legacy (no tail penalty). Fit offline against the long-decode crossover:
+    # 0.07 lands the 1POOL→DEC_TAIL flip at ~4k tail tokens (matching the
+    # measured per-step crossover) for the 1B K=16/B=1/L_p=32k cell, with no
+    # regression on the 12-cell picker-demo oracle (short tails → penalty ≈ 0).
+    fused_tail_ineff_frac: float = 0.07
+
     @classmethod
     def defaults(cls) -> "Coefficients":
         return cls()
@@ -743,6 +773,7 @@ def cost_shared_batch(
     pool_count: int,
     t_large: int,
     fused_merge: bool = False,
+    trace: Optional[dict] = None,
 ) -> float:
     """Cost of the shared-prefix path running B prompts in one cascade
     launch.
@@ -957,13 +988,42 @@ def cost_shared_batch(
     # the tail into a separate decode launch and already pays it additively,
     # so this restores the correct DEC_TAIL<1POOL ordering there. F4
     # self_consistency K=16 B=1 = 16 beams stays well-pipelined → 1POOL.)
+    # Overlap gate: the additive (bw+compute) form applies when the memory
+    # controller saturates — driven by beam concurrency (B·K), NOT raw wave
+    # count. The old ``total_waves <= 2`` term created a discontinuous cost
+    # cliff when a long per-beam tail tipped a LOW-beam cell from 2→3 waves
+    # (the F4 self_consistency early-flip artifact): low B·K never saturates
+    # the controller regardless of wave count, so it stays pipelined. The
+    # smooth tail penalty below supplies the 1POOL→DEC_TAIL crossover that the
+    # wave cliff used to provide crudely. High B·K (e.g. F2 K=128 B=4 = 512
+    # beams) still goes additive via the n_beams guard.
     n_beams = sum(w.K for w in workloads)
-    well_pipelined = (total_waves <= 2) and (B <= 8) and (n_beams <= 128)
+    well_pipelined = (B <= 8) and (n_beams <= 128)
     work_us = (
         max(bw_us, compute_us + thrash_us)
         if well_pipelined
         else bw_us + compute_us + thrash_us
     )
+
+    # Fused-tail inefficiency penalty (1POOL only): the per-beam tail KV is
+    # streamed inside the fused launch at lower effective bandwidth than
+    # DEC_TAIL's dedicated decode kernel (no own split-K). ~0 for short tails,
+    # grows linearly with tail → supplies the smooth long-tail crossover. See
+    # Coefficients.fused_tail_ineff_frac.
+    tail_penalty_us = 0.0
+    if c.fused_tail_ineff_frac:
+        tail_bytes = sum(sum(w.suffix_lens) * w.bytes_per_kv for w in workloads)
+        tail_penalty_us = c.fused_tail_ineff_frac * tail_bytes / c.B_hbm
+        work_us += tail_penalty_us
+
+    if trace is not None:
+        trace.update({
+            "bw_us": bw_us, "compute_us": compute_us, "thrash_us": thrash_us,
+            "merge_us": merge_us, "total_waves": total_waves,
+            "n_beams": n_beams, "B": B, "well_pipelined": well_pipelined,
+            "tail_penalty_us": tail_penalty_us,
+            "work_us": work_us, "total": work_us + merge_us,
+        })
 
     return work_us + merge_us
 
@@ -1478,7 +1538,18 @@ def pick_strategy_batch(
                 )
         candidates = filtered
 
-    best = min(candidates, key=lambda x: x[1])
+    # DEC_TAIL switch-margin (hysteresis): inflate DEC_TAIL-family candidates'
+    # *comparison* cost so DEC_TAIL wins only when cheaper than the best
+    # alternative by >= dec_tail_switch_margin. The raw cost is still reported
+    # in ``estimated_us`` / ``debug`` (margin affects only which candidate wins).
+    margin = c.dec_tail_switch_margin
+    if margin:
+        best = min(
+            candidates,
+            key=lambda x: x[1] * (1.0 + margin) if "dec_tail" in x[0].value else x[1],
+        )
+    else:
+        best = min(candidates, key=lambda x: x[1])
     return Pick(
         strategy=best[0],
         estimated_us=best[1],

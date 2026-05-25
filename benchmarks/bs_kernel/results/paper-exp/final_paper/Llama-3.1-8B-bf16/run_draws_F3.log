@@ -1,0 +1,78 @@
+grid: 1 (K,L_p,B) cells × 7 methods = 7 runs
+methods: ['paged', 'fasttree', 'deft', 'mlca', 'bs_kernel', 'bs_kernel_2l1p', 'bs_kernel_2ldt']
+max_new: 256
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 138550.58it/s]
+Model loaded.
+
+loaded 48 prompts from data/hotpotqa_f3_pool.jsonl
+  paged          warmup K=64  L_p=16000  B=8  discard          decode_total=39670.3ms  ( 45.0s wall)
+  paged                 K=64  L_p=16000  B=8  prefill= 3859.7ms  decode_total=39580.0ms  per_pt_token= 19.40ms  ( 43.9s wall)
+  fasttree       warmup K=64  L_p=16000  B=8  discard          decode_total=23381.1ms  ( 27.7s wall)
+  fasttree              K=64  L_p=16000  B=8  prefill= 3855.6ms  decode_total=22809.1ms  per_pt_token= 11.18ms  ( 27.1s wall)
+  deft           warmup K=64  L_p=16000  B=8  discard          decode_total=24408.1ms  ( 28.7s wall)
+  deft                  K=64  L_p=16000  B=8  prefill= 3847.3ms  decode_total=24354.7ms  per_pt_token= 11.94ms  ( 28.7s wall)
+  mlca           warmup K=64  L_p=16000  B=8  discard          decode_total=14736.7ms  ( 19.1s wall)
+  mlca                  K=64  L_p=16000  B=8  prefill= 3867.5ms  decode_total=14727.0ms  per_pt_token=  7.22ms  ( 19.1s wall)
+  bs_kernel      warmup K=64  L_p=16000  B=8  discard          decode_total= 9994.2ms  ( 14.3s wall)
+  bs_kernel             K=64  L_p=16000  B=8  prefill= 3857.6ms  decode_total= 9984.6ms  per_pt_token=  4.89ms  ( 14.3s wall)
+  bs_kernel_2l1p warmup K=64  L_p=16000  B=8  discard          decode_total=12892.3ms  ( 17.2s wall)
+  bs_kernel_2l1p        K=64  L_p=16000  B=8  prefill= 3851.3ms  decode_total=12922.1ms  per_pt_token=  6.33ms  ( 17.2s wall)
+  bs_kernel_2ldt warmup K=64  L_p=16000  B=8  discard          decode_total= 9916.0ms  ( 14.2s wall)
+  bs_kernel_2ldt        K=64  L_p=16000  B=8  prefill= 3833.2ms  decode_total= 9891.4ms  per_pt_token=  4.85ms  ( 14.3s wall)
+
+wrote 7 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/_f3_4gpu_s0.csv
+[W525 18:01:19.280421608 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+grid: 1 (K,L_p,B) cells × 7 methods = 7 runs
+methods: ['paged', 'fasttree', 'deft', 'mlca', 'bs_kernel', 'bs_kernel_2l1p', 'bs_kernel_2ldt']
+max_new: 256
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 122056.47it/s]
+Model loaded.
+
+loaded 48 prompts from data/hotpotqa_f3_pool.jsonl
+  paged          warmup K=64  L_p=16000  B=8  discard          decode_total=39819.6ms  ( 45.2s wall)
+  paged                 K=64  L_p=16000  B=8  prefill= 3844.6ms  decode_total=39745.8ms  per_pt_token= 19.48ms  ( 44.0s wall)
+  fasttree       warmup K=64  L_p=16000  B=8  discard          decode_total=23719.3ms  ( 28.0s wall)
+  fasttree              K=64  L_p=16000  B=8  prefill= 3857.5ms  decode_total=23084.7ms  per_pt_token= 11.32ms  ( 27.4s wall)
+  deft           warmup K=64  L_p=16000  B=8  discard          decode_total=24478.1ms  ( 28.8s wall)
+  deft                  K=64  L_p=16000  B=8  prefill= 3854.9ms  decode_total=24330.9ms  per_pt_token= 11.93ms  ( 28.7s wall)
+  mlca           warmup K=64  L_p=16000  B=8  discard          decode_total=14772.5ms  ( 19.1s wall)
+  mlca                  K=64  L_p=16000  B=8  prefill= 3862.3ms  decode_total=14729.8ms  per_pt_token=  7.22ms  ( 19.0s wall)
+  bs_kernel      warmup K=64  L_p=16000  B=8  discard          decode_total=10094.8ms  ( 14.4s wall)
+  bs_kernel             K=64  L_p=16000  B=8  prefill= 3863.6ms  decode_total=10027.5ms  per_pt_token=  4.92ms  ( 14.3s wall)
+  bs_kernel_2l1p warmup K=64  L_p=16000  B=8  discard          decode_total=12854.6ms  ( 17.2s wall)
+  bs_kernel_2l1p        K=64  L_p=16000  B=8  prefill= 3837.4ms  decode_total=12842.1ms  per_pt_token=  6.30ms  ( 17.1s wall)
+  bs_kernel_2ldt warmup K=64  L_p=16000  B=8  discard          decode_total= 9962.5ms  ( 14.3s wall)
+  bs_kernel_2ldt        K=64  L_p=16000  B=8  prefill= 3860.6ms  decode_total= 9989.4ms  per_pt_token=  4.90ms  ( 14.3s wall)
+
+wrote 7 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/_f3_4gpu_s1.csv
+[W525 18:07:09.525153871 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+grid: 1 (K,L_p,B) cells × 7 methods = 7 runs
+methods: ['paged', 'fasttree', 'deft', 'mlca', 'bs_kernel', 'bs_kernel_2l1p', 'bs_kernel_2ldt']
+max_new: 256
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 146467.76it/s]
+Model loaded.
+
+loaded 48 prompts from data/hotpotqa_f3_pool.jsonl
+  paged          warmup K=64  L_p=16000  B=8  discard          decode_total=39555.5ms  ( 45.0s wall)
+  paged                 K=64  L_p=16000  B=8  prefill= 3860.6ms  decode_total=39493.5ms  per_pt_token= 19.36ms  ( 43.8s wall)
+  fasttree       warmup K=64  L_p=16000  B=8  discard          decode_total=24510.1ms  ( 28.8s wall)
+  fasttree              K=64  L_p=16000  B=8  prefill= 3861.3ms  decode_total=22942.6ms  per_pt_token= 11.25ms  ( 27.3s wall)
+  deft           warmup K=64  L_p=16000  B=8  discard          decode_total=24307.0ms  ( 28.6s wall)
+  deft                  K=64  L_p=16000  B=8  prefill= 3842.0ms  decode_total=24374.0ms  per_pt_token= 11.95ms  ( 28.7s wall)
+  mlca           warmup K=64  L_p=16000  B=8  discard          decode_total=14721.6ms  ( 19.0s wall)
+  mlca                  K=64  L_p=16000  B=8  prefill= 3864.2ms  decode_total=14722.4ms  per_pt_token=  7.22ms  ( 19.0s wall)
+  bs_kernel      warmup K=64  L_p=16000  B=8  discard          decode_total= 9973.1ms  ( 14.3s wall)
+  bs_kernel             K=64  L_p=16000  B=8  prefill= 3863.3ms  decode_total= 9948.1ms  per_pt_token=  4.88ms  ( 14.3s wall)
+  bs_kernel_2l1p warmup K=64  L_p=16000  B=8  discard          decode_total=12825.8ms  ( 17.1s wall)
+  bs_kernel_2l1p        K=64  L_p=16000  B=8  prefill= 3858.2ms  decode_total=12798.1ms  per_pt_token=  6.27ms  ( 17.1s wall)
+  bs_kernel_2ldt warmup K=64  L_p=16000  B=8  discard          decode_total= 9866.1ms  ( 14.2s wall)
+  bs_kernel_2ldt        K=64  L_p=16000  B=8  prefill= 3864.6ms  decode_total= 9874.0ms  per_pt_token=  4.84ms  ( 14.2s wall)
+
+wrote 7 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/_f3_4gpu_s2.csv
+[W525 18:12:58.697575865 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

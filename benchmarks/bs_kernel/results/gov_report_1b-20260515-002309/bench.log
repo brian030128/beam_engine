@@ -1,0 +1,165 @@
+=== gov_report_1b started 2026-05-15T00:23:09+08:00 ===
+model:    meta-llama/Llama-3.2-1B
+prompts:  data/gov_report.jsonl
+cell:     L_p=8192, K=32, B=32, max_new=256
+methods:  paged fasttree mlca bs_kernel + DBS variants
+GPU:      NVIDIA H100 80GB HBM3
+
+=== running method: paged ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 93503.59it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  paged          warmup K=32  L_p=8192   B=32 discard          decode_total=19117.7ms  ( 21.7s wall)
+  paged                 K=32  L_p=8192   B=32 prefill= 1259.9ms  decode_total=19060.6ms  per_pt_token=  2.34ms  ( 20.7s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/gov_report_1b-20260515-002309/paged.csv
+[W515 00:24:04.318997368 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: fasttree ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 110376.42it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  fasttree       warmup K=32  L_p=8192   B=32 discard          decode_total=30035.2ms  ( 32.6s wall)
+  fasttree              K=32  L_p=8192   B=32 prefill= 1256.7ms  decode_total=13791.1ms  per_pt_token=  1.69ms  ( 15.4s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/gov_report_1b-20260515-002309/fasttree.csv
+[W515 00:25:05.736135311 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: mlca ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 73584.28it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  mlca           warmup K=32  L_p=8192   B=32 discard          decode_total=16092.7ms  ( 18.7s wall)
+  mlca                  K=32  L_p=8192   B=32 prefill= 1255.3ms  decode_total=15979.1ms  per_pt_token=  1.96ms  ( 17.6s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/gov_report_1b-20260515-002309/mlca.csv
+[W515 00:25:55.405681996 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: bs_kernel ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 74518.09it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel      warmup K=32  L_p=8192   B=32 discard          decode_total= 9639.8ms  ( 12.3s wall)
+  bs_kernel             K=32  L_p=8192   B=32 prefill= 1253.6ms  decode_total= 9513.1ms  per_pt_token=  1.17ms  ( 11.1s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/gov_report_1b-20260515-002309/bs_kernel.csv
+[W515 00:26:32.210441748 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: dbs_paged ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['dbs_paged']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 111635.47it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  dbs_paged      warmup K=32  L_p=8192   B=32 discard          decode_total=30342.9ms  ( 33.0s wall)
+  dbs_paged             K=32  L_p=8192   B=32 prefill= 1260.1ms  decode_total=30263.5ms  per_pt_token=  3.71ms  ( 31.9s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/gov_report_1b-20260515-002309/dbs_paged.csv
+[W515 00:27:50.360645758 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: dbs_fasttree ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['dbs_fasttree']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 18034.48it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  dbs_fasttree   warmup K=32  L_p=8192   B=32 discard          decode_total=27521.6ms  ( 30.1s wall)
+  dbs_fasttree          K=32  L_p=8192   B=32 prefill= 1253.2ms  decode_total=25052.2ms  per_pt_token=  3.07ms  ( 26.7s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/gov_report_1b-20260515-002309/dbs_fasttree.csv
+[W515 00:29:00.707589725 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: dbs_mlca ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['dbs_mlca']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 105611.97it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  dbs_mlca       warmup K=32  L_p=8192   B=32 discard          decode_total=27731.2ms  ( 30.4s wall)
+  dbs_mlca              K=32  L_p=8192   B=32 prefill= 1260.4ms  decode_total=27750.4ms  per_pt_token=  3.40ms  ( 29.4s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/gov_report_1b-20260515-002309/dbs_mlca.csv
+[W515 00:30:14.316328461 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: dbs_bs_kernel ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['dbs_bs_kernel']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 45378.87it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  dbs_bs_kernel  warmup K=32  L_p=8192   B=32 discard          decode_total=20961.3ms  ( 23.6s wall)
+  dbs_bs_kernel         K=32  L_p=8192   B=32 prefill= 1253.1ms  decode_total=20865.7ms  per_pt_token=  2.56ms  ( 22.5s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/gov_report_1b-20260515-002309/dbs_bs_kernel.csv
+[W515 00:31:14.407524637 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== merging CSVs to benchmarks/bs_kernel/results/gov_report_1b-20260515-002309/merged.csv ===
+
+=== merged results ===
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms,plan_mean_ms,plan_total_ms,forward_mean_ms,forward_total_ms,cow_mean_ms,cow_total_ms,topk_mean_ms,topk_total_ms,fork_mean_ms,fork_total_ms
+paged,32,8192,32,256,1259.8529,19060.5985,74.7474,2.3359,13.9762,3563.9186,49.1929,12544.1974,0.8344,212.7723,3.0277,772.0690,7.7006,1963.6586
+fasttree,32,8192,32,256,1256.7351,13791.0940,54.0827,1.6901,26.4345,6740.8101,21.4481,5469.2571,0.8419,214.6746,3.0214,770.4562,2.3217,592.0314
+mlca,32,8192,32,256,1255.2905,15979.0644,62.6630,1.9582,20.7319,5286.6280,35.9627,9170.4766,0.7844,200.0320,3.0305,772.7748,2.1385,545.3129
+bs_kernel,32,8192,32,256,1253.5657,9513.1242,37.3064,1.1658,15.7150,4007.3375,14.4945,3696.0869,0.8037,204.9337,4.0442,1031.2711,2.2337,569.5894
+dbs_paged,32,8192,32,256,1260.1339,30263.5338,118.6805,3.7088,14.9972,3824.2809,48.9630,12485.5531,0.8276,211.0267,46.6567,11897.4618,7.2202,1841.1557
+dbs_fasttree,32,8192,32,256,1253.1740,25052.1599,98.2438,3.0701,26.3796,6726.8036,20.9724,5347.9719,0.8349,212.8974,47.1623,12026.3741,2.8790,734.1365
+dbs_mlca,32,8192,32,256,1260.3664,27750.4300,108.8252,3.4008,20.6601,5268.3341,37.5891,9585.2249,0.8175,208.4648,46.8388,11943.8881,2.9039,740.5026
+dbs_bs_kernel,32,8192,32,256,1253.0642,20865.6952,81.8263,2.5571,16.5830,4228.6568,14.4501,3684.7808,0.8173,208.4047,47.4925,12110.5813,2.4677,629.2698
+
+Done. Results: benchmarks/bs_kernel/results/gov_report_1b-20260515-002309

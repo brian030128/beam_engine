@@ -1,0 +1,123 @@
+=== paper_exact sweep started 2026-05-14T17:05:24+08:00 ===
+scenarios (FastTree §4.1 exact): multi_level_system multi_few_shot multi_chain_reasoning multi_document
+methods: fasttree bs_kernel paged mlca
+models:  Llama-3.2-1B, Llama-3.1-8B
+max_new=256, repeat=1
+GPU: NVIDIA H100 80GB HBM3
+
+cached bs_kernel coefficients (8B-tuned):
+{
+  "B_hbm": 1295778.10030401,
+  "launch_us": 7.197919845581055,
+  "sync_us": 6.439930992200971,
+  "merge_us": 6.944640278816223,
+  "per_tile_us": {
+    "16": 0.6,
+    "64": 1.4,
+    "128": 2.4
+  },
+  "per_beam_us_per_kv_token": 0.0008,
+  "num_sms": 132,
+  "share_extra_us": 0.0,
+  "dual_pool_extra_us": 0.0,
+  "dec_tail_extra_us": 20.0,
+  "decode_us_per_beam_kv_token": 0.0008,
+  "decode_launch_us": 6.0,
+  "bw_efficiency_floor": 0.5,
+  "max_dispatch_depth": 3
+}
+############ MODEL: Llama-3.2-1B ############
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_level_system', 'multi_few_shot', 'multi_chain_reasoning']
+methods:   ['fasttree', 'bs_kernel', 'paged']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 52056.96it/s]
+Model loaded.
+
+k_overrides: [None]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [natural ] B=4   K=32  L_shared~2515  L_priv~80    n_leaves=128
+  multi_few_shot           [natural ] B=8   K=16  L_shared~5861  L_priv~95    n_leaves=128
+  multi_chain_reasoning    [natural ] B=32  K=4   L_shared~2574  L_priv~23    n_leaves=128
+  multi_chain_reasoning (stage2) [natural ] B=32  K=1   L_shared~3648  L_priv~    0 n_leaves=32
+
+--- multi_level_system [natural] ---
+  fasttree     r=0  prefill=  955.6ms  decode= 2152.4ms  plan/step= 1.50ms  fwd/step= 6.81ms  p50/step= 6.52ms  wall=  3.2s
+  bs_kernel    r=0  prefill=   92.5ms  decode= 1274.3ms  plan/step= 0.88ms  fwd/step= 3.99ms  p50/step= 4.64ms  wall=  1.4s
+  paged        r=0  prefill=   93.5ms  decode= 1412.5ms  plan/step= 1.25ms  fwd/step= 4.17ms  p50/step= 5.34ms  wall=  1.5s
+  rank (decode_total): bs_kernel=1274.3, paged=1412.5, fasttree=2152.4
+
+--- multi_few_shot [natural] ---
+  fasttree     r=0  prefill=  288.4ms  decode= 1675.4ms  plan/step= 1.79ms  fwd/step= 4.66ms  p50/step= 6.28ms  wall=  2.0s
+  bs_kernel    r=0  prefill=  288.6ms  decode= 1466.1ms  plan/step= 1.09ms  fwd/step= 4.53ms  p50/step= 5.36ms  wall=  1.8s
+  paged        r=0  prefill=  287.1ms  decode= 2069.2ms  plan/step= 1.57ms  fwd/step= 6.41ms  p50/step= 8.10ms  wall=  2.4s
+  rank (decode_total): bs_kernel=1466.1, fasttree=1675.4, paged=2069.2
+
+--- multi_chain_reasoning [natural] ---
+  fasttree     r=0  prefill=  827.8ms  decode= 3404.2ms  plan/step= 1.95ms  fwd/step= 4.60ms  p50/step= 6.34ms  wall=  4.3s
+  bs_kernel    r=0  prefill=  810.4ms  decode= 3061.8ms  plan/step= 1.81ms  fwd/step= 4.06ms  p50/step= 6.07ms  wall=  4.0s
+  paged        r=0  prefill=  810.5ms  decode= 2543.0ms  plan/step= 0.82ms  fwd/step= 4.04ms  p50/step= 5.02ms  wall=  3.4s
+  rank (decode_total): paged=2543.0, bs_kernel=3061.8, fasttree=3404.2
+
+
+wrote 9 rows to benchmarks/bs_kernel/results/paper_exact-20260514-170524/Llama-3.2-1B.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [natural ]   rank (decode_total): bs_kernel=1274.3, paged=1412.5, fasttree=2152.4
+multi_few_shot           [natural ]   rank (decode_total): bs_kernel=1466.1, fasttree=1675.4, paged=2069.2
+multi_chain_reasoning    [natural ]   rank (decode_total): paged=2543.0, bs_kernel=3061.8, fasttree=3404.2
+[W514 17:05:58.656522711 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+############ MODEL: Llama-3.1-8B ############
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B
+scenarios: ['multi_level_system', 'multi_few_shot', 'multi_chain_reasoning']
+methods:   ['fasttree', 'bs_kernel', 'paged']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 154305.50it/s]
+Model loaded.
+
+k_overrides: [None]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [natural ] B=4   K=32  L_shared~2515  L_priv~80    n_leaves=128
+  multi_few_shot           [natural ] B=8   K=16  L_shared~5861  L_priv~95    n_leaves=128
+  multi_chain_reasoning    [natural ] B=32  K=4   L_shared~2574  L_priv~23    n_leaves=128
+  multi_chain_reasoning (stage2) [natural ] B=32  K=1   L_shared~3648  L_priv~    0 n_leaves=32
+
+--- multi_level_system [natural] ---
+  fasttree     r=0  prefill= 1381.4ms  decode= 5149.7ms  plan/step= 1.54ms  fwd/step=18.52ms  p50/step=18.28ms  wall=  6.7s
+  bs_kernel    r=0  prefill=  504.9ms  decode= 2974.8ms  plan/step= 1.09ms  fwd/step=10.44ms  p50/step=10.84ms  wall=  3.6s
+  paged        r=0  prefill=  506.3ms  decode= 3730.1ms  plan/step= 1.11ms  fwd/step=13.38ms  p50/step=14.65ms  wall=  4.3s
+  rank (decode_total): bs_kernel=2974.8, paged=3730.1, fasttree=5149.7
+
+--- multi_few_shot [natural] ---
+  fasttree     r=0  prefill= 1576.4ms  decode= 3857.8ms  plan/step= 1.83ms  fwd/step=13.17ms  p50/step=15.19ms  wall=  5.5s
+  bs_kernel    r=0  prefill= 1568.1ms  decode= 4076.9ms  plan/step= 1.17ms  fwd/step=14.68ms  p50/step=15.92ms  wall=  5.7s
+  paged        r=0  prefill= 1565.6ms  decode= 5535.4ms  plan/step= 1.60ms  fwd/step=19.97ms  p50/step=21.65ms  wall=  7.2s
+  rank (decode_total): fasttree=3857.8, bs_kernel=4076.9, paged=5535.4
+
+--- multi_chain_reasoning [natural] ---
+  fasttree     r=0  prefill= 4955.0ms  decode= 8307.8ms  plan/step= 1.99ms  fwd/step=14.16ms  p50/step=15.71ms  wall= 13.4s
+  bs_kernel    r=0  prefill= 5048.3ms  decode= 7695.5ms  plan/step= 1.83ms  fwd/step=13.12ms  p50/step=14.77ms  wall= 12.9s
+  paged        r=0  prefill= 4952.6ms  decode= 7232.0ms  plan/step= 0.84ms  fwd/step=13.21ms  p50/step=14.10ms  wall= 12.5s
+  rank (decode_total): paged=7232.0, bs_kernel=7695.5, fasttree=8307.8
+
+
+wrote 9 rows to benchmarks/bs_kernel/results/paper_exact-20260514-170524/Llama-3.1-8B.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [natural ]   rank (decode_total): bs_kernel=2974.8, paged=3730.1, fasttree=5149.7
+multi_few_shot           [natural ]   rank (decode_total): fasttree=3857.8, bs_kernel=4076.9, paged=5535.4
+multi_chain_reasoning    [natural ]   rank (decode_total): paged=7232.0, bs_kernel=7695.5, fasttree=8307.8
+[W514 17:07:24.705564335 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+Done. Results: benchmarks/bs_kernel/results/paper_exact-20260514-170524

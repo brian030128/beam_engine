@@ -1,0 +1,106 @@
+=== paged re-run (LCA dedup) Llama-3.1-8B-bf16 2026-05-23T21:15:08+08:00 ===
+=== F1: paged multi_doc_qa K=128 B=1 [--paper-exact --no-stage2] ===
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_doc_qa']
+methods:   ['paged']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 146467.76it/s]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_doc_qa             [K=128   ] B=1   K=128 L_shared~80132 L_priv~51    n_leaves=128
+
+--- multi_doc_qa [K=128] ---
+  paged        warmup  wall= 52.5s  decode_total=44684.3ms
+  paged        r=0  prefill= 6369.5ms  decode=44639.7ms  plan/step= 1.45ms  fwd/step=173.45ms  p50/step=175.28ms  wall= 51.5s
+  paged        r=1  prefill= 6343.0ms  decode=44608.9ms  plan/step= 1.42ms  fwd/step=173.37ms  p50/step=175.22ms  wall= 51.3s
+  paged        r=2  prefill= 6369.7ms  decode=44694.1ms  plan/step= 1.56ms  fwd/step=173.53ms  p50/step=175.85ms  wall= 51.5s
+  rank (decode_total): paged=44608.9
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/_paged_F1.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_doc_qa             [K=128   ]   rank (decode_total): paged=44608.9
+[W523 21:18:48.807175488 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:18:48.416040812 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: +3 'paged' rows into benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/F1_multi_doc_qa_K128_B1_mn256.csv
+=== F2: paged multi_few_shot K=128 B=4 [--paper-exact --no-stage2] ===
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['paged']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 134120.19it/s]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=128   ] B=4   K=128 L_shared~5956  L_priv~128   n_leaves=512
+
+--- multi_few_shot [K=128] ---
+  paged        warmup  wall= 21.2s  decode_total=16832.8ms
+  paged        r=0  prefill= 2539.8ms  decode=16687.2ms  plan/step= 2.58ms  fwd/step=62.64ms  p50/step=65.43ms  wall= 19.9s
+  paged        r=1  prefill= 2542.9ms  decode=16654.4ms  plan/step= 2.59ms  fwd/step=62.49ms  p50/step=65.33ms  wall= 19.7s
+  paged        r=2  prefill= 2545.8ms  decode=16654.5ms  plan/step= 2.58ms  fwd/step=62.50ms  p50/step=65.32ms  wall= 19.9s
+  rank (decode_total): paged=16654.4
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/_paged_F2.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=128   ]   rank (decode_total): paged=16654.4
+[W523 21:20:21.094961575 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:20:21.689554869 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: +3 'paged' rows into benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/F2_multi_few_shot_K128_B4_mn256.csv
+=== F4: paged self_consistency K=16 B=1 [--no-stage2] ===
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['self_consistency']
+methods:   ['paged']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 142840.07it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  self_consistency         [K=16    ] B=1   K=16  L_shared~16384 L_priv~11    n_leaves=16
+
+--- self_consistency [K=16] ---
+  paged        warmup  wall=  4.9s  decode_total= 3134.7ms
+  paged        r=0  prefill=  526.4ms  decode= 3025.9ms  plan/step= 0.38ms  fwd/step=11.38ms  p50/step=11.92ms  wall=  3.7s
+  paged        r=1  prefill=  521.2ms  decode= 3026.4ms  plan/step= 0.38ms  fwd/step=11.38ms  p50/step=11.92ms  wall=  3.7s
+  paged        r=2  prefill=  524.5ms  decode= 3026.4ms  plan/step= 0.38ms  fwd/step=11.38ms  p50/step=11.92ms  wall=  3.7s
+  rank (decode_total): paged=3025.9
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/_paged_F4.csv
+
+=== summary (best decode_total per method, ms) ===
+self_consistency         [K=16    ]   rank (decode_total): paged=3025.9
+[W523 21:20:49.339730347 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:20:50.880644363 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: +3 'paged' rows into benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/F4_self_consistency_K16_B1_Lp16384_mn256.csv
+=== F3: paged beam_search K=64 B=8 L_p=16000 ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 256
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 136906.07it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+  paged          warmup K=64  L_p=16000  B=8  discard          decode_total=39682.2ms  ( 45.1s wall)
+  paged                 K=64  L_p=16000  B=8  prefill= 3836.9ms  decode_total=39608.5ms  per_pt_token= 19.42ms  ( 43.8s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/_paged_F3.csv
+[W523 21:22:32.681961114 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 21:22:33.273132818 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: +1 'paged' rows into benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/F3_beam_search_K64_B8_Lp16000_mn256.csv
+=== paged re-run done 2026-05-23T21:22:33+08:00 ===

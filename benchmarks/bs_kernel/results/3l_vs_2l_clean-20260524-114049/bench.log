@@ -1,0 +1,67 @@
+=== clean 2L-vs-3L (same multilevel TreeSpec) 2026-05-24T11:40:49+08:00 ===
+model: meta-llama/Llama-3.2-1B-Instruct ; cell: multi_few_shot K=32 B=4 max_new=256
+=== Run C: --tree-root, NO split → good-2L (bsk_2l_dt, bsk_2l_1p) ===
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bsk_2l_dt', 'bsk_2l_1p']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 68438.53it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=4   K=32  L_shared~6656  L_priv~80    n_leaves=128
+
+--- multi_few_shot [K=32] ---
+  bsk_2l_dt    warmup  wall=  2.6s  decode_total= 1370.9ms
+  bsk_2l_dt    r=0  prefill=  160.6ms  decode= 1291.5ms  plan/step= 0.60ms  fwd/step= 4.34ms  p50/step= 4.97ms  wall=  1.6s
+  bsk_2l_dt    r=1  prefill=  161.0ms  decode= 1281.3ms  plan/step= 0.60ms  fwd/step= 4.30ms  p50/step= 4.93ms  wall=  1.5s
+  bsk_2l_dt    r=2  prefill=  162.1ms  decode= 1280.7ms  plan/step= 0.60ms  fwd/step= 4.30ms  p50/step= 4.92ms  wall=  1.5s
+  bsk_2l_1p    warmup  wall=  1.7s  decode_total= 1394.3ms
+  bsk_2l_1p    r=0  prefill=  158.2ms  decode= 1388.3ms  plan/step= 0.74ms  fwd/step= 4.58ms  p50/step= 5.29ms  wall=  1.7s
+  bsk_2l_1p    r=1  prefill=  161.8ms  decode= 1390.0ms  plan/step= 0.74ms  fwd/step= 4.58ms  p50/step= 5.30ms  wall=  1.7s
+  bsk_2l_1p    r=2  prefill=  162.1ms  decode= 1388.7ms  plan/step= 0.74ms  fwd/step= 4.58ms  p50/step= 5.29ms  wall=  1.7s
+  rank (decode_total): bsk_2l_dt=1280.7, bsk_2l_1p=1388.3
+
+
+wrote 6 rows to benchmarks/bs_kernel/results/3l_vs_2l_clean-20260524-114049/run_c_tree_2l.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): bsk_2l_dt=1280.7, bsk_2l_1p=1388.3
+[W524 11:41:12.548522596 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== Run D: --tree-root + split n=256 → 3L (bsk_3l_dt, bsk_3l_1p) ===
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bsk_3l_dt', 'bsk_3l_1p']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 104484.44it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=4   K=32  L_shared~6656  L_priv~80    n_leaves=128
+
+--- multi_few_shot [K=32] ---
+  bsk_3l_dt    warmup  wall=  2.9s  decode_total= 1645.3ms
+  bsk_3l_dt    r=0  prefill=  158.7ms  decode= 1563.3ms  plan/step= 1.56ms  fwd/step= 4.45ms  p50/step= 6.04ms  wall=  1.8s
+  bsk_3l_dt    r=1  prefill=  159.8ms  decode= 1550.0ms  plan/step= 1.56ms  fwd/step= 4.39ms  p50/step= 5.98ms  wall=  1.8s
+  bsk_3l_dt    r=2  prefill=  162.6ms  decode= 1549.9ms  plan/step= 1.56ms  fwd/step= 4.40ms  p50/step= 5.98ms  wall=  1.8s
+  bsk_3l_1p    warmup  wall=  1.7s  decode_total= 1435.3ms
+  bsk_3l_1p    r=0  prefill=  160.7ms  decode= 1435.4ms  plan/step= 0.85ms  fwd/step= 4.65ms  p50/step= 5.52ms  wall=  1.7s
+  bsk_3l_1p    r=1  prefill=  160.5ms  decode= 1434.2ms  plan/step= 0.85ms  fwd/step= 4.65ms  p50/step= 5.52ms  wall=  1.7s
+  bsk_3l_1p    r=2  prefill=  159.4ms  decode= 1435.8ms  plan/step= 0.85ms  fwd/step= 4.66ms  p50/step= 5.52ms  wall=  1.7s
+  rank (decode_total): bsk_3l_1p=1434.2, bsk_3l_dt=1549.9
+
+
+wrote 6 rows to benchmarks/bs_kernel/results/3l_vs_2l_clean-20260524-114049/run_d_tree_3l.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): bsk_3l_1p=1434.2, bsk_3l_dt=1549.9
+[W524 11:41:35.713977122 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+Done. Results: benchmarks/bs_kernel/results/3l_vs_2l_clean-20260524-114049

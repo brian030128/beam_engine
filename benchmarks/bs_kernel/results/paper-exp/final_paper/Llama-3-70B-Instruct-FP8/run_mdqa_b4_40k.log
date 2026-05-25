@@ -1,0 +1,36 @@
+=== multi_doc_qa K=128 B=4 L_p=40K 70B-fp8 2026-05-23T19:50:08+08:00 ===
+W0523 19:50:09.470000 1761803 torch/distributed/run.py:803] 
+W0523 19:50:09.470000 1761803 torch/distributed/run.py:803] *****************************************
+W0523 19:50:09.470000 1761803 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 19:50:09.470000 1761803 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_doc_qa']
+methods:   ['paged', 'mlca', 'bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  5.17it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:05,  3.43it/s]Fetching 21 files:  14%|█▍        | 3/21 [00:31<03:51, 12.87s/it]Fetching 21 files:  14%|█▍        | 3/21 [00:31<03:53, 12.96s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:35<02:43,  9.61s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:35<02:44,  9.66s/it]Fetching 21 files:  29%|██▊       | 6/21 [00:41<01:32,  6.14s/it]Fetching 21 files:  29%|██▊       | 6/21 [00:40<01:31,  6.13s/it]Fetching 21 files:  48%|████▊     | 10/21 [00:42<00:29,  2.66s/it]Fetching 21 files:  48%|████▊     | 10/21 [00:42<00:29,  2.66s/it]Fetching 21 files:  52%|█████▏    | 11/21 [01:05<01:02,  6.21s/it]Fetching 21 files:  52%|█████▏    | 11/21 [01:05<01:02,  6.20s/it]Fetching 21 files:  57%|█████▋    | 12/21 [01:05<00:46,  5.11s/it]Fetching 21 files: 100%|██████████| 21/21 [01:05<00:00,  3.13s/it]
+Fetching 21 files:  57%|█████▋    | 12/21 [01:05<00:46,  5.13s/it]Fetching 21 files: 100%|██████████| 21/21 [01:05<00:00,  3.14s/it]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_doc_qa             [K=128   ] B=4   K=128 L_shared~40123 L_priv~51    n_leaves=512
+
+--- multi_doc_qa [K=128] ---
+  paged        r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 1.22 GiB. GPU 0 has a total capacity of 79.10 GiB of which 41.88 MiB is free. Including non-PyTorch memory, this process has 79.05 GiB memory in use. Of the allocated memory 78.44 GiB is allocated by PyTorch, and 19.96 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  mlca         r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 1.22 GiB. GPU 0 has a total capacity of 79.10 GiB of which 41.88 MiB is free. Including non-PyTorch memory, this process has 79.05 GiB memory in use. Of the allocated memory 78.45 GiB is allocated by PyTorch, and 11.71 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[W523 19:51:55.587968050 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  bs_kernel    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.90 GiB. GPU 0 has a total capacity of 79.10 GiB of which 4.88 GiB is free. Including non-PyTorch memory, this process has 74.21 GiB memory in use. Of the allocated memory 73.61 GiB is allocated by PyTorch, and 4.24 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  bsk_2l_1p    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.90 GiB. GPU 0 has a total capacity of 79.10 GiB of which 4.88 GiB is free. Including non-PyTorch memory, this process has 74.21 GiB memory in use. Of the allocated memory 73.61 GiB is allocated by PyTorch, and 4.24 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  bsk_2l_dt    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.90 GiB. GPU 0 has a total capacity of 79.10 GiB of which 4.88 GiB is free. Including non-PyTorch memory, this process has 74.21 GiB memory in use. Of the allocated memory 73.61 GiB is allocated by PyTorch, and 4.24 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  rank (decode_total): paged=inf, mlca=inf, bs_kernel=inf, bsk_2l_1p=inf, bsk_2l_dt=inf
+
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F1c_multi_doc_qa_K128_B4_Lp40k_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_doc_qa             [K=128   ]   rank (decode_total): paged=inf, mlca=inf, bs_kernel=inf, bsk_2l_1p=inf, bsk_2l_dt=inf
+[W523 19:51:58.718826294 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 19:51:59.613062254 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+=== done 2026-05-23T19:52:00+08:00 ===

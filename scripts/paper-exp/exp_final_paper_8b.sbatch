@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:H100:1
-#SBATCH --time=05:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=slurm/logs/final_paper_8b_%j.out
 #SBATCH --error=slurm/logs/final_paper_8b_%j.err
 
@@ -29,6 +29,9 @@ export BS_KERNEL_TRACE_PLAN=1
 export BE_MODEL="meta-llama/Llama-3.1-8B-Instruct"
 export BE_DTYPE=bf16
 export BE_KV_DTYPE=bf16
+
+# Data draws: 8 distinct text resamples per cell at the SAME shape.
+export SEEDS="${SEEDS:-0,1,2,3,4,5,6,7}"
 
 MODEL_TAG="Llama-3.1-8B-bf16"
 NPROC=1

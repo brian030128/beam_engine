@@ -1,0 +1,126 @@
+=== exp1a end-to-end timing started 2026-05-17T22:09:05+08:00 ===
+GPU: NVIDIA H100 80GB HBM3
+
+############ MODEL: Llama-3.2-1B ############
+  multi_level_system  (B=4, K=64)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_level_system']
+methods:   ['fasttree', 'deft', 'bs_kernel', 'paged', 'mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 33137.84it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=4   K=64  L_shared~2515  L_priv~80    n_leaves=256
+
+--- multi_level_system [K=64] ---
+  fasttree     warmup  wall=  3.9s  decode_total= 2453.6ms
+  fasttree     r=0  prefill=  144.1ms  decode= 1992.8ms  plan/step= 2.52ms  fwd/step= 5.15ms  p50/step= 7.46ms  wall=  2.3s
+  deft         warmup  wall=  3.4s  decode_total= 3137.3ms
+  deft         r=0  prefill=  145.5ms  decode= 3113.8ms  plan/step= 1.95ms  fwd/step=10.11ms  p50/step=12.27ms  wall=  3.4s
+  bs_kernel    warmup  wall=  1.7s  decode_total= 1366.9ms
+  bs_kernel    r=0  prefill=  146.7ms  decode= 1322.2ms  plan/step= 0.98ms  fwd/step= 4.05ms  p50/step= 4.91ms  wall=  1.6s
+  paged        warmup  wall=  2.5s  decode_total= 2170.3ms
+  paged        r=0  prefill=  147.6ms  decode= 2127.2ms  plan/step= 1.91ms  fwd/step= 6.28ms  p50/step= 8.28ms  wall=  2.4s
+  mlca         warmup  wall=  3.2s  decode_total= 2947.7ms
+  mlca         r=0  prefill=  144.1ms  decode= 2922.7ms  plan/step= 2.69ms  fwd/step= 8.62ms  p50/step=12.07ms  wall=  3.2s
+  rank (decode_total): bs_kernel=1322.2, fasttree=1992.8, paged=2127.2, mlca=2922.7, deft=3113.8
+
+
+wrote 5 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Llama-3.2-1B_level_system.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): bs_kernel=1322.2, fasttree=1992.8, paged=2127.2, mlca=2922.7, deft=3113.8
+[W517 22:09:44.609787384 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  multi_chain_reasoning  (B=32, K=64)  [no mlca; runs separately]
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_chain_reasoning']
+methods:   ['fasttree', 'deft', 'bs_kernel', 'paged']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 109963.03it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=64    ] B=32  K=64  L_shared~2574  L_priv~23    n_leaves=2048
+  multi_chain_reasoning (stage2) [K=64    ] B=32  K=1   L_shared~19368 L_priv~    0 n_leaves=32
+
+--- multi_chain_reasoning [K=64] ---
+  fasttree     warmup  wall= 23.8s  decode_total=17146.8ms
+  fasttree     r=0  prefill= 4659.1ms  decode=16786.0ms  plan/step=17.89ms  fwd/step=14.68ms  p50/step=27.96ms  wall= 22.5s
+  deft         warmup  wall= 39.4s  decode_total=33612.9ms
+  deft         r=0  prefill= 4671.9ms  decode=33034.2ms  plan/step= 9.33ms  fwd/step=55.10ms  p50/step=60.88ms  wall= 38.8s
+  bs_kernel    warmup  wall= 15.9s  decode_total=10047.0ms
+  bs_kernel    r=0  prefill= 4669.6ms  decode= 9956.3ms  plan/step= 5.05ms  fwd/step=14.13ms  p50/step=21.15ms  wall= 15.7s
+  paged        warmup  wall= 22.6s  decode_total=16828.8ms
+  paged        r=0  prefill= 4679.5ms  decode=16807.6ms  plan/step= 8.12ms  fwd/step=24.49ms  p50/step=31.36ms  wall= 22.6s
+  rank (decode_total): bs_kernel=9956.3, fasttree=16786.0, paged=16807.6, deft=33034.2
+
+
+wrote 4 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Llama-3.2-1B_chain_reasoning.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=64    ]   rank (decode_total): bs_kernel=9956.3, fasttree=16786.0, paged=16807.6, deft=33034.2
+[W517 22:13:15.659016543 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  multi_chain_reasoning  (mlca, may CUDA-fail)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_chain_reasoning']
+methods:   ['mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 56137.91it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=64    ] B=32  K=64  L_shared~2574  L_priv~23    n_leaves=2048
+  multi_chain_reasoning (stage2) [K=64    ] B=32  K=1   L_shared~19368 L_priv~    0 n_leaves=32
+
+--- multi_chain_reasoning [K=64] ---
+  mlca         warmup  wall= 34.4s  decode_total=27749.1ms
+  mlca         r=0  prefill= 4681.5ms  decode=27735.7ms  plan/step=10.12ms  fwd/step=43.94ms  p50/step=47.48ms  wall= 33.5s
+  rank (decode_total): mlca=27735.7
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1_end_to_end/timing/Llama-3.2-1B_chain_reasoning_mlca.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=64    ]   rank (decode_total): mlca=27735.7
+[W517 22:14:32.456107880 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  multi_few_shot  (B=32, K=64)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_few_shot']
+methods:   ['fasttree', 'deft', 'bs_kernel', 'paged', 'mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 23136.43it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=64    ] B=32  K=64  L_shared~5851  L_priv~130   n_leaves=2048
+
+--- multi_few_shot [K=64] ---
+  fasttree     warmup  wall= 20.6s  decode_total=16064.4ms
+  fasttree     r=0  prefill= 2437.5ms  decode=15677.5ms  plan/step=33.53ms  fwd/step=27.40ms  p50/step=53.36ms  wall= 18.8s
+  deft         warmup  wall= 30.0s  decode_total=26885.5ms
+  deft         r=0  prefill= 2455.0ms  decode=26754.2ms  plan/step=17.17ms  fwd/step=87.20ms  p50/step=102.88ms  wall= 29.9s

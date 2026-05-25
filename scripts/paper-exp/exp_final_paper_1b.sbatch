@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:H100:1
-#SBATCH --time=04:00:00
+#SBATCH --time=10:00:00
 #SBATCH --output=slurm/logs/final_paper_1b_%j.out
 #SBATCH --error=slurm/logs/final_paper_1b_%j.err
 
@@ -39,6 +39,11 @@ export BE_KV_DTYPE=bf16
 # tree/mlca on a cold build. Force FA2 prefill (compiles+runs for all hd on
 # Hopper). 8B/70B (hd=128) keep FA3 — do NOT set this there.
 export BE_FORCE_FA2=1
+
+# Data draws: 8 distinct text resamples per cell at the SAME shape (warmup
+# runs once on seed 0; extra draws are ~1 measured iter each). Override with
+# `sbatch --export=ALL,SEEDS=0` to reproduce the original single-draw table.
+export SEEDS="${SEEDS:-0,1,2,3,4,5,6,7}"
 
 MODEL_TAG="Llama-3.2-1B-bf16"
 NPROC=1

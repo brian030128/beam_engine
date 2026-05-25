@@ -1,0 +1,189 @@
+=== expSTRATv5 Qwen3-4B-FP8 TP=1 started 2026-05-21T16:26:35+08:00 ===
+model:    Qwen/Qwen3-4B-FP8  (tp=1, dtype=bf16, kv=fp8_e4m3)
+GPUs:     NVIDIA H100 80GB HBM3 × 1
+
+
+==========================================================
+=== BR1: multi_chain_reasoning  (K=64, B=32, max_new=256, R=2048, tp=1, fp8) ===
+==========================================================
+model: Qwen/Qwen3-4B-FP8  (tp_size=1)
+scenarios: ['multi_chain_reasoning']
+methods:   ['paged', 'bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 8 files:   0%|          | 0/8 [00:00<?, ?it/s]Fetching 8 files:  25%|██▌       | 2/8 [00:00<00:01,  5.93it/s]Fetching 8 files:  38%|███▊      | 3/8 [01:14<02:34, 30.94s/it]Fetching 8 files: 100%|██████████| 8/8 [01:14<00:00,  9.29s/it]
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 526, in <module>
+    main()
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 364, in main
+    model = load_model_for_causal_lm(MODEL_NAME, dtype=DTYPE, device=DEVICE)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/models/__init__.py", line 26, in load_model_for_causal_lm
+    return Qwen3ForCausalLM.from_pretrained(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/models/modeling_qwen3.py", line 225, in from_pretrained
+    _load_into_model(model, remapped, dtype=dtype, device=device)
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/models/modeling_qwen3.py", line 297, in _load_into_model
+    raise RuntimeError(f"unused weights: {sorted(leftover)}")
+RuntimeError: unused weights: ['model.layers.0.mlp.down_proj.weight_scale_inv', 'model.layers.0.mlp.gate_up_proj.weight_scale_inv', 'model.layers.0.self_attn.o_proj.weight_scale_inv', 'model.layers.0.self_attn.qkv_proj.weight_scale_inv', 'model.layers.1.mlp.down_proj.weight_scale_inv', 'model.layers.1.mlp.gate_up_proj.weight_scale_inv', 'model.layers.1.self_attn.o_proj.weight_scale_inv', 'model.layers.1.self_attn.qkv_proj.weight_scale_inv', 'model.layers.10.mlp.down_proj.weight_scale_inv', 'model.layers.10.mlp.gate_up_proj.weight_scale_inv', 'model.layers.10.self_attn.o_proj.weight_scale_inv', 'model.layers.10.self_attn.qkv_proj.weight_scale_inv', 'model.layers.11.mlp.down_proj.weight_scale_inv', 'model.layers.11.mlp.gate_up_proj.weight_scale_inv', 'model.layers.11.self_attn.o_proj.weight_scale_inv', 'model.layers.11.self_attn.qkv_proj.weight_scale_inv', 'model.layers.12.mlp.down_proj.weight_scale_inv', 'model.layers.12.mlp.gate_up_proj.weight_scale_inv', 'model.layers.12.self_attn.o_proj.weight_scale_inv', 'model.layers.12.self_attn.qkv_proj.weight_scale_inv', 'model.layers.13.mlp.down_proj.weight_scale_inv', 'model.layers.13.mlp.gate_up_proj.weight_scale_inv', 'model.layers.13.self_attn.o_proj.weight_scale_inv', 'model.layers.13.self_attn.qkv_proj.weight_scale_inv', 'model.layers.14.mlp.down_proj.weight_scale_inv', 'model.layers.14.mlp.gate_up_proj.weight_scale_inv', 'model.layers.14.self_attn.o_proj.weight_scale_inv', 'model.layers.14.self_attn.qkv_proj.weight_scale_inv', 'model.layers.15.mlp.down_proj.weight_scale_inv', 'model.layers.15.mlp.gate_up_proj.weight_scale_inv', 'model.layers.15.self_attn.o_proj.weight_scale_inv', 'model.layers.15.self_attn.qkv_proj.weight_scale_inv', 'model.layers.16.mlp.down_proj.weight_scale_inv', 'model.layers.16.mlp.gate_up_proj.weight_scale_inv', 'model.layers.16.self_attn.o_proj.weight_scale_inv', 'model.layers.16.self_attn.qkv_proj.weight_scale_inv', 'model.layers.17.mlp.down_proj.weight_scale_inv', 'model.layers.17.mlp.gate_up_proj.weight_scale_inv', 'model.layers.17.self_attn.o_proj.weight_scale_inv', 'model.layers.17.self_attn.qkv_proj.weight_scale_inv', 'model.layers.18.mlp.down_proj.weight_scale_inv', 'model.layers.18.mlp.gate_up_proj.weight_scale_inv', 'model.layers.18.self_attn.o_proj.weight_scale_inv', 'model.layers.18.self_attn.qkv_proj.weight_scale_inv', 'model.layers.19.mlp.down_proj.weight_scale_inv', 'model.layers.19.mlp.gate_up_proj.weight_scale_inv', 'model.layers.19.self_attn.o_proj.weight_scale_inv', 'model.layers.19.self_attn.qkv_proj.weight_scale_inv', 'model.layers.2.mlp.down_proj.weight_scale_inv', 'model.layers.2.mlp.gate_up_proj.weight_scale_inv', 'model.layers.2.self_attn.o_proj.weight_scale_inv', 'model.layers.2.self_attn.qkv_proj.weight_scale_inv', 'model.layers.20.mlp.down_proj.weight_scale_inv', 'model.layers.20.mlp.gate_up_proj.weight_scale_inv', 'model.layers.20.self_attn.o_proj.weight_scale_inv', 'model.layers.20.self_attn.qkv_proj.weight_scale_inv', 'model.layers.21.mlp.down_proj.weight_scale_inv', 'model.layers.21.mlp.gate_up_proj.weight_scale_inv', 'model.layers.21.self_attn.o_proj.weight_scale_inv', 'model.layers.21.self_attn.qkv_proj.weight_scale_inv', 'model.layers.22.mlp.down_proj.weight_scale_inv', 'model.layers.22.mlp.gate_up_proj.weight_scale_inv', 'model.layers.22.self_attn.o_proj.weight_scale_inv', 'model.layers.22.self_attn.qkv_proj.weight_scale_inv', 'model.layers.23.mlp.down_proj.weight_scale_inv', 'model.layers.23.mlp.gate_up_proj.weight_scale_inv', 'model.layers.23.self_attn.o_proj.weight_scale_inv', 'model.layers.23.self_attn.qkv_proj.weight_scale_inv', 'model.layers.24.mlp.down_proj.weight_scale_inv', 'model.layers.24.mlp.gate_up_proj.weight_scale_inv', 'model.layers.24.self_attn.o_proj.weight_scale_inv', 'model.layers.24.self_attn.qkv_proj.weight_scale_inv', 'model.layers.25.mlp.down_proj.weight_scale_inv', 'model.layers.25.mlp.gate_up_proj.weight_scale_inv', 'model.layers.25.self_attn.o_proj.weight_scale_inv', 'model.layers.25.self_attn.qkv_proj.weight_scale_inv', 'model.layers.26.mlp.down_proj.weight_scale_inv', 'model.layers.26.mlp.gate_up_proj.weight_scale_inv', 'model.layers.26.self_attn.o_proj.weight_scale_inv', 'model.layers.26.self_attn.qkv_proj.weight_scale_inv', 'model.layers.27.mlp.down_proj.weight_scale_inv', 'model.layers.27.mlp.gate_up_proj.weight_scale_inv', 'model.layers.27.self_attn.o_proj.weight_scale_inv', 'model.layers.27.self_attn.qkv_proj.weight_scale_inv', 'model.layers.28.mlp.down_proj.weight_scale_inv', 'model.layers.28.mlp.gate_up_proj.weight_scale_inv', 'model.layers.28.self_attn.o_proj.weight_scale_inv', 'model.layers.28.self_attn.qkv_proj.weight_scale_inv', 'model.layers.29.mlp.down_proj.weight_scale_inv', 'model.layers.29.mlp.gate_up_proj.weight_scale_inv', 'model.layers.29.self_attn.o_proj.weight_scale_inv', 'model.layers.29.self_attn.qkv_proj.weight_scale_inv', 'model.layers.3.mlp.down_proj.weight_scale_inv', 'model.layers.3.mlp.gate_up_proj.weight_scale_inv', 'model.layers.3.self_attn.o_proj.weight_scale_inv', 'model.layers.3.self_attn.qkv_proj.weight_scale_inv', 'model.layers.30.mlp.down_proj.weight_scale_inv', 'model.layers.30.mlp.gate_up_proj.weight_scale_inv', 'model.layers.30.self_attn.o_proj.weight_scale_inv', 'model.layers.30.self_attn.qkv_proj.weight_scale_inv', 'model.layers.31.mlp.down_proj.weight_scale_inv', 'model.layers.31.mlp.gate_up_proj.weight_scale_inv', 'model.layers.31.self_attn.o_proj.weight_scale_inv', 'model.layers.31.self_attn.qkv_proj.weight_scale_inv', 'model.layers.32.mlp.down_proj.weight_scale_inv', 'model.layers.32.mlp.gate_up_proj.weight_scale_inv', 'model.layers.32.self_attn.o_proj.weight_scale_inv', 'model.layers.32.self_attn.qkv_proj.weight_scale_inv', 'model.layers.33.mlp.down_proj.weight_scale_inv', 'model.layers.33.mlp.gate_up_proj.weight_scale_inv', 'model.layers.33.self_attn.o_proj.weight_scale_inv', 'model.layers.33.self_attn.qkv_proj.weight_scale_inv', 'model.layers.34.mlp.down_proj.weight_scale_inv', 'model.layers.34.mlp.gate_up_proj.weight_scale_inv', 'model.layers.34.self_attn.o_proj.weight_scale_inv', 'model.layers.34.self_attn.qkv_proj.weight_scale_inv', 'model.layers.35.mlp.down_proj.weight_scale_inv', 'model.layers.35.mlp.gate_up_proj.weight_scale_inv', 'model.layers.35.self_attn.o_proj.weight_scale_inv', 'model.layers.35.self_attn.qkv_proj.weight_scale_inv', 'model.layers.4.mlp.down_proj.weight_scale_inv', 'model.layers.4.mlp.gate_up_proj.weight_scale_inv', 'model.layers.4.self_attn.o_proj.weight_scale_inv', 'model.layers.4.self_attn.qkv_proj.weight_scale_inv', 'model.layers.5.mlp.down_proj.weight_scale_inv', 'model.layers.5.mlp.gate_up_proj.weight_scale_inv', 'model.layers.5.self_attn.o_proj.weight_scale_inv', 'model.layers.5.self_attn.qkv_proj.weight_scale_inv', 'model.layers.6.mlp.down_proj.weight_scale_inv', 'model.layers.6.mlp.gate_up_proj.weight_scale_inv', 'model.layers.6.self_attn.o_proj.weight_scale_inv', 'model.layers.6.self_attn.qkv_proj.weight_scale_inv', 'model.layers.7.mlp.down_proj.weight_scale_inv', 'model.layers.7.mlp.gate_up_proj.weight_scale_inv', 'model.layers.7.self_attn.o_proj.weight_scale_inv', 'model.layers.7.self_attn.qkv_proj.weight_scale_inv', 'model.layers.8.mlp.down_proj.weight_scale_inv', 'model.layers.8.mlp.gate_up_proj.weight_scale_inv', 'model.layers.8.self_attn.o_proj.weight_scale_inv', 'model.layers.8.self_attn.qkv_proj.weight_scale_inv', 'model.layers.9.mlp.down_proj.weight_scale_inv', 'model.layers.9.mlp.gate_up_proj.weight_scale_inv', 'model.layers.9.self_attn.o_proj.weight_scale_inv', 'model.layers.9.self_attn.qkv_proj.weight_scale_inv']
+[W521 16:28:11.487483617 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+E0521 16:28:11.499000 3542455 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 3550229) of binary: /home/u4320956/beam_engine-v3/.venv/bin/python
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/bin/torchrun", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+benchmarks/bs_kernel/bench_sglang_e2e.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-05-21_16:28:11
+  host      : hgpn19
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 3550229)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+[W521 16:28:11.163212077 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  (cell BR1 failed; continuing)
+
+==========================================================
+=== BR3: multi_chain_reasoning  (K=64, B=64, max_new=128, R=4096, tp=1, fp8) ===
+==========================================================
+model: Qwen/Qwen3-4B-FP8  (tp_size=1)
+scenarios: ['multi_chain_reasoning']
+methods:   ['paged', 'bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   128, repeat: 1
+
+Loading tokenizer + model...
+Fetching 8 files:   0%|          | 0/8 [00:00<?, ?it/s]Fetching 8 files: 100%|██████████| 8/8 [00:00<00:00, 114520.25it/s]
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 526, in <module>
+    main()
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 364, in main
+    model = load_model_for_causal_lm(MODEL_NAME, dtype=DTYPE, device=DEVICE)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/models/__init__.py", line 26, in load_model_for_causal_lm
+    return Qwen3ForCausalLM.from_pretrained(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/models/modeling_qwen3.py", line 225, in from_pretrained
+    _load_into_model(model, remapped, dtype=dtype, device=device)
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/models/modeling_qwen3.py", line 297, in _load_into_model
+    raise RuntimeError(f"unused weights: {sorted(leftover)}")
+RuntimeError: unused weights: ['model.layers.0.mlp.down_proj.weight_scale_inv', 'model.layers.0.mlp.gate_up_proj.weight_scale_inv', 'model.layers.0.self_attn.o_proj.weight_scale_inv', 'model.layers.0.self_attn.qkv_proj.weight_scale_inv', 'model.layers.1.mlp.down_proj.weight_scale_inv', 'model.layers.1.mlp.gate_up_proj.weight_scale_inv', 'model.layers.1.self_attn.o_proj.weight_scale_inv', 'model.layers.1.self_attn.qkv_proj.weight_scale_inv', 'model.layers.10.mlp.down_proj.weight_scale_inv', 'model.layers.10.mlp.gate_up_proj.weight_scale_inv', 'model.layers.10.self_attn.o_proj.weight_scale_inv', 'model.layers.10.self_attn.qkv_proj.weight_scale_inv', 'model.layers.11.mlp.down_proj.weight_scale_inv', 'model.layers.11.mlp.gate_up_proj.weight_scale_inv', 'model.layers.11.self_attn.o_proj.weight_scale_inv', 'model.layers.11.self_attn.qkv_proj.weight_scale_inv', 'model.layers.12.mlp.down_proj.weight_scale_inv', 'model.layers.12.mlp.gate_up_proj.weight_scale_inv', 'model.layers.12.self_attn.o_proj.weight_scale_inv', 'model.layers.12.self_attn.qkv_proj.weight_scale_inv', 'model.layers.13.mlp.down_proj.weight_scale_inv', 'model.layers.13.mlp.gate_up_proj.weight_scale_inv', 'model.layers.13.self_attn.o_proj.weight_scale_inv', 'model.layers.13.self_attn.qkv_proj.weight_scale_inv', 'model.layers.14.mlp.down_proj.weight_scale_inv', 'model.layers.14.mlp.gate_up_proj.weight_scale_inv', 'model.layers.14.self_attn.o_proj.weight_scale_inv', 'model.layers.14.self_attn.qkv_proj.weight_scale_inv', 'model.layers.15.mlp.down_proj.weight_scale_inv', 'model.layers.15.mlp.gate_up_proj.weight_scale_inv', 'model.layers.15.self_attn.o_proj.weight_scale_inv', 'model.layers.15.self_attn.qkv_proj.weight_scale_inv', 'model.layers.16.mlp.down_proj.weight_scale_inv', 'model.layers.16.mlp.gate_up_proj.weight_scale_inv', 'model.layers.16.self_attn.o_proj.weight_scale_inv', 'model.layers.16.self_attn.qkv_proj.weight_scale_inv', 'model.layers.17.mlp.down_proj.weight_scale_inv', 'model.layers.17.mlp.gate_up_proj.weight_scale_inv', 'model.layers.17.self_attn.o_proj.weight_scale_inv', 'model.layers.17.self_attn.qkv_proj.weight_scale_inv', 'model.layers.18.mlp.down_proj.weight_scale_inv', 'model.layers.18.mlp.gate_up_proj.weight_scale_inv', 'model.layers.18.self_attn.o_proj.weight_scale_inv', 'model.layers.18.self_attn.qkv_proj.weight_scale_inv', 'model.layers.19.mlp.down_proj.weight_scale_inv', 'model.layers.19.mlp.gate_up_proj.weight_scale_inv', 'model.layers.19.self_attn.o_proj.weight_scale_inv', 'model.layers.19.self_attn.qkv_proj.weight_scale_inv', 'model.layers.2.mlp.down_proj.weight_scale_inv', 'model.layers.2.mlp.gate_up_proj.weight_scale_inv', 'model.layers.2.self_attn.o_proj.weight_scale_inv', 'model.layers.2.self_attn.qkv_proj.weight_scale_inv', 'model.layers.20.mlp.down_proj.weight_scale_inv', 'model.layers.20.mlp.gate_up_proj.weight_scale_inv', 'model.layers.20.self_attn.o_proj.weight_scale_inv', 'model.layers.20.self_attn.qkv_proj.weight_scale_inv', 'model.layers.21.mlp.down_proj.weight_scale_inv', 'model.layers.21.mlp.gate_up_proj.weight_scale_inv', 'model.layers.21.self_attn.o_proj.weight_scale_inv', 'model.layers.21.self_attn.qkv_proj.weight_scale_inv', 'model.layers.22.mlp.down_proj.weight_scale_inv', 'model.layers.22.mlp.gate_up_proj.weight_scale_inv', 'model.layers.22.self_attn.o_proj.weight_scale_inv', 'model.layers.22.self_attn.qkv_proj.weight_scale_inv', 'model.layers.23.mlp.down_proj.weight_scale_inv', 'model.layers.23.mlp.gate_up_proj.weight_scale_inv', 'model.layers.23.self_attn.o_proj.weight_scale_inv', 'model.layers.23.self_attn.qkv_proj.weight_scale_inv', 'model.layers.24.mlp.down_proj.weight_scale_inv', 'model.layers.24.mlp.gate_up_proj.weight_scale_inv', 'model.layers.24.self_attn.o_proj.weight_scale_inv', 'model.layers.24.self_attn.qkv_proj.weight_scale_inv', 'model.layers.25.mlp.down_proj.weight_scale_inv', 'model.layers.25.mlp.gate_up_proj.weight_scale_inv', 'model.layers.25.self_attn.o_proj.weight_scale_inv', 'model.layers.25.self_attn.qkv_proj.weight_scale_inv', 'model.layers.26.mlp.down_proj.weight_scale_inv', 'model.layers.26.mlp.gate_up_proj.weight_scale_inv', 'model.layers.26.self_attn.o_proj.weight_scale_inv', 'model.layers.26.self_attn.qkv_proj.weight_scale_inv', 'model.layers.27.mlp.down_proj.weight_scale_inv', 'model.layers.27.mlp.gate_up_proj.weight_scale_inv', 'model.layers.27.self_attn.o_proj.weight_scale_inv', 'model.layers.27.self_attn.qkv_proj.weight_scale_inv', 'model.layers.28.mlp.down_proj.weight_scale_inv', 'model.layers.28.mlp.gate_up_proj.weight_scale_inv', 'model.layers.28.self_attn.o_proj.weight_scale_inv', 'model.layers.28.self_attn.qkv_proj.weight_scale_inv', 'model.layers.29.mlp.down_proj.weight_scale_inv', 'model.layers.29.mlp.gate_up_proj.weight_scale_inv', 'model.layers.29.self_attn.o_proj.weight_scale_inv', 'model.layers.29.self_attn.qkv_proj.weight_scale_inv', 'model.layers.3.mlp.down_proj.weight_scale_inv', 'model.layers.3.mlp.gate_up_proj.weight_scale_inv', 'model.layers.3.self_attn.o_proj.weight_scale_inv', 'model.layers.3.self_attn.qkv_proj.weight_scale_inv', 'model.layers.30.mlp.down_proj.weight_scale_inv', 'model.layers.30.mlp.gate_up_proj.weight_scale_inv', 'model.layers.30.self_attn.o_proj.weight_scale_inv', 'model.layers.30.self_attn.qkv_proj.weight_scale_inv', 'model.layers.31.mlp.down_proj.weight_scale_inv', 'model.layers.31.mlp.gate_up_proj.weight_scale_inv', 'model.layers.31.self_attn.o_proj.weight_scale_inv', 'model.layers.31.self_attn.qkv_proj.weight_scale_inv', 'model.layers.32.mlp.down_proj.weight_scale_inv', 'model.layers.32.mlp.gate_up_proj.weight_scale_inv', 'model.layers.32.self_attn.o_proj.weight_scale_inv', 'model.layers.32.self_attn.qkv_proj.weight_scale_inv', 'model.layers.33.mlp.down_proj.weight_scale_inv', 'model.layers.33.mlp.gate_up_proj.weight_scale_inv', 'model.layers.33.self_attn.o_proj.weight_scale_inv', 'model.layers.33.self_attn.qkv_proj.weight_scale_inv', 'model.layers.34.mlp.down_proj.weight_scale_inv', 'model.layers.34.mlp.gate_up_proj.weight_scale_inv', 'model.layers.34.self_attn.o_proj.weight_scale_inv', 'model.layers.34.self_attn.qkv_proj.weight_scale_inv', 'model.layers.35.mlp.down_proj.weight_scale_inv', 'model.layers.35.mlp.gate_up_proj.weight_scale_inv', 'model.layers.35.self_attn.o_proj.weight_scale_inv', 'model.layers.35.self_attn.qkv_proj.weight_scale_inv', 'model.layers.4.mlp.down_proj.weight_scale_inv', 'model.layers.4.mlp.gate_up_proj.weight_scale_inv', 'model.layers.4.self_attn.o_proj.weight_scale_inv', 'model.layers.4.self_attn.qkv_proj.weight_scale_inv', 'model.layers.5.mlp.down_proj.weight_scale_inv', 'model.layers.5.mlp.gate_up_proj.weight_scale_inv', 'model.layers.5.self_attn.o_proj.weight_scale_inv', 'model.layers.5.self_attn.qkv_proj.weight_scale_inv', 'model.layers.6.mlp.down_proj.weight_scale_inv', 'model.layers.6.mlp.gate_up_proj.weight_scale_inv', 'model.layers.6.self_attn.o_proj.weight_scale_inv', 'model.layers.6.self_attn.qkv_proj.weight_scale_inv', 'model.layers.7.mlp.down_proj.weight_scale_inv', 'model.layers.7.mlp.gate_up_proj.weight_scale_inv', 'model.layers.7.self_attn.o_proj.weight_scale_inv', 'model.layers.7.self_attn.qkv_proj.weight_scale_inv', 'model.layers.8.mlp.down_proj.weight_scale_inv', 'model.layers.8.mlp.gate_up_proj.weight_scale_inv', 'model.layers.8.self_attn.o_proj.weight_scale_inv', 'model.layers.8.self_attn.qkv_proj.weight_scale_inv', 'model.layers.9.mlp.down_proj.weight_scale_inv', 'model.layers.9.mlp.gate_up_proj.weight_scale_inv', 'model.layers.9.self_attn.o_proj.weight_scale_inv', 'model.layers.9.self_attn.qkv_proj.weight_scale_inv']
+[W521 16:28:25.386752388 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+E0521 16:28:26.371000 3806420 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 3812082) of binary: /home/u4320956/beam_engine-v3/.venv/bin/python
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/bin/torchrun", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+benchmarks/bs_kernel/bench_sglang_e2e.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-05-21_16:28:26
+  host      : hgpn19
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 3812082)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+[W521 16:28:26.082034913 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  (cell BR3 failed; continuing)
+
+==========================================================
+=== BR4: multi_chain_reasoning  (K=128, B=32, max_new=128, R=4096, tp=1, fp8) ===
+==========================================================
+model: Qwen/Qwen3-4B-FP8  (tp_size=1)
+scenarios: ['multi_chain_reasoning']
+methods:   ['paged', 'bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   128, repeat: 1
+
+Loading tokenizer + model...
+Fetching 8 files:   0%|          | 0/8 [00:00<?, ?it/s]Fetching 8 files: 100%|██████████| 8/8 [00:00<00:00, 106522.01it/s]
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 526, in <module>
+    main()
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 364, in main
+    model = load_model_for_causal_lm(MODEL_NAME, dtype=DTYPE, device=DEVICE)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/models/__init__.py", line 26, in load_model_for_causal_lm
+    return Qwen3ForCausalLM.from_pretrained(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/models/modeling_qwen3.py", line 225, in from_pretrained
+    _load_into_model(model, remapped, dtype=dtype, device=device)
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/models/modeling_qwen3.py", line 297, in _load_into_model
+    raise RuntimeError(f"unused weights: {sorted(leftover)}")
+RuntimeError: unused weights: ['model.layers.0.mlp.down_proj.weight_scale_inv', 'model.layers.0.mlp.gate_up_proj.weight_scale_inv', 'model.layers.0.self_attn.o_proj.weight_scale_inv', 'model.layers.0.self_attn.qkv_proj.weight_scale_inv', 'model.layers.1.mlp.down_proj.weight_scale_inv', 'model.layers.1.mlp.gate_up_proj.weight_scale_inv', 'model.layers.1.self_attn.o_proj.weight_scale_inv', 'model.layers.1.self_attn.qkv_proj.weight_scale_inv', 'model.layers.10.mlp.down_proj.weight_scale_inv', 'model.layers.10.mlp.gate_up_proj.weight_scale_inv', 'model.layers.10.self_attn.o_proj.weight_scale_inv', 'model.layers.10.self_attn.qkv_proj.weight_scale_inv', 'model.layers.11.mlp.down_proj.weight_scale_inv', 'model.layers.11.mlp.gate_up_proj.weight_scale_inv', 'model.layers.11.self_attn.o_proj.weight_scale_inv', 'model.layers.11.self_attn.qkv_proj.weight_scale_inv', 'model.layers.12.mlp.down_proj.weight_scale_inv', 'model.layers.12.mlp.gate_up_proj.weight_scale_inv', 'model.layers.12.self_attn.o_proj.weight_scale_inv', 'model.layers.12.self_attn.qkv_proj.weight_scale_inv', 'model.layers.13.mlp.down_proj.weight_scale_inv', 'model.layers.13.mlp.gate_up_proj.weight_scale_inv', 'model.layers.13.self_attn.o_proj.weight_scale_inv', 'model.layers.13.self_attn.qkv_proj.weight_scale_inv', 'model.layers.14.mlp.down_proj.weight_scale_inv', 'model.layers.14.mlp.gate_up_proj.weight_scale_inv', 'model.layers.14.self_attn.o_proj.weight_scale_inv', 'model.layers.14.self_attn.qkv_proj.weight_scale_inv', 'model.layers.15.mlp.down_proj.weight_scale_inv', 'model.layers.15.mlp.gate_up_proj.weight_scale_inv', 'model.layers.15.self_attn.o_proj.weight_scale_inv', 'model.layers.15.self_attn.qkv_proj.weight_scale_inv', 'model.layers.16.mlp.down_proj.weight_scale_inv', 'model.layers.16.mlp.gate_up_proj.weight_scale_inv', 'model.layers.16.self_attn.o_proj.weight_scale_inv', 'model.layers.16.self_attn.qkv_proj.weight_scale_inv', 'model.layers.17.mlp.down_proj.weight_scale_inv', 'model.layers.17.mlp.gate_up_proj.weight_scale_inv', 'model.layers.17.self_attn.o_proj.weight_scale_inv', 'model.layers.17.self_attn.qkv_proj.weight_scale_inv', 'model.layers.18.mlp.down_proj.weight_scale_inv', 'model.layers.18.mlp.gate_up_proj.weight_scale_inv', 'model.layers.18.self_attn.o_proj.weight_scale_inv', 'model.layers.18.self_attn.qkv_proj.weight_scale_inv', 'model.layers.19.mlp.down_proj.weight_scale_inv', 'model.layers.19.mlp.gate_up_proj.weight_scale_inv', 'model.layers.19.self_attn.o_proj.weight_scale_inv', 'model.layers.19.self_attn.qkv_proj.weight_scale_inv', 'model.layers.2.mlp.down_proj.weight_scale_inv', 'model.layers.2.mlp.gate_up_proj.weight_scale_inv', 'model.layers.2.self_attn.o_proj.weight_scale_inv', 'model.layers.2.self_attn.qkv_proj.weight_scale_inv', 'model.layers.20.mlp.down_proj.weight_scale_inv', 'model.layers.20.mlp.gate_up_proj.weight_scale_inv', 'model.layers.20.self_attn.o_proj.weight_scale_inv', 'model.layers.20.self_attn.qkv_proj.weight_scale_inv', 'model.layers.21.mlp.down_proj.weight_scale_inv', 'model.layers.21.mlp.gate_up_proj.weight_scale_inv', 'model.layers.21.self_attn.o_proj.weight_scale_inv', 'model.layers.21.self_attn.qkv_proj.weight_scale_inv', 'model.layers.22.mlp.down_proj.weight_scale_inv', 'model.layers.22.mlp.gate_up_proj.weight_scale_inv', 'model.layers.22.self_attn.o_proj.weight_scale_inv', 'model.layers.22.self_attn.qkv_proj.weight_scale_inv', 'model.layers.23.mlp.down_proj.weight_scale_inv', 'model.layers.23.mlp.gate_up_proj.weight_scale_inv', 'model.layers.23.self_attn.o_proj.weight_scale_inv', 'model.layers.23.self_attn.qkv_proj.weight_scale_inv', 'model.layers.24.mlp.down_proj.weight_scale_inv', 'model.layers.24.mlp.gate_up_proj.weight_scale_inv', 'model.layers.24.self_attn.o_proj.weight_scale_inv', 'model.layers.24.self_attn.qkv_proj.weight_scale_inv', 'model.layers.25.mlp.down_proj.weight_scale_inv', 'model.layers.25.mlp.gate_up_proj.weight_scale_inv', 'model.layers.25.self_attn.o_proj.weight_scale_inv', 'model.layers.25.self_attn.qkv_proj.weight_scale_inv', 'model.layers.26.mlp.down_proj.weight_scale_inv', 'model.layers.26.mlp.gate_up_proj.weight_scale_inv', 'model.layers.26.self_attn.o_proj.weight_scale_inv', 'model.layers.26.self_attn.qkv_proj.weight_scale_inv', 'model.layers.27.mlp.down_proj.weight_scale_inv', 'model.layers.27.mlp.gate_up_proj.weight_scale_inv', 'model.layers.27.self_attn.o_proj.weight_scale_inv', 'model.layers.27.self_attn.qkv_proj.weight_scale_inv', 'model.layers.28.mlp.down_proj.weight_scale_inv', 'model.layers.28.mlp.gate_up_proj.weight_scale_inv', 'model.layers.28.self_attn.o_proj.weight_scale_inv', 'model.layers.28.self_attn.qkv_proj.weight_scale_inv', 'model.layers.29.mlp.down_proj.weight_scale_inv', 'model.layers.29.mlp.gate_up_proj.weight_scale_inv', 'model.layers.29.self_attn.o_proj.weight_scale_inv', 'model.layers.29.self_attn.qkv_proj.weight_scale_inv', 'model.layers.3.mlp.down_proj.weight_scale_inv', 'model.layers.3.mlp.gate_up_proj.weight_scale_inv', 'model.layers.3.self_attn.o_proj.weight_scale_inv', 'model.layers.3.self_attn.qkv_proj.weight_scale_inv', 'model.layers.30.mlp.down_proj.weight_scale_inv', 'model.layers.30.mlp.gate_up_proj.weight_scale_inv', 'model.layers.30.self_attn.o_proj.weight_scale_inv', 'model.layers.30.self_attn.qkv_proj.weight_scale_inv', 'model.layers.31.mlp.down_proj.weight_scale_inv', 'model.layers.31.mlp.gate_up_proj.weight_scale_inv', 'model.layers.31.self_attn.o_proj.weight_scale_inv', 'model.layers.31.self_attn.qkv_proj.weight_scale_inv', 'model.layers.32.mlp.down_proj.weight_scale_inv', 'model.layers.32.mlp.gate_up_proj.weight_scale_inv', 'model.layers.32.self_attn.o_proj.weight_scale_inv', 'model.layers.32.self_attn.qkv_proj.weight_scale_inv', 'model.layers.33.mlp.down_proj.weight_scale_inv', 'model.layers.33.mlp.gate_up_proj.weight_scale_inv', 'model.layers.33.self_attn.o_proj.weight_scale_inv', 'model.layers.33.self_attn.qkv_proj.weight_scale_inv', 'model.layers.34.mlp.down_proj.weight_scale_inv', 'model.layers.34.mlp.gate_up_proj.weight_scale_inv', 'model.layers.34.self_attn.o_proj.weight_scale_inv', 'model.layers.34.self_attn.qkv_proj.weight_scale_inv', 'model.layers.35.mlp.down_proj.weight_scale_inv', 'model.layers.35.mlp.gate_up_proj.weight_scale_inv', 'model.layers.35.self_attn.o_proj.weight_scale_inv', 'model.layers.35.self_attn.qkv_proj.weight_scale_inv', 'model.layers.4.mlp.down_proj.weight_scale_inv', 'model.layers.4.mlp.gate_up_proj.weight_scale_inv', 'model.layers.4.self_attn.o_proj.weight_scale_inv', 'model.layers.4.self_attn.qkv_proj.weight_scale_inv', 'model.layers.5.mlp.down_proj.weight_scale_inv', 'model.layers.5.mlp.gate_up_proj.weight_scale_inv', 'model.layers.5.self_attn.o_proj.weight_scale_inv', 'model.layers.5.self_attn.qkv_proj.weight_scale_inv', 'model.layers.6.mlp.down_proj.weight_scale_inv', 'model.layers.6.mlp.gate_up_proj.weight_scale_inv', 'model.layers.6.self_attn.o_proj.weight_scale_inv', 'model.layers.6.self_attn.qkv_proj.weight_scale_inv', 'model.layers.7.mlp.down_proj.weight_scale_inv', 'model.layers.7.mlp.gate_up_proj.weight_scale_inv', 'model.layers.7.self_attn.o_proj.weight_scale_inv', 'model.layers.7.self_attn.qkv_proj.weight_scale_inv', 'model.layers.8.mlp.down_proj.weight_scale_inv', 'model.layers.8.mlp.gate_up_proj.weight_scale_inv', 'model.layers.8.self_attn.o_proj.weight_scale_inv', 'model.layers.8.self_attn.qkv_proj.weight_scale_inv', 'model.layers.9.mlp.down_proj.weight_scale_inv', 'model.layers.9.mlp.gate_up_proj.weight_scale_inv', 'model.layers.9.self_attn.o_proj.weight_scale_inv', 'model.layers.9.self_attn.qkv_proj.weight_scale_inv']
+[W521 16:28:40.533889770 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+E0521 16:28:40.426000 3847065 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 3851691) of binary: /home/u4320956/beam_engine-v3/.venv/bin/python
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/bin/torchrun", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+benchmarks/bs_kernel/bench_sglang_e2e.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-05-21_16:28:40
+  host      : hgpn19
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 3851691)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+[W521 16:28:40.092545415 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  (cell BR4 failed; continuing)
+
+=== done 2026-05-21T16:28:40+08:00 ===

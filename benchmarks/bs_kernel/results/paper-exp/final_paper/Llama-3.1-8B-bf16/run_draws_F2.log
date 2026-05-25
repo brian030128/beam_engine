@@ -1,0 +1,54 @@
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['paged', 'fasttree', 'deft', 'mlca', 'bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 137723.41it/s]
+Model loaded.
+
+k_overrides: [128]
+data_seeds: [0, 1, 2]  (seed 0 = reference shape)
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=128   ] B=4   K=128 L_shared~5956  L_priv~128   n_leaves=512  draws=3
+
+--- multi_few_shot [K=128] ---
+  [draw seed=0]
+  paged        seed=0 warmup  wall= 20.6s  decode_total=16750.7ms
+  paged        seed=0 r=0  prefill= 2535.9ms  decode=16772.4ms  plan/step= 2.59ms  fwd/step=62.96ms  p50/step=65.77ms  wall= 19.8s
+  fasttree     seed=0 warmup  wall= 16.7s  decode_total=13638.4ms
+  fasttree     seed=0 r=0  prefill= 2535.8ms  decode=13171.2ms  plan/step= 5.12ms  fwd/step=46.31ms  p50/step=51.60ms  wall= 16.2s
+  deft         seed=0 warmup  wall= 21.4s  decode_total=18400.5ms
+  deft         seed=0 r=0  prefill= 2541.3ms  decode=18284.3ms  plan/step= 1.00ms  fwd/step=70.48ms  p50/step=71.77ms  wall= 21.3s
+  mlca         seed=0 warmup  wall= 16.3s  decode_total=13221.1ms
+  mlca         seed=0 r=0  prefill= 2540.7ms  decode=13220.5ms  plan/step= 4.95ms  fwd/step=46.67ms  p50/step=51.55ms  wall= 16.3s
+  bs_kernel    seed=0 warmup  wall=  9.9s  decode_total= 6895.1ms
+  bs_kernel    seed=0 r=0  prefill= 2537.6ms  decode= 6861.7ms  plan/step= 1.38ms  fwd/step=25.30ms  p50/step=26.82ms  wall=  9.9s
+  bsk_2l_1p    seed=0 warmup  wall= 11.5s  decode_total= 8463.9ms
+  bsk_2l_1p    seed=0 r=0  prefill= 2532.7ms  decode= 8478.2ms  plan/step= 1.85ms  fwd/step=31.16ms  p50/step=33.43ms  wall= 11.5s
+  bsk_2l_dt    seed=0 warmup  wall=  9.9s  decode_total= 6857.7ms
+  bsk_2l_dt    seed=0 r=0  prefill= 2534.9ms  decode= 6851.9ms  plan/step= 1.32ms  fwd/step=25.31ms  p50/step=26.76ms  wall=  9.9s
+  [draw seed=1]
+  paged        seed=1 r=0  prefill= 2541.1ms  decode=16818.1ms  plan/step= 2.65ms  fwd/step=63.06ms  p50/step=65.97ms  wall= 19.9s
+  fasttree     seed=1 r=0  prefill= 2544.8ms  decode=13174.7ms  plan/step= 5.23ms  fwd/step=46.21ms  p50/step=51.67ms  wall= 16.2s
+  deft         seed=1 r=0  prefill= 2536.5ms  decode=18298.2ms  plan/step= 1.04ms  fwd/step=70.48ms  p50/step=71.66ms  wall= 21.3s
+  mlca         seed=1 r=0  prefill= 2536.1ms  decode=13233.8ms  plan/step= 5.00ms  fwd/step=46.66ms  p50/step=51.43ms  wall= 16.3s
+  bs_kernel    seed=1 r=0  prefill= 2536.8ms  decode= 6864.7ms  plan/step= 1.38ms  fwd/step=25.30ms  p50/step=26.78ms  wall=  9.9s
+  bsk_2l_1p    seed=1 r=0  prefill= 2530.0ms  decode= 8463.6ms  plan/step= 1.82ms  fwd/step=31.14ms  p50/step=33.40ms  wall= 11.5s
+  bsk_2l_dt    seed=1 r=0  prefill= 2541.5ms  decode= 6840.9ms  plan/step= 1.31ms  fwd/step=25.28ms  p50/step=26.76ms  wall=  9.9s
+  [draw seed=2]
+  paged        seed=2 r=0  prefill= 2538.1ms  decode=16827.9ms  plan/step= 2.66ms  fwd/step=63.08ms  p50/step=66.03ms  wall= 19.9s
+  fasttree     seed=2 r=0  prefill= 2535.7ms  decode=13183.7ms  plan/step= 5.26ms  fwd/step=46.21ms  p50/step=51.66ms  wall= 16.2s
+  deft         seed=2 r=0  prefill= 2538.9ms  decode=18285.9ms  plan/step= 1.01ms  fwd/step=70.47ms  p50/step=71.58ms  wall= 21.3s
+  mlca         seed=2 r=0  prefill= 2532.0ms  decode=13235.9ms  plan/step= 4.96ms  fwd/step=46.71ms  p50/step=51.49ms  wall= 16.3s
+  bs_kernel    seed=2 r=0  prefill= 2541.4ms  decode= 6858.7ms  plan/step= 1.37ms  fwd/step=25.30ms  p50/step=26.93ms  wall=  9.9s
+  bsk_2l_1p    seed=2 r=0  prefill= 2541.9ms  decode= 8452.9ms  plan/step= 1.81ms  fwd/step=31.12ms  p50/step=33.42ms  wall= 11.5s
+  bsk_2l_dt    seed=2 r=0  prefill= 2537.5ms  decode= 6841.7ms  plan/step= 1.30ms  fwd/step=25.30ms  p50/step=26.79ms  wall=  9.9s
+  rank (decode_total): bsk_2l_dt=6840.9, bs_kernel=6858.7, bsk_2l_1p=8452.9, fasttree=13171.2, mlca=13220.5, paged=16772.4, deft=18284.3
+
+
+wrote 21 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/F2_multi_few_shot_K128_B4_mn256_draws012.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=128   ]   rank (decode_total): bsk_2l_dt=6840.9, bs_kernel=6858.7, bsk_2l_1p=8452.9, fasttree=13171.2, mlca=13220.5, paged=16772.4, deft=18284.3
+[W525 18:02:48.550622803 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

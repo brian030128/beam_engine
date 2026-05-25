@@ -1,0 +1,305 @@
+=== fasttree plan-trace started 2026-05-14T18:24:36+08:00 ===
+scenarios: multi_level_system + multi_few_shot + multi_chain_reasoning (paper-exact)
+methods:   fasttree only
+models:    Llama-3.2-1B, Llama-3.1-8B
+FT_TRACE_PLAN=1  --warmup --repeat 1 (1 warm iter only, trace adds sync overhead)
+
+############ MODEL: Llama-3.2-1B ############
+  multi_level_system (B=4, K=32)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_level_system']
+methods:   ['fasttree']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 70071.90it/s]
+Model loaded.
+
+k_overrides: [None]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [natural ] B=4   K=32  L_shared~2515  L_priv~80    n_leaves=128
+
+--- multi_level_system [natural] ---
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=133.0 min=133 max=133
+  phase                mean     median        p90        p99        total
+  gather_ms           0.007      0.007      0.008      0.013         1.83
+  radix_ms            0.131      0.130      0.135      0.139        33.38
+  partial_ms          0.019      0.019      0.020      0.022         4.92
+  slots_ms            0.490      0.486      0.533      0.541       124.84
+  meta_ms             0.666      0.484      1.884      1.952       169.83
+  write_ms            0.064      0.064      0.068      0.072        16.38
+  fasttree     warmup  wall=  3.1s  decode_total= 2134.6ms
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=133.0 min=133 max=133
+  phase                mean     median        p90        p99        total
+  gather_ms           0.006      0.006      0.007      0.008         1.65
+  radix_ms            0.136      0.135      0.141      0.147        34.63
+  partial_ms          0.019      0.019      0.020      0.025         4.90
+  slots_ms            0.491      0.488      0.537      0.545       125.23
+  meta_ms             0.671      0.485      1.903      1.946       171.08
+  write_ms            0.065      0.064      0.069      0.072        16.52
+  fasttree     r=0  prefill=   92.0ms  decode= 1717.3ms  plan/step= 1.54ms  fwd/step= 5.07ms  p50/step= 6.55ms  wall=  1.8s
+  rank (decode_total): fasttree=1717.3
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/ft_plan_trace-20260514-182436/Llama-3.2-1B_mls.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [natural ]   rank (decode_total): fasttree=1717.3
+[W514 18:24:49.571622740 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+  multi_few_shot (B=32, K=16)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_few_shot']
+methods:   ['fasttree']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 16815.65it/s]
+Model loaded.
+
+k_overrides: [None]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [natural ] B=32  K=16  L_shared~5840  L_priv~107   n_leaves=512
+
+--- multi_few_shot [natural] ---
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=545.0 min=545 max=545
+  phase                mean     median        p90        p99        total
+  gather_ms           0.017      0.017      0.017      0.020         4.31
+  radix_ms            0.975      0.583      0.597      0.607       248.56
+  partial_ms          0.067      0.067      0.070      0.073        17.09
+  slots_ms            2.496      2.490      2.643      2.675       636.55
+  meta_ms             4.015      4.180      4.260      4.342      1023.92
+  write_ms            0.125      0.124      0.130      0.136        31.87
+  fasttree     warmup  wall=  6.7s  decode_total= 4504.6ms
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=545.0 min=545 max=545
+  phase                mean     median        p90        p99        total
+  gather_ms           0.019      0.019      0.019      0.023         4.77
+  radix_ms            1.007      0.595      0.656      0.695       256.77
+  partial_ms          0.067      0.067      0.070      0.073        17.14
+  slots_ms            2.516      2.500      2.668      2.699       641.52
+  meta_ms             3.976      4.137      4.205      4.251      1013.92
+  write_ms            0.148      0.147      0.154      0.162        37.62
+  fasttree     r=0  prefill= 1182.4ms  decode= 4085.4ms  plan/step= 8.16ms  fwd/step= 7.65ms  p50/step=15.62ms  wall=  5.4s
+  rank (decode_total): fasttree=4085.4
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/ft_plan_trace-20260514-182436/Llama-3.2-1B_mfs.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [natural ]   rank (decode_total): fasttree=4085.4
+[W514 18:25:11.080734921 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+  multi_chain_reasoning (B=32, K=16)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_chain_reasoning']
+methods:   ['fasttree']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 113359.57it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=16    ] B=32  K=16  L_shared~2574  L_priv~23    n_leaves=512
+  multi_chain_reasoning (stage2) [K=16    ] B=32  K=1   L_shared~6792  L_priv~    0 n_leaves=32
+
+--- multi_chain_reasoning [K=16] ---
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=545.0 min=545 max=545
+  phase                mean     median        p90        p99        total
+  gather_ms           0.016      0.016      0.017      0.021         4.19
+  radix_ms            0.948      0.588      0.598      0.608       241.71
+  partial_ms          0.066      0.066      0.068      0.071        16.82
+  slots_ms            1.901      1.887      2.067      2.103       484.64
+  meta_ms             3.498      3.834      3.910      3.958       891.92
+  write_ms            0.120      0.120      0.126      0.131        30.69
+  fasttree     warmup  wall=  8.0s  decode_total= 5544.6ms
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=545.0 min=545 max=545
+  phase                mean     median        p90        p99        total
+  gather_ms           0.019      0.019      0.019      0.021         4.79
+  radix_ms            0.960      0.587      0.646      0.666       244.90
+  partial_ms          0.067      0.067      0.069      0.072        17.05
+  slots_ms            1.912      1.903      2.077      2.126       487.62
+  meta_ms             3.486      3.827      3.896      3.965       888.88
+  write_ms            0.149      0.148      0.154      0.159        37.92
+  fasttree     r=0  prefill= 1402.7ms  decode= 5143.7ms  plan/step= 4.45ms  fwd/step= 5.47ms  p50/step= 9.52ms  wall=  6.7s
+  rank (decode_total): fasttree=5143.7
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/ft_plan_trace-20260514-182436/Llama-3.2-1B_mcr.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=16    ]   rank (decode_total): fasttree=5143.7
+[W514 18:25:35.817274001 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+############ MODEL: Llama-3.1-8B ############
+  multi_level_system (B=4, K=32)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B
+scenarios: ['multi_level_system']
+methods:   ['fasttree']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 26996.69it/s]
+Model loaded.
+
+k_overrides: [None]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [natural ] B=4   K=32  L_shared~2515  L_priv~80    n_leaves=128
+
+--- multi_level_system [natural] ---
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=133.0 min=133 max=133
+  phase                mean     median        p90        p99        total
+  gather_ms           0.006      0.006      0.007      0.008         1.60
+  radix_ms            0.129      0.128      0.131      0.136        32.83
+  partial_ms          0.019      0.019      0.020      0.022         4.85
+  slots_ms            0.488      0.482      0.532      0.539       124.53
+  meta_ms             0.674      0.486      1.924      1.974       171.97
+  write_ms            0.066      0.066      0.070      0.073        16.95
+  fasttree     warmup  wall=  6.6s  decode_total= 5116.7ms
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=133.0 min=133 max=133
+  phase                mean     median        p90        p99        total
+  gather_ms           0.007      0.007      0.008      0.009         1.84
+  radix_ms            0.133      0.133      0.137      0.140        33.97
+  partial_ms          0.019      0.019      0.020      0.022         4.87
+  slots_ms            0.492      0.488      0.535      0.542       125.52
+  meta_ms             0.675      0.487      1.920      1.957       172.20
+  write_ms            0.067      0.067      0.070      0.075        17.20
+  fasttree     r=0  prefill=  503.2ms  decode= 4695.8ms  plan/step= 1.55ms  fwd/step=16.74ms  p50/step=18.21ms  wall=  5.2s
+  rank (decode_total): fasttree=4695.8
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/ft_plan_trace-20260514-182436/Llama-3.1-8B_mls.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [natural ]   rank (decode_total): fasttree=4695.8
+[W514 18:25:58.369484755 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+  multi_few_shot (B=16, K=16)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B
+scenarios: ['multi_few_shot']
+methods:   ['fasttree']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 5921.88it/s]
+Model loaded.
+
+k_overrides: [None]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [natural ] B=16  K=16  L_shared~5807  L_priv~101   n_leaves=256
+
+--- multi_few_shot [natural] ---
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=273.0 min=273 max=273
+  phase                mean     median        p90        p99        total
+  gather_ms           0.010      0.010      0.011      0.014         2.63
+  radix_ms            0.327      0.326      0.335      0.342        83.27
+  partial_ms          0.035      0.035      0.036      0.039         8.92
+  slots_ms            1.155      1.151      1.230      1.249       294.65
+  meta_ms             2.015      2.182      2.231      2.272       513.83
+  write_ms            0.094      0.093      0.095      0.102        23.85
+  fasttree     warmup  wall= 10.5s  decode_total= 6292.9ms
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=273.0 min=273 max=273
+  phase                mean     median        p90        p99        total
+  gather_ms           0.011      0.011      0.012      0.014         2.92
+  radix_ms            0.340      0.333      0.341      0.345        86.80
+  partial_ms          0.035      0.035      0.036      0.038         8.94
+  slots_ms            1.171      1.160      1.248      1.263       298.50
+  meta_ms             2.024      2.194      2.238      2.285       516.03
+  write_ms            0.106      0.105      0.110      0.115        27.03
+  fasttree     r=0  prefill= 3143.3ms  decode= 5880.1ms  plan/step= 3.94ms  fwd/step=18.95ms  p50/step=22.94ms  wall=  9.2s
+  rank (decode_total): fasttree=5880.1
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/ft_plan_trace-20260514-182436/Llama-3.1-8B_mfs.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [natural ]   rank (decode_total): fasttree=5880.1
+[W514 18:26:30.305611548 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+  multi_chain_reasoning (B=32, K=16)
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B
+scenarios: ['multi_chain_reasoning']
+methods:   ['fasttree']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 44577.14it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=16    ] B=32  K=16  L_shared~2574  L_priv~23    n_leaves=512
+  multi_chain_reasoning (stage2) [K=16    ] B=32  K=1   L_shared~6792  L_priv~    0 n_leaves=32
+
+--- multi_chain_reasoning [K=16] ---
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=545.0 min=545 max=545
+  phase                mean     median        p90        p99        total
+  gather_ms           0.017      0.016      0.017      0.020         4.22
+  radix_ms            0.936      0.574      0.585      0.595       238.80
+  partial_ms          0.067      0.067      0.069      0.072        16.99
+  slots_ms            1.905      1.895      2.060      2.122       485.72
+  meta_ms             3.510      3.844      3.935      4.018       894.99
+  write_ms            0.123      0.122      0.128      0.135        31.33
+  fasttree     warmup  wall= 23.2s  decode_total=14057.9ms
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=545.0 min=545 max=545
+  phase                mean     median        p90        p99        total
+  gather_ms           0.019      0.019      0.020      0.023         4.92
+  radix_ms            0.956      0.576      0.635      0.653       243.76
+  partial_ms          0.067      0.066      0.069      0.072        17.00
+  slots_ms            1.911      1.908      2.071      2.145       487.18
+  meta_ms             3.499      3.838      3.908      3.944       892.35
+  write_ms            0.146      0.146      0.153      0.158        37.35
+  fasttree     r=0  prefill= 7934.7ms  decode=13602.0ms  plan/step= 4.47ms  fwd/step=22.03ms  p50/step=26.60ms  wall= 21.8s
+  rank (decode_total): fasttree=13602.0
+
+
+wrote 1 rows to benchmarks/bs_kernel/results/ft_plan_trace-20260514-182436/Llama-3.1-8B_mcr.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=16    ]   rank (decode_total): fasttree=13602.0
+[W514 18:27:27.642042766 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+Done. Results: benchmarks/bs_kernel/results/ft_plan_trace-20260514-182436

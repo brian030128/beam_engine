@@ -1,0 +1,36 @@
+
+========== H100 paper table (warmup, median of 3) ==========
+model          scenario                     method     decode_total  plan_total   fwd_total  plan%   fwd%  p50/step
+Llama-3.1-8B   multi_level_system (B=4, K=32) bs_kernel        2858.0       171.2      2654.8   6.0%  92.9%     10.82
+Llama-3.1-8B   multi_level_system (B=4, K=32) paged            3726.7       280.5      3413.5   7.5%  91.6%     14.64
+Llama-3.1-8B   multi_level_system (B=4, K=32) fasttree         4681.3       386.0      4263.6   8.2%  91.1%     18.15
+Llama-3.1-8B   multi_level_system (B=4, K=32) mlca             4690.0       785.9      3871.4  16.8%  82.5%     19.02
+Llama-3.1-8B   multi_few_shot (B=16, K=16)  bs_kernel        5302.8       513.3      4748.1   9.7%  89.5%     20.73
+Llama-3.1-8B   multi_few_shot (B=16, K=16)  paged            9428.8       735.8      8651.6   7.8%  91.8%     36.96
+Llama-3.1-8B   multi_few_shot (B=16, K=16)  fasttree         5880.7       995.1      4842.6  16.9%  82.3%     22.94
+Llama-3.1-8B   multi_few_shot (B=16, K=16)  mlca            10779.6      1864.0      8874.3  17.3%  82.3%     42.24
+Llama-3.1-8B   multi_chain_reasoning (B=32, K=16) bs_kernel       11420.2      1210.3     10116.6  10.6%  88.6%     22.23
+Llama-3.1-8B   multi_chain_reasoning (B=32, K=16) paged           14879.8      1096.2     13688.7   7.4%  92.0%     28.41
+Llama-3.1-8B   multi_chain_reasoning (B=32, K=16) fasttree        13606.6      2279.9     11237.6  16.8%  82.6%     26.92
+Llama-3.2-1B   multi_level_system (B=4, K=32) bs_kernel        1215.8       183.7      1000.4  15.1%  82.3%      4.57
+Llama-3.2-1B   multi_level_system (B=4, K=32) paged            1363.5       275.6      1055.0  20.2%  77.4%      5.32
+Llama-3.2-1B   multi_level_system (B=4, K=32) fasttree         1699.1       383.9      1282.7  22.6%  75.5%      6.47
+Llama-3.2-1B   multi_level_system (B=4, K=32) mlca             2298.2       774.2      1492.4  33.7%  64.9%      9.17
+Llama-3.2-1B   multi_few_shot (B=32, K=16)  bs_kernel        3044.5       823.5      2163.5  27.0%  71.1%     11.94
+Llama-3.2-1B   multi_few_shot (B=32, K=16)  paged            6469.0      1382.8      5028.7  21.4%  77.7%     25.39
+Llama-3.2-1B   multi_few_shot (B=32, K=16)  fasttree         4066.2      2043.3      1964.3  50.3%  48.3%     15.59
+Llama-3.2-1B   multi_few_shot (B=32, K=16)  mlca            10057.4      3379.9      6622.9  33.6%  65.9%     39.50
+Llama-3.2-1B   multi_chain_reasoning (B=32, K=16) bs_kernel        4059.9      1200.6      2772.0  29.6%  68.3%      7.16
+Llama-3.2-1B   multi_chain_reasoning (B=32, K=16) paged            5135.3      1067.7      3980.9  20.8%  77.5%     10.07
+Llama-3.2-1B   multi_chain_reasoning (B=32, K=16) fasttree         5169.1      2293.9      2789.1  44.4%  54.0%      9.68
+
+========== bs_kernel speedups ==========
+scenario                     model           vs fasttree   vs paged    vs mlca
+multi_level_system           Llama-3.1-8B          1.64x      1.30x      1.64x
+multi_few_shot               Llama-3.1-8B          1.11x      1.78x      2.03x
+multi_chain_reasoning        Llama-3.1-8B          1.19x      1.30x        -- 
+multi_level_system           Llama-3.2-1B          1.40x      1.12x      1.89x
+multi_few_shot               Llama-3.2-1B          1.34x      2.12x      3.30x
+multi_chain_reasoning        Llama-3.2-1B          1.27x      1.26x        -- 
+
+full CSVs: /home/u4320956/beam_engine-v3/benchmarks/bs_kernel/results/paper_table_h100-20260514-194650

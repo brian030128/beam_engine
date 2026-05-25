@@ -1,0 +1,158 @@
+=== exp1a TP=2 70B-FP8 end-to-end timing started 2026-05-19T02:24:50+08:00 ===
+model:    RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp=2, dtype=bf16, kv=bf16)
+GPUs:     NVIDIA H100 80GB HBM3 × 2
+
+=== scenario: multi_level_system (B=4, K=64) ===
+W0519 02:24:51.515000 2091377 torch/distributed/run.py:803] 
+W0519 02:24:51.515000 2091377 torch/distributed/run.py:803] *****************************************
+W0519 02:24:51.515000 2091377 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0519 02:24:51.515000 2091377 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_level_system']
+methods:   ['fasttree', 'bs_kernel', 'paged', 'mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  5.46it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  4.93it/s]Fetching 21 files:  14%|█▍        | 3/21 [00:46<05:48, 19.34s/it]Fetching 21 files:  14%|█▍        | 3/21 [00:46<05:48, 19.35s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:50<03:51, 13.62s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:50<03:51, 13.63s/it]Fetching 21 files:  52%|█████▏    | 11/21 [00:56<00:35,  3.53s/it]Fetching 21 files:  52%|█████▏    | 11/21 [00:56<00:35,  3.54s/it]Fetching 21 files:  57%|█████▋    | 12/21 [01:05<00:38,  4.32s/it]Fetching 21 files:  57%|█████▋    | 12/21 [01:05<00:38,  4.32s/it]Fetching 21 files:  76%|███████▌  | 16/21 [01:19<00:20,  4.00s/it]Fetching 21 files: 100%|██████████| 21/21 [01:19<00:00,  3.81s/it]
+Fetching 21 files:  76%|███████▌  | 16/21 [01:19<00:20,  4.00s/it]Fetching 21 files: 100%|██████████| 21/21 [01:19<00:00,  3.81s/it]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=4   K=64  L_shared~2515  L_priv~80    n_leaves=256
+
+--- multi_level_system [K=64] ---
+  fasttree     warmup  wall= 36.8s  decode_total=28230.8ms
+  fasttree     r=0  prefill= 3498.1ms  decode=27739.2ms  plan/step= 2.60ms  fwd/step=106.02ms  p50/step=108.38ms  wall= 31.7s
+  bs_kernel    warmup  wall= 17.3s  decode_total=13343.6ms
+  bs_kernel    r=0  prefill= 3517.2ms  decode=13267.1ms  plan/step= 1.00ms  fwd/step=50.86ms  p50/step=51.68ms  wall= 17.2s
+  paged        warmup  wall= 19.1s  decode_total=15155.7ms
+  paged        r=0  prefill= 3521.7ms  decode=15041.2ms  plan/step= 1.98ms  fwd/step=56.84ms  p50/step=59.03ms  wall= 19.0s
+  mlca         warmup  wall= 24.1s  decode_total=20179.8ms
+  mlca         r=0  prefill= 3514.6ms  decode=20139.7ms  plan/step= 2.93ms  fwd/step=75.88ms  p50/step=82.30ms  wall= 24.1s
+  rank (decode_total): bs_kernel=13267.1, paged=15041.2, mlca=20139.7, fasttree=27739.2
+
+
+wrote 4 rows to benchmarks/bs_kernel/results/paper-exp/exp1a_70b_fp8_tp2/level_system.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): bs_kernel=13267.1, paged=15041.2, mlca=20139.7, fasttree=27739.2
+[W519 02:30:06.321035259 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 02:30:06.323566450 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 02:30:07.296213369 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== scenario: multi_chain_reasoning (B=4, K=64) ===
+W0519 02:30:08.983000 2115306 torch/distributed/run.py:803] 
+W0519 02:30:08.983000 2115306 torch/distributed/run.py:803] *****************************************
+W0519 02:30:08.983000 2115306 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0519 02:30:08.983000 2115306 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_chain_reasoning']
+methods:   ['fasttree', 'bs_kernel', 'paged', 'mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 238055.09it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 225847.14it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=64    ] B=4   K=64  L_shared~2561  L_priv~23    n_leaves=256
+  multi_chain_reasoning (stage2) [K=64    ] B=4   K=1   L_shared~19355 L_priv~    0 n_leaves=4
+
+--- multi_chain_reasoning [K=64] ---
+  fasttree     warmup  wall= 57.5s  decode_total=42207.7ms
+  fasttree     r=0  prefill=12612.4ms  decode=41734.4ms  plan/step= 1.78ms  fwd/step=79.91ms  p50/step=80.86ms  wall= 55.2s
+  bs_kernel    warmup  wall= 40.2s  decode_total=26665.5ms
+  bs_kernel    r=0  prefill=12623.7ms  decode=26494.0ms  plan/step= 0.86ms  fwd/step=50.95ms  p50/step=51.60ms  wall= 40.0s
+  paged        warmup  wall= 41.2s  decode_total=27722.5ms
+  paged        r=0  prefill=12618.3ms  decode=27684.2ms  plan/step= 1.19ms  fwd/step=52.95ms  p50/step=55.21ms  wall= 41.2s
+  mlca         warmup  wall= 46.6s  decode_total=33078.5ms
+  mlca         r=0  prefill=12610.7ms  decode=32957.4ms  plan/step= 1.89ms  fwd/step=62.59ms  p50/step=61.70ms  wall= 46.5s
+  rank (decode_total): bs_kernel=26494.0, paged=27684.2, mlca=32957.4, fasttree=41734.4
+
+
+wrote 4 rows to benchmarks/bs_kernel/results/paper-exp/exp1a_70b_fp8_tp2/chain_reasoning.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=64    ]   rank (decode_total): bs_kernel=26494.0, paged=27684.2, mlca=32957.4, fasttree=41734.4
+[W519 02:37:04.270935821 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 02:37:04.291732979 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 02:37:05.207814331 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== scenario: multi_few_shot (B=4, K=64) ===
+W0519 02:37:06.939000 2145156 torch/distributed/run.py:803] 
+W0519 02:37:06.939000 2145156 torch/distributed/run.py:803] *****************************************
+W0519 02:37:06.939000 2145156 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0519 02:37:06.939000 2145156 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_few_shot']
+methods:   ['fasttree', 'bs_kernel', 'paged', 'mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 61294.63it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 228780.22it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=64    ] B=4   K=64  L_shared~5873  L_priv~122   n_leaves=256
+
+--- multi_few_shot [K=64] ---
+  fasttree     warmup  wall= 44.8s  decode_total=35632.0ms
+  fasttree     r=0  prefill= 6782.5ms  decode=35141.2ms  plan/step= 2.52ms  fwd/step=135.12ms  p50/step=136.94ms  wall= 42.5s
+  bs_kernel    warmup  wall= 23.2s  decode_total=15863.8ms
+  bs_kernel    r=0  prefill= 6781.0ms  decode=15805.2ms  plan/step= 1.15ms  fwd/step=60.67ms  p50/step=62.18ms  wall= 23.1s
+  paged        warmup  wall= 26.7s  decode_total=19373.5ms
+  paged        r=0  prefill= 6796.5ms  decode=19224.5ms  plan/step= 2.92ms  fwd/step=72.30ms  p50/step=75.34ms  wall= 26.6s
+  mlca         warmup  wall= 29.8s  decode_total=22502.8ms
+  mlca         r=0  prefill= 6798.7ms  decode=22439.0ms  plan/step= 3.01ms  fwd/step=84.82ms  p50/step=86.96ms  wall= 29.8s
+  rank (decode_total): bs_kernel=15805.2, paged=19224.5, mlca=22439.0, fasttree=35141.2
+
+
+wrote 4 rows to benchmarks/bs_kernel/results/paper-exp/exp1a_70b_fp8_tp2/few_shot.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=64    ]   rank (decode_total): bs_kernel=15805.2, paged=19224.5, mlca=22439.0, fasttree=35141.2
+[W519 02:41:57.338278491 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 02:41:57.357336363 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 02:41:58.216930635 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== merging CSVs to benchmarks/bs_kernel/results/paper-exp/exp1a_70b_fp8_tp2/merged.csv ===
+
+=== merged results ===
+scenario,k_override,method,repeat,n_leaves,prefill_shared_ms,prefill_private_ms,decode_total_ms,decode_p50_ms,decode_p99_ms,n_decode_steps,plan_mean_ms,plan_p50_ms,plan_p99_ms,plan_total_ms,forward_mean_ms,forward_p50_ms,forward_p99_ms,forward_total_ms,alloc_mean_ms,alloc_total_ms,topk_mean_ms,topk_total_ms,dispatch_total_ms
+multi_level_system,64,fasttree,0,256,1118.2028,2379.8975,27739.2170,108.3831,116.2068,255,2.5951,2.2458,5.0837,661.7395,106.0156,105.8835,111.0040,27033.9845,0.0119,3.0413,0.1425,36.3368,0.0000
+multi_level_system,64,bs_kernel,0,256,1127.4265,2389.7838,13267.1331,51.6795,54.6266,255,1.0026,0.7914,2.5614,255.6569,50.8628,50.6818,52.2748,12970.0247,0.0120,3.0506,0.1348,34.3861,0.0000
+multi_level_system,64,paged,0,256,1125.1935,2396.5348,15041.2470,59.0257,60.6513,255,1.9842,1.9764,2.3194,505.9683,56.8365,56.8641,58.3781,14493.2999,0.0122,3.1187,0.1367,34.8618,0.0000
+multi_level_system,64,mlca,0,256,1125.2178,2389.4183,20139.7404,82.2983,91.7329,255,2.9281,2.9073,3.5119,746.6720,75.8802,79.2005,88.3226,19349.4391,0.0124,3.1556,0.1431,36.4901,0.0000
+multi_chain_reasoning,64,fasttree,0,256,11679.5657,932.7959,41734.4420,80.8587,113.7521,510,1.7794,1.4607,5.0060,907.4920,79.9067,79.2820,110.9856,40752.4283,0.0111,5.6727,0.1193,60.8384,0.0000
+multi_chain_reasoning,64,bs_kernel,0,256,11691.4329,932.2420,26494.0098,51.6015,55.3969,510,0.8558,0.7233,2.1307,436.4433,50.9514,50.7376,53.4073,25985.1895,0.0114,5.7969,0.1148,58.5650,0.0000
+multi_chain_reasoning,64,paged,0,256,11683.7884,934.4715,27684.1954,55.2137,59.5822,510,1.1927,1.2068,2.0406,608.2866,52.9477,53.9126,57.4182,27003.3358,0.0112,5.6969,0.1154,58.8686,0.0000
+multi_chain_reasoning,64,mlca,0,256,11672.9090,937.7540,32957.3546,61.6985,82.8747,510,1.8889,1.9927,3.2149,963.3301,62.5922,59.6882,79.7172,31922.0246,0.0110,5.5973,0.1148,58.5645,0.0000
+multi_few_shot,64,fasttree,0,256,2727.7127,4054.7911,35141.2250,136.9407,142.2009,255,2.5215,2.2384,3.6227,642.9835,135.1240,134.5321,138.4387,34456.6181,0.0124,3.1649,0.1353,34.5133,0.0000
+multi_few_shot,64,bs_kernel,0,256,2720.7226,4060.2890,15805.1565,62.1824,63.9943,255,1.1459,0.8478,2.2814,292.2109,60.6717,60.5996,62.2001,15471.2881,0.0126,3.2074,0.1352,34.4693,0.0000
+multi_few_shot,64,paged,0,256,2722.7653,4073.7008,19224.5256,75.3388,76.3305,255,2.9240,2.9160,3.1067,745.6086,72.3034,72.2417,73.2410,18437.3618,0.0129,3.2778,0.1345,34.3078,0.0000
+multi_few_shot,64,mlca,0,256,2723.1024,4075.6157,22438.9887,86.9620,99.2434,255,3.0088,3.0003,3.3918,767.2486,84.8219,83.7735,96.0622,21629.5729,0.0136,3.4729,0.1362,34.7189,0.0000
+
+Done. Results: benchmarks/bs_kernel/results/paper-exp/exp1a_70b_fp8_tp2

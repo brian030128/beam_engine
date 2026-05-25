@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import torch
@@ -131,6 +132,8 @@ def _to_payload(c: Coefficients) -> dict:
         "decode_us_per_beam_kv_token": dict(c.decode_us_per_beam_kv_token),
         "decode_launch_us": c.decode_launch_us,
         "max_dispatch_depth": c.max_dispatch_depth,
+        "dec_tail_switch_margin": c.dec_tail_switch_margin,
+        "fused_tail_ineff_frac": c.fused_tail_ineff_frac,
     }
 
 
@@ -204,6 +207,10 @@ def _from_payload(d: dict) -> Coefficients:
         # 6) once the bs_kernel driver supports deeper cascades AND
         # workloads exercise hierarchical sharing depth>3.
         max_dispatch_depth=d.get("max_dispatch_depth", 3),
+        dec_tail_switch_margin=d.get("dec_tail_switch_margin", 0.0),
+        # Default 0.07 (the offline-fit value) so existing caches that predate
+        # this field get the long-tail crossover fix without recalibration.
+        fused_tail_ineff_frac=d.get("fused_tail_ineff_frac", 0.07),
     )
 
 
@@ -224,18 +231,28 @@ def load_or_defaults(
     ``beam_search``.
     """
     device = torch.device(device)
+    c: Coefficients | None = None
     if model is not None and tp_size is not None and tp_size > 1:
         tp_specific = _cache_path(device, model, tp_size)
         if tp_specific.exists():
-            return _load(tp_specific)
-    if model is not None:
+            c = _load(tp_specific)
+    if c is None and model is not None:
         model_specific = _cache_path(device, model)
         if model_specific.exists():
-            return _load(model_specific)
-    legacy = _cache_path(device)
-    if legacy.exists():
-        return _load(legacy)
-    return Coefficients.defaults()
+            c = _load(model_specific)
+    if c is None:
+        legacy = _cache_path(device)
+        if legacy.exists():
+            c = _load(legacy)
+    if c is None:
+        c = Coefficients.defaults()
+    # Env override: DEC_TAIL switch-margin (picker hysteresis). Lets the
+    # 1POOL→DEC_TAIL flip be pushed to a longer tail without recalibration.
+    # Applies regardless of which cache tier (or defaults) supplied ``c``.
+    _m = os.environ.get("BS_KERNEL_DEC_TAIL_MARGIN", "").strip()
+    if _m:
+        c.dec_tail_switch_margin = float(_m)
+    return c
 
 
 def _save(c: Coefficients, path: Path) -> None:
@@ -309,10 +326,94 @@ def measure_B_hbm(
     n_bytes: int = 256 * 1024 * 1024,
     n_runs: int = 5,
 ) -> float:
+    """Contiguous device-to-device copy bandwidth (reference only).
+
+    NOTE: normalized by the *moved* bytes, not the round-trip traffic,
+    so the returned figure is ~half the device's total streaming rate.
+    Retained for logging/comparison; the cost model's ``B_hbm`` is set
+    from ``measure_attn_B_hbm`` (the strided attention-read rate the
+    ``B_s/β`` terms actually price), not from this contiguous copy.
+    """
     src = torch.empty(n_bytes, dtype=torch.uint8, device=device)
     dst = torch.empty_like(src)
     us = _time_event_us(lambda: dst.copy_(src), n_runs, device=device)
     return n_bytes / us  # bytes / µs
+
+
+def measure_attn_B_hbm(
+    device: torch.device,
+    *,
+    num_kv_heads: int = 8,
+    num_qo_heads: int = 32,
+    head_dim: int = 128,
+    page_size: int = 16,
+    n: int = 20,
+    dtype: torch.dtype = torch.float16,
+    BS_L_pairs: tuple[tuple[int, int], ...] = (
+        (256, 4096),
+        (128, 8192),
+    ),
+) -> float:
+    """Effective attention KV-read bandwidth (bytes/µs).
+
+    This is the rate the ``B_s/β`` and ``B_tail/β`` cost terms actually
+    price: bytes streamed by the *attention kernel* under paged, strided
+    KV access — not the contiguous ``copy_`` rate of ``measure_B_hbm``.
+
+    We run a large, L2-overflowing batched paged decode (CTA_Q=1) where
+    every beam reads its full KV span exactly once, count the KV bytes
+    physically read, and divide by the measured kernel time. The shapes
+    are sized so the working set (``BS·L_kv·bytes_per_kv`` ≈ a few GiB)
+    dwarfs the H100's ~50 MB L2, isolating the sustained HBM read rate
+    from launch and L2-residency effects. We take the max over a couple
+    of large shapes so the anchor reflects the kernel's best sustained
+    streaming rate rather than a launch-contaminated one.
+    """
+    from flashinfer import BatchDecodeWithPagedKVCacheWrapper
+
+    q_dtype = _compute_dtype_for(dtype)
+    elem = torch.empty((), dtype=dtype).element_size()
+    bytes_per_kv = 2 * num_kv_heads * head_dim * elem  # K + V across kv heads
+    workspace = torch.empty(256 * 1024 * 1024, dtype=torch.uint8, device=device)
+    wrapper = BatchDecodeWithPagedKVCacheWrapper(
+        workspace, kv_layout="NHD", use_tensor_cores=True,
+    )
+    best_bw = 0.0
+    for BS, L_kv in BS_L_pairs:
+        num_pages_per_req = max(1, L_kv // page_size)
+        total_pages = BS * num_pages_per_req
+        kv = _random_tensor(
+            (total_pages, 2, page_size, num_kv_heads, head_dim),
+            dtype=dtype, device=device,
+        )
+        indptr = torch.arange(
+            0, (BS + 1) * num_pages_per_req, num_pages_per_req,
+            dtype=torch.int32, device=device,
+        )
+        indices = torch.arange(total_pages, dtype=torch.int32, device=device)
+        last_page_len = torch.full(
+            (BS,), page_size, dtype=torch.int32, device=device,
+        )
+        wrapper.plan(
+            indptr=indptr,
+            indices=indices,
+            last_page_len=last_page_len,
+            num_qo_heads=num_qo_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            page_size=page_size,
+            q_data_type=q_dtype,
+            kv_data_type=dtype,
+        )
+        q = _random_tensor(
+            (BS, num_qo_heads, head_dim), dtype=q_dtype, device=device,
+        )
+        us = _time_event_us(lambda: wrapper.run(q, kv), n, device=device)
+        # Each beam reads its full KV span once; split-KV (if any) only
+        # repartitions the same bytes, so total read = BS · L_kv · bpkv.
+        bytes_read = BS * (num_pages_per_req * page_size) * bytes_per_kv
+        best_bw = max(best_bw, bytes_read / us)
+    return best_bw
 
 
 def measure_launch_us(device: torch.device, *, n: int = 1000) -> float:
@@ -661,8 +762,15 @@ def calibrate(
         decode_per_token_by_dtype = dict(defaults.decode_us_per_beam_kv_token)
         decode_launch_anchor = launch
 
+    attn_bw = measure_attn_B_hbm(device)
+    if verbose:
+        copy_bw = measure_B_hbm(device)
+        print(
+            f"[calibrate] B_hbm(attn)={attn_bw / 1e6:.2f} TB/s  "
+            f"(copy ref={copy_bw / 1e6:.2f} TB/s)"
+        )
     coeffs = Coefficients(
-        B_hbm=measure_B_hbm(device),
+        B_hbm=attn_bw,
         merge_launch_us=merge_launch,
         merge_bw_us_per_row=merge_bw_per_row,
         per_tile_us=per_tile_us_by_dtype,

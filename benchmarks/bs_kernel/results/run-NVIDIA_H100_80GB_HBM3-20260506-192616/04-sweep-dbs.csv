@@ -1,0 +1,4 @@
+method,K,L_p,max_new,prefill_ms,decode_step_ms_p50,decode_step_ms_p90,decode_step_ms_p99,decode_step_ms_mean,decode_step_count
+dbs,16,8192,16,1204.6626,13.4634,14.6125,99.0639,19.0863,15
+dbs,32,8192,16,238.0263,19.2488,21.4214,25.3173,19.3970,15
+dbs,64,8192,16,233.8694,29.3707,34.6243,38.1229,29.7451,15

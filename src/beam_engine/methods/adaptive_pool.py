@@ -257,6 +257,9 @@ def _adaptive_levels(
     *,
     max_levels: int,
     start_lca: int = 0,
+    min_level_children: int = 1,
+    min_level_tokens: int = 0,
+    tokens_per_page: int = 1,
 ):
     """Decide cascade level layout for the current step.
 
@@ -288,6 +291,18 @@ def _adaptive_levels(
 
     The ``start_lca`` parameter lets callers seed the LCA scan from a
     cached value (LCA is monotone non-decreasing across decode steps).
+
+    ``min_level_children`` / ``min_level_tokens`` gate intermediate-level
+    creation: a divergence is only promoted to its own shared cascade
+    level when at least one resulting sub-group has more than
+    ``min_level_children`` beams AND a shared run longer than
+    ``min_level_tokens`` tokens (``run_pages * tokens_per_page``).
+    Otherwise the beams fall through to the per-beam tail level. Defaults
+    (children=1, tokens=0) reproduce the legacy "split on any divergence
+    with a >=2 sub-group" behavior. The beam-search radix tree is the only
+    workload that organically deepens past 2 levels; the threshold keeps
+    only *substantial* shared segments as levels (see the dispatch-space
+    depth ablation).
     """
     pl = len(pages_prefix)
     # 1) LCA depth — start from max(start_lca, pl).
@@ -432,13 +447,32 @@ def _adaptive_levels(
             # the input to the per-beam-tail level.
             break
 
-        # Sanity: only commit this level if it provides bandwidth savings.
-        # (We require at least one sub-group to be non-singleton AND the
-        # total group count to exceed the previous level's group count.)
-        any_viable_sub = any(s >= 2 for s in new_sizes)
+        # Only commit this level if some emitted sub-group is a worthwhile
+        # shared segment: > min_level_children beams AND a shared run
+        # > min_level_tokens tokens. With defaults (children=1, tokens=0)
+        # this reduces to the legacy "at least one non-singleton sub-group"
+        # rule; with the ablation thresholds (children=8, tokens=128) only
+        # divergences that share a substantial prefix across many beams
+        # become their own cascade level — everything else drops to the
+        # per-beam tail.
+        def _level_qualifies(i: int) -> bool:
+            # Legacy rule: a sub-group must be non-singleton. With defaults
+            # (children=1, tokens=0) this is the *only* test, so production
+            # behavior is unchanged. The ablation thresholds add the two
+            # extra gates.
+            if new_sizes[i] < 2 or new_sizes[i] <= min_level_children:
+                return False
+            if (min_level_tokens > 0
+                    and len(new_pages[i]) * tokens_per_page <= min_level_tokens):
+                return False
+            return True
+
+        any_viable_sub = any(
+            _level_qualifies(i) for i in range(len(new_sizes))
+        )
         if not any_viable_sub:
-            # All sub-groups are singletons — equivalent to going straight
-            # to per-beam tail. Don't emit this level.
+            # No sub-group clears the threshold — emitting this level would
+            # just serialize work better left to the per-beam tail. Stop.
             break
 
         levels.append((new_sizes, new_pages, new_lpls))

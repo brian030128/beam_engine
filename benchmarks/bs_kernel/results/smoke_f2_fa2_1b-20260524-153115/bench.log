@@ -1,0 +1,60 @@
+=== F2 full-cell smoke 1B + FA2 (K=16 B=16 sys=fewshot=20k tree-root) 2026-05-24T15:31:15+08:00 ===
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['paged', 'fasttree', 'deft', 'mlca', 'bs_kernel', 'bsk_2l_dt', 'bsk_xp_dt']
+max_new:   96, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 111212.61it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=16    ] B=16  K=16  L_shared~40000 L_priv~80    n_leaves=256
+
+--- multi_few_shot [K=16] ---
+  paged        warmup  wall= 27.9s  decode_total= 5532.3ms
+  paged        r=0  prefill= 6398.2ms  decode= 5534.3ms  plan/step= 2.50ms  fwd/step=55.61ms  p50/step=58.10ms  wall= 12.3s
+  paged        r=1  prefill= 6404.7ms  decode= 5606.5ms  plan/step= 2.51ms  fwd/step=56.36ms  p50/step=58.08ms  wall= 12.4s
+  fasttree     r=0  FAILED: RuntimeError: Index put requires the source and destination dtypes match, got BFloat16 for the destination and Half for the source.
+  deft         r=0  FAILED: RuntimeError: Index put requires the source and destination dtypes match, got BFloat16 for the destination and Half for the source.
+  mlca         warmup  wall=  8.0s  decode_total= 1231.6ms
+  mlca         r=0  prefill= 6380.3ms  decode= 1211.1ms  plan/step= 2.75ms  fwd/step= 9.85ms  p50/step=12.70ms  wall=  8.0s
+  mlca         r=1  prefill= 6401.1ms  decode= 1213.6ms  plan/step= 2.74ms  fwd/step= 9.89ms  p50/step=12.72ms  wall=  8.0s
+
+[bs_kernel plan-trace] 95 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 0, XPROMPT: 95)
+
+  -- XPROMPT cross-prompt 3L path (95 steps) --
+  L0=single sys group (all B*K); sys lca_pages seen: [1250]
+  struct (L0/L1/lca) cache hits: 94/95 (98.9%)   pack cache hits: 94/95 (98.9%)   plan-state cache hits: 94/95 (98.9%)
+  bs_kernel    warmup  wall= 17.6s  decode_total=10856.4ms
+
+[bs_kernel plan-trace] 95 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 0, XPROMPT: 95)
+
+  -- XPROMPT cross-prompt 3L path (95 steps) --
+  L0=single sys group (all B*K); sys lca_pages seen: [1250]
+  struct (L0/L1/lca) cache hits: 94/95 (98.9%)   pack cache hits: 94/95 (98.9%)   plan-state cache hits: 94/95 (98.9%)
+  bs_kernel    r=0  prefill= 6394.1ms  decode= 1465.4ms  plan/step= 1.35ms  fwd/step=13.92ms  p50/step=15.03ms  wall=  8.2s
+
+[bs_kernel plan-trace] 95 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 0, XPROMPT: 95)
+
+  -- XPROMPT cross-prompt 3L path (95 steps) --
+  L0=single sys group (all B*K); sys lca_pages seen: [1250]
+  struct (L0/L1/lca) cache hits: 94/95 (98.9%)   pack cache hits: 94/95 (98.9%)   plan-state cache hits: 94/95 (98.9%)
+  bs_kernel    r=1  prefill= 6381.9ms  decode= 1465.7ms  plan/step= 1.35ms  fwd/step=13.93ms  p50/step=15.05ms  wall=  8.2s
+  bsk_2l_dt    warmup  wall=  8.5s  decode_total= 1701.2ms
+  bsk_2l_dt    r=0  prefill= 6398.5ms  decode= 1702.8ms  plan/step= 1.16ms  fwd/step=16.62ms  p50/step=17.53ms  wall=  8.5s
+  bsk_2l_dt    r=1  prefill= 6395.4ms  decode= 1703.9ms  plan/step= 1.16ms  fwd/step=16.62ms  p50/step=17.53ms  wall=  8.5s
+  bsk_xp_dt    warmup  wall=  8.2s  decode_total= 1446.6ms
+  bsk_xp_dt    r=0  prefill= 6395.0ms  decode= 1448.2ms  plan/step= 1.16ms  fwd/step=13.93ms  p50/step=14.85ms  wall=  8.2s
+  bsk_xp_dt    r=1  prefill= 6403.9ms  decode= 1447.2ms  plan/step= 1.15ms  fwd/step=13.93ms  p50/step=14.85ms  wall=  8.2s
+  rank (decode_total): mlca=1211.1, bsk_xp_dt=1447.2, bs_kernel=1465.4, bsk_2l_dt=1702.8, paged=5534.3, fasttree=inf, deft=inf
+
+
+wrote 10 rows to benchmarks/bs_kernel/results/smoke_f2_fa2_1b-20260524-153115/F2_smoke.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=16    ]   rank (decode_total): mlca=1211.1, bsk_xp_dt=1447.2, bs_kernel=1465.4, bsk_2l_dt=1702.8, paged=5534.3, fasttree=inf, deft=inf
+[W524 15:34:45.733552605 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W524 15:34:46.270801831 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+Done. benchmarks/bs_kernel/results/smoke_f2_fa2_1b-20260524-153115

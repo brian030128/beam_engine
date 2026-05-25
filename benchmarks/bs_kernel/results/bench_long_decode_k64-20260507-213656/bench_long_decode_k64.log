@@ -1,0 +1,36 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 6 (K,L_p,B) cells × 6 methods = 36 runs
+methods: ['paged', 'tree', 'fasttree', 'mlca', 'adaptive_pool', 'bs_kernel']
+max_new: 512
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 30711.43it/s]
+Model loaded.
+
+  paged          K=64  L_p=8192   B=1  prefill=  862.8ms  decode_total= 5255.3ms  per_pt_token= 10.28ms  (  6.2s wall)
+  tree           K=64  L_p=8192   B=1  prefill=   42.5ms  decode_total=16849.9ms  per_pt_token= 32.97ms  ( 16.9s wall)
+  fasttree       K=64  L_p=8192   B=1  prefill=   41.6ms  decode_total=15623.1ms  per_pt_token= 30.57ms  ( 15.7s wall)
+  mlca           K=64  L_p=8192   B=1  prefill=   44.8ms  decode_total= 4090.8ms  per_pt_token=  8.01ms  (  4.2s wall)
+  adaptive_pool  K=64  L_p=8192   B=1  prefill=   44.7ms  decode_total= 3721.4ms  per_pt_token=  7.28ms  (  3.8s wall)
+  bs_kernel      K=64  L_p=8192   B=1  prefill=   44.7ms  decode_total= 3601.2ms  per_pt_token=  7.05ms  (  3.7s wall)
+  paged          K=64  L_p=8192   B=16 prefill=  712.6ms  decode_total=72111.3ms  per_pt_token=  8.82ms  ( 73.0s wall)
+  tree           K=64  L_p=8192   B=16 prefill=  652.8ms  decode_total=268707.8ms  per_pt_token= 32.87ms  (269.5s wall)
+  fasttree       K=64  L_p=8192   B=16 prefill=  668.3ms  decode_total=229507.3ms  per_pt_token= 28.07ms  (230.4s wall)
+  mlca           K=64  L_p=8192   B=16 prefill=  706.9ms  decode_total=34511.2ms  per_pt_token=  4.22ms  ( 35.4s wall)
+  adaptive_pool  K=64  L_p=8192   B=16 prefill=  712.0ms  decode_total=31859.6ms  per_pt_token=  3.90ms  ( 32.8s wall)
+  bs_kernel      K=64  L_p=8192   B=16 prefill=  711.0ms  decode_total=32883.7ms  per_pt_token=  4.02ms  ( 33.8s wall)
+  paged          K=64  L_p=8192   B=32 prefill= 1461.4ms  decode_total=147501.1ms  per_pt_token=  9.02ms  (149.5s wall)
+  tree           K=64  L_p=8192   B=32 prefill= 1304.4ms  decode_total=535892.7ms  per_pt_token= 32.77ms  (537.5s wall)
+  fasttree       K=64  L_p=8192   B=32 prefill= 1366.6ms  decode_total=493114.4ms  per_pt_token= 30.16ms  (494.9s wall)
+  mlca           K=64  L_p=8192   B=32 prefill= 1439.5ms  decode_total=69979.4ms  per_pt_token=  4.28ms  ( 72.0s wall)
+  adaptive_pool  K=64  L_p=8192   B=32 prefill= 1446.0ms  decode_total=66691.2ms  per_pt_token=  4.08ms  ( 68.7s wall)
+  bs_kernel      K=64  L_p=8192   B=32 prefill= 1444.2ms  decode_total=67631.3ms  per_pt_token=  4.14ms  ( 69.6s wall)
+  paged          K=64  L_p=50000  B=1  prefill=  766.9ms  decode_total=16445.8ms  per_pt_token= 32.18ms  ( 17.3s wall)
+  tree           K=64  L_p=50000  B=1  prefill=  668.7ms  decode_total=81397.6ms  per_pt_token=159.29ms  ( 82.1s wall)
+  fasttree       K=64  L_p=50000  B=1  prefill=  662.8ms  decode_total=59025.0ms  per_pt_token=115.51ms  ( 59.7s wall)
+  mlca           K=64  L_p=50000  B=1  prefill=  758.6ms  decode_total= 7496.9ms  per_pt_token= 14.67ms  (  8.3s wall)
+  adaptive_pool  K=64  L_p=50000  B=1  prefill=  759.2ms  decode_total= 7503.7ms  per_pt_token= 14.68ms  (  8.3s wall)
+  bs_kernel      K=64  L_p=50000  B=1  prefill=  760.0ms  decode_total= 7580.6ms  per_pt_token= 14.83ms  (  8.4s wall)
+  paged          K=64  L_p=50000  B=16   [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 12.21 GiB. GPU 0 has a total capacity of 79.10 GiB of which 2.82 GiB is free. Including non-PyTorch memory, this process has 76.26 GiB memory in use. Of the allocated memory 75.54 GiB is allocated by PyTorch, and 68.19 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  tree           K=64  L_p=50000  B=16 

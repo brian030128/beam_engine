@@ -1,0 +1,170 @@
+=== mlca-cache v2 2026-05-17T18:08:28+08:00 ===
+GPU: NVIDIA H100 80GB HBM3
+
+=== 1) Correctness test (cached vs uncached vs paged ref) ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 32658.65it/s]
+  prompt token counts: [85, 87, 88]
+Running MLCA with cache (default)...
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/tests/test_mlca_plan_cache.py", line 123, in <module>
+    main()
+  File "/home/u4320956/beam_engine-v3/tests/test_mlca_plan_cache.py", line 84, in main
+    out_cached = _run_mlca(model, config, prompt_ids, max_new, K,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/tests/test_mlca_plan_cache.py", line 46, in _run_mlca
+    return mlca.beam_search(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/baselines/mlca.py", line 443, in beam_search
+    return _shared_beam_search(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/page_driver.py", line 457, in beam_search
+    _beam_set_page(beam, pli, new_page, use_split)
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/page_driver.py", line 166, in _beam_set_page
+    beam.pages_tail[idx - pl] = value
+    ~~~~~~~~~~~~~~~^^^^^^^^^^
+IndexError: list assignment index out of range
+
+=== 2) Plan-phase microbench (with cache) ===
+--- 1B-fewshot ---
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+=== MLCA plan-phase breakdown: cell=1B-fewshot ===
+    B=32  K=64  L_p_pages=128  num_qo_heads=32  num_kv_heads=8  head_dim=64  page_size=16  iters=50
+
+  phase                      p50 ms    mean ms     min ms     max ms
+  ----------------------  ---------  ---------  ---------  ---------
+  phase1_adaptive_levels     7.1675     7.1443     6.9376     7.3612
+  phase2_pack_arrays         0.9385     0.9400     0.9223     0.9769
+  phase3a_mlca_plan         12.7650    12.7626    12.5351    12.8997
+  phase3b_fused_plan         1.6018     1.6036     1.5586     1.7188
+  phase4_write_metadata      0.2658     0.2662     0.2567     0.2825
+  combined_mlca             21.6826    22.6679    21.4092    70.1581
+  combined_fused            10.5855    10.5677    10.2737    10.7892
+
+  MLCA  per-step sum:   21.1368 ms  (p1 7.168 + p2 0.939 + p3a 12.765 + p4 0.266)
+  FUSED per-step sum:   9.9736 ms  (p1 7.168 + p2 0.939 + p3b 1.602 + p4 0.266)
+  Gap (mlca − fused):   11.1632 ms  (plan-call only: 11.1632 ms, 7.97× of fused)
+
+  combined_mlca p50:    21.6826 ms
+  combined_fused p50:   10.5855 ms
+--- 1B-chain ---
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+=== MLCA plan-phase breakdown: cell=1B-chain ===
+    B=32  K=64  L_p_pages=160  num_qo_heads=32  num_kv_heads=8  head_dim=64  page_size=16  iters=50
+
+  phase                      p50 ms    mean ms     min ms     max ms
+  ----------------------  ---------  ---------  ---------  ---------
+  phase1_adaptive_levels     6.9315     6.9321     6.7130     7.1460
+  phase2_pack_arrays         0.9802     0.9801     0.9549     1.0181
+  phase3a_mlca_plan         12.6162    12.6318    12.4885    12.9092
+  phase3b_fused_plan         1.5733     1.5805     1.5495     1.6259
+  phase4_write_metadata      0.2675     0.2684     0.2595     0.2824
+  combined_mlca             21.5363    22.5717    21.2230    73.1120
+  combined_fused            10.4497    10.4715    10.2401    10.7098
+
+  MLCA  per-step sum:   20.7953 ms  (p1 6.931 + p2 0.980 + p3a 12.616 + p4 0.267)
+  FUSED per-step sum:   9.7524 ms  (p1 6.931 + p2 0.980 + p3b 1.573 + p4 0.267)
+  Gap (mlca − fused):   11.0429 ms  (plan-call only: 11.0429 ms, 8.02× of fused)
+
+  combined_mlca p50:    21.5363 ms
+  combined_fused p50:   10.4497 ms
+--- 1B-levelsys ---
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+=== MLCA plan-phase breakdown: cell=1B-levelsys ===
+    B=4  K=64  L_p_pages=128  num_qo_heads=32  num_kv_heads=8  head_dim=64  page_size=16  iters=50
+
+  phase                      p50 ms    mean ms     min ms     max ms
+  ----------------------  ---------  ---------  ---------  ---------
+  phase1_adaptive_levels     0.9265     0.9399     0.8686     1.0833
+  phase2_pack_arrays         0.2190     0.2192     0.2124     0.2272
+  phase3a_mlca_plan          1.9875     1.9903     1.9644     2.0750
+  phase3b_fused_plan         0.6072     0.6096     0.5943     0.6501
+  phase4_write_metadata      0.0649     0.0652     0.0636     0.0697
+  combined_mlca              3.6035     3.6153     3.5421     3.8261
+  combined_fused             2.0458     2.0626     1.9840     2.2568
+
+  MLCA  per-step sum:   3.1979 ms  (p1 0.927 + p2 0.219 + p3a 1.988 + p4 0.065)
+  FUSED per-step sum:   1.8176 ms  (p1 0.927 + p2 0.219 + p3b 0.607 + p4 0.065)
+  Gap (mlca − fused):   1.3803 ms  (plan-call only: 1.3803 ms, 3.27× of fused)
+
+  combined_mlca p50:    3.6035 ms
+  combined_fused p50:   2.0458 ms
+--- 8B-fewshot ---
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+=== MLCA plan-phase breakdown: cell=8B-fewshot ===
+    B=8  K=64  L_p_pages=128  num_qo_heads=32  num_kv_heads=8  head_dim=128  page_size=16  iters=50
+
+  phase                      p50 ms    mean ms     min ms     max ms
+  ----------------------  ---------  ---------  ---------  ---------
+  phase1_adaptive_levels     1.7439     1.7596     1.6588     1.9974
+  phase2_pack_arrays         0.3197     0.3207     0.3125     0.3393
+  phase3a_mlca_plan          3.4625     3.4666     3.4242     3.5335
+  phase3b_fused_plan         0.7446     0.7464     0.7291     0.7833
+  phase4_write_metadata      0.0936     0.0939     0.0922     0.0996
+  combined_mlca              6.1061     6.1121     5.9753     6.2495
+  combined_fused             3.2900     3.2916     3.1033     3.4179
+
+  MLCA  per-step sum:   5.6197 ms  (p1 1.744 + p2 0.320 + p3a 3.463 + p4 0.094)
+  FUSED per-step sum:   2.9018 ms  (p1 1.744 + p2 0.320 + p3b 0.745 + p4 0.094)
+  Gap (mlca − fused):   2.7179 ms  (plan-call only: 2.7179 ms, 4.65× of fused)
+
+  combined_mlca p50:    6.1061 ms
+  combined_fused p50:   3.2900 ms
+--- 8B-chain ---
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+=== MLCA plan-phase breakdown: cell=8B-chain ===
+    B=8  K=64  L_p_pages=160  num_qo_heads=32  num_kv_heads=8  head_dim=128  page_size=16  iters=50
+
+  phase                      p50 ms    mean ms     min ms     max ms
+  ----------------------  ---------  ---------  ---------  ---------
+  phase1_adaptive_levels     1.7696     1.7725     1.6502     2.0245
+  phase2_pack_arrays         0.3350     0.3356     0.3256     0.3524
+  phase3a_mlca_plan          3.5291     3.5351     3.4795     3.6687
+  phase3b_fused_plan         0.7447     0.7484     0.7293     0.7978
+  phase4_write_metadata      0.0950     0.0955     0.0929     0.1071
+  combined_mlca              6.1982     6.2042     6.0871     6.3771
+  combined_fused             3.3661     3.3455     3.1476     3.4982
+
+  MLCA  per-step sum:   5.7287 ms  (p1 1.770 + p2 0.335 + p3a 3.529 + p4 0.095)
+  FUSED per-step sum:   2.9442 ms  (p1 1.770 + p2 0.335 + p3b 0.745 + p4 0.095)
+  Gap (mlca − fused):   2.7844 ms  (plan-call only: 2.7844 ms, 4.74× of fused)
+
+  combined_mlca p50:    6.1982 ms
+  combined_fused p50:   3.3661 ms
+--- 8B-levelsys ---
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+=== MLCA plan-phase breakdown: cell=8B-levelsys ===
+    B=4  K=64  L_p_pages=128  num_qo_heads=32  num_kv_heads=8  head_dim=128  page_size=16  iters=50
+
+  phase                      p50 ms    mean ms     min ms     max ms
+  ----------------------  ---------  ---------  ---------  ---------
+  phase1_adaptive_levels     0.8964     0.9091     0.8448     1.0298
+  phase2_pack_arrays         0.2175     0.2174     0.2112     0.2262
+  phase3a_mlca_plan          1.9520     1.9559     1.9316     1.9993
+  phase3b_fused_plan         0.6104     0.6116     0.5996     0.6475
+  phase4_write_metadata      0.0649     0.0651     0.0634     0.0736
+  combined_mlca              3.5502     3.5632     3.4926     3.7777
+  combined_fused             2.0578     2.0698     1.9836     2.2457
+
+  MLCA  per-step sum:   3.1308 ms  (p1 0.896 + p2 0.218 + p3a 1.952 + p4 0.065)
+  FUSED per-step sum:   1.7892 ms  (p1 0.896 + p2 0.218 + p3b 0.610 + p4 0.065)
+  Gap (mlca − fused):   1.3416 ms  (plan-call only: 1.3416 ms, 3.20× of fused)
+
+  combined_mlca p50:    3.5502 ms
+  combined_fused p50:   2.0578 ms
+Done.

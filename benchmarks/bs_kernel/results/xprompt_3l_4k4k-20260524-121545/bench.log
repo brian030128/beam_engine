@@ -1,0 +1,107 @@
+=== 4k-sys + 4k-prompt cross-prompt 3L vs 2L 2026-05-24T12:15:45+08:00 ; meta-llama/Llama-3.2-1B-Instruct ===
+BE_SYS_LEN=4096 BE_FEWSHOT_LEN=4096
+===== B=4 : 2L baseline (bsk_2l_dt) =====
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bsk_2l_dt']
+max_new:   128, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 62869.65it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=4   K=32  L_shared~8192  L_priv~80    n_leaves=128
+
+--- multi_few_shot [K=32] ---
+  bsk_2l_dt    warmup  wall=  2.0s  decode_total=  734.2ms
+  bsk_2l_dt    r=0  prefill=  209.0ms  decode=  658.3ms  plan/step= 0.56ms  fwd/step= 4.50ms  p50/step= 5.08ms  wall=  1.0s
+  bsk_2l_dt    r=1  prefill=  209.7ms  decode=  659.0ms  plan/step= 0.57ms  fwd/step= 4.50ms  p50/step= 5.08ms  wall=  1.0s
+  rank (decode_total): bsk_2l_dt=658.3
+
+
+wrote 2 rows to benchmarks/bs_kernel/results/xprompt_3l_4k4k-20260524-121545/B4_2l.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): bsk_2l_dt=658.3
+[W524 12:15:56.224914018 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+===== B=4 : cross-prompt 3L (bs_kernel + CROSS_PROMPT_3L) =====
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bs_kernel']
+max_new:   128, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 72494.14it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=4   K=32  L_shared~8192  L_priv~80    n_leaves=128
+
+--- multi_few_shot [K=32] ---
+  bs_kernel    warmup  wall=  2.1s  decode_total=  839.3ms
+  bs_kernel    r=0  prefill=  206.9ms  decode=  783.6ms  plan/step= 1.75ms  fwd/step= 4.29ms  p50/step= 6.06ms  wall=  1.1s
+  bs_kernel    r=1  prefill=  208.6ms  decode=  785.3ms  plan/step= 1.76ms  fwd/step= 4.30ms  p50/step= 6.08ms  wall=  1.1s
+  rank (decode_total): bs_kernel=783.6
+
+
+wrote 2 rows to benchmarks/bs_kernel/results/xprompt_3l_4k4k-20260524-121545/B4_xp3l.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): bs_kernel=783.6
+[W524 12:16:08.056465699 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+===== B=16 : 2L baseline (bsk_2l_dt) =====
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bsk_2l_dt']
+max_new:   128, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 110792.94it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=16  K=32  L_shared~8192  L_priv~80    n_leaves=512
+
+--- multi_few_shot [K=32] ---
+  bsk_2l_dt    warmup  wall=  3.1s  decode_total= 1184.1ms
+  bsk_2l_dt    r=0  prefill=  776.4ms  decode= 1126.1ms  plan/step= 1.45ms  fwd/step= 7.21ms  p50/step= 8.50ms  wall=  2.1s
+  bsk_2l_dt    r=1  prefill=  773.5ms  decode= 1122.1ms  plan/step= 1.46ms  fwd/step= 7.17ms  p50/step= 8.48ms  wall=  2.1s
+  rank (decode_total): bsk_2l_dt=1122.1
+
+
+wrote 2 rows to benchmarks/bs_kernel/results/xprompt_3l_4k4k-20260524-121545/B16_2l.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): bsk_2l_dt=1122.1
+[W524 12:16:24.879931287 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+===== B=16 : cross-prompt 3L (bs_kernel + CROSS_PROMPT_3L) =====
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bs_kernel']
+max_new:   128, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 93503.59it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=16  K=32  L_shared~8192  L_priv~80    n_leaves=512
+
+--- multi_few_shot [K=32] ---
+  bs_kernel    warmup  wall=  3.4s  decode_total= 1409.2ms
+  bs_kernel    r=0  prefill=  771.7ms  decode= 1362.4ms  plan/step= 3.36ms  fwd/step= 7.16ms  p50/step=10.38ms  wall=  2.3s
+  bs_kernel    r=1  prefill=  777.2ms  decode= 1363.1ms  plan/step= 3.36ms  fwd/step= 7.16ms  p50/step=10.37ms  wall=  2.3s
+  rank (decode_total): bs_kernel=1362.4
+
+
+wrote 2 rows to benchmarks/bs_kernel/results/xprompt_3l_4k4k-20260524-121545/B16_xp3l.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): bs_kernel=1362.4
+[W524 12:16:40.356930457 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+Done. Results: benchmarks/bs_kernel/results/xprompt_3l_4k4k-20260524-121545

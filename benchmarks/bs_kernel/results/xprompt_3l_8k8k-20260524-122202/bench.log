@@ -1,0 +1,75 @@
+=== 8k-sys + 8k-prompt 2026-05-24T12:22:02+08:00 ; meta-llama/Llama-3.2-1B-Instruct ===
+===== B=16 : 2L baseline (bsk_2l_dt) =====
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bsk_2l_dt']
+max_new:   128, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 109145.46it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=16  K=32  L_shared~16384 L_priv~80    n_leaves=512
+
+--- multi_few_shot [K=32] ---
+  bsk_2l_dt    warmup  wall=  4.3s  decode_total= 1454.2ms
+  bsk_2l_dt    r=0  prefill= 1643.8ms  decode= 1392.4ms  plan/step= 1.46ms  fwd/step= 9.30ms  p50/step=10.58ms  wall=  3.3s
+  bsk_2l_dt    r=1  prefill= 1642.8ms  decode= 1394.3ms  plan/step= 1.46ms  fwd/step= 9.31ms  p50/step=10.59ms  wall=  3.3s
+  rank (decode_total): bsk_2l_dt=1392.4
+
+
+wrote 2 rows to benchmarks/bs_kernel/results/xprompt_3l_8k8k-20260524-122202/B16_2l.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): bsk_2l_dt=1392.4
+[W524 12:22:24.299272350 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+===== B=16 : cross-prompt 3L =====
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bs_kernel']
+max_new:   128, repeat: 2
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 107153.75it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=16  K=32  L_shared~16384 L_priv~80    n_leaves=512
+
+--- multi_few_shot [K=32] ---
+  bs_kernel    warmup  wall=  4.6s  decode_total= 1726.3ms
+  bs_kernel    r=0  prefill= 1650.3ms  decode= 1680.6ms  plan/step= 3.79ms  fwd/step= 9.23ms  p50/step=12.88ms  wall=  3.6s
+  bs_kernel    r=1  prefill= 1649.9ms  decode= 1683.3ms  plan/step= 3.81ms  fwd/step= 9.24ms  p50/step=12.90ms  wall=  3.6s
+  rank (decode_total): bs_kernel=1680.6
+
+
+wrote 2 rows to benchmarks/bs_kernel/results/xprompt_3l_8k8k-20260524-122202/B16_xp3l.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): bs_kernel=1680.6
+[W524 12:22:48.843345403 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+===== profiler probe =====
+-- which ncu/nsys --
+/work/HPC_software/LMOD/nvidia/packages/cuda-12.4/bin/ncu
+/work/HPC_software/LMOD/nvidia/packages/cuda-12.4/bin/nsys
+NVIDIA (R) Nsight Compute Command Line Profiler
+Copyright (c) 2018-2023 NVIDIA Corporation
+Version 2024.1.0.0 (build 33681293) (public-release)
+-- ncu perms probe on a trivial matmul --
+==PROF== Connected to process 3852149 (/work/HPC_software/LMOD/biology/packages/Python/Python_v3.11.11/bin/python3.11)
+==PROF== Profiling "distribution_elementwise_grid..." - 0 (1/1): 0%....50%....100% - 1 pass
+[W524 12:22:51.664410906 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+==PROF== Disconnected from process 3852149
+[3852149] python3.11@127.0.0.1
+  void at::native::<unnamed>::distribution_elementwise_grid_stride_kernel<float, (int)4, void at::native::templates::cuda::normal_and_transform<float, float, at::CUDAGeneratorImpl *, void at::native::templates::cuda::normal_kernel<at::CUDAGeneratorImpl *>(const at::TensorBase &, double, double, T1)::[lambda() (instance 1)]::operator ()() const::[lambda() (instance 2)]::operator ()() const::[lambda(float) (instance 1)]>(at::TensorIteratorBase &, T3, T4)::[lambda(curandStatePhilox4_32_10 *) (instance 2)], void at::native::<unnamed>::distribution_nullary_kernel<float, float, float4, at::CUDAGeneratorImpl *, void at::native::templates::cuda::normal_and_transform<float, float, at::CUDAGeneratorImpl *, void at::native::templates::cuda::normal_kernel<at::CUDAGeneratorImpl *>(const at::TensorBase &, double, double, T1)::[lambda() (instance 1)]::operator ()() const::[lambda() (instance 2)]::operator ()() const::[lambda(float) (instance 1)]>(at::TensorIteratorBase &, T3, T4)::[lambda(curandStatePhilox4_32_10 *) (instance 2)], void at::native::templates::cuda::normal_kernel<at::CUDAGeneratorImpl *>(const at::TensorBase &, double, double, T1)::[lambda() (instance 1)]::operator ()() const::[lambda() (instance 2)]::operator ()() const::[lambda(float) (instance 1)]>(at::TensorIteratorBase &, T4, const T5 &, T6)::[lambda(int, float) (instance 1)]>(long, at::PhiloxCudaState, T3, T4) (1056, 1, 1)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 9.0
+    Section: Command line profiler metrics
+    -------------------- ----------- ------------
+    Metric Name          Metric Unit Metric Value
+    -------------------- ----------- ------------
+    dram__bytes_read.sum       Kbyte        10.50
+    -------------------- ----------- ------------
+
+Done. Results: benchmarks/bs_kernel/results/xprompt_3l_8k8k-20260524-122202

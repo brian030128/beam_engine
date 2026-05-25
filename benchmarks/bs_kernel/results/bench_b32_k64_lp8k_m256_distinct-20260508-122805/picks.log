@@ -1,0 +1,27 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+Loading model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 27988.68it/s]
+Model loaded.
+
+================================================================================
+K=64  L_p=8192  B=32  max_new=256
+================================================================================
+
+Strategy histogram across 255 steps:
+  shared_3l_1pool        238
+  shared_2l_1pool         16
+  shared_3l_2pool          1
+
+(t_large, pool_count, depth) histogram for SHARED steps:
+  t_large=64   pool=1  depth=3   238
+  t_large=64   pool=1  depth=2    16
+  t_large=64   pool=2  depth=3     1
+
+Per-level CTA_Q padding (mean across decode steps):
+  level            T_used  total_tiles  tiles/wave   padding%
+  L0_shared            64         32.0        0.24       0.0%
+  L_per_beam           64       2048.0       15.52      98.4%
+
+[W508 12:35:37.039295621 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

@@ -18,21 +18,52 @@ OUT_DIR="benchmarks/bs_kernel/results/paper-exp/final_paper/${MODEL_TAG}"
 mkdir -p "$OUT_DIR" slurm/logs
 LOG="$OUT_DIR/run.log"
 
+# --- data-draw seeds ------------------------------------------------------
+# Each seed resamples the underlying GSM8K/HotpotQA text for the SAME
+# workload shape (the harness conforms every draw to seed-0's per-group
+# token lengths; F3/F4 are shape-pinned by L_p truncation). Default "0" =
+# single draw, which reproduces the original final_paper_results numbers.
+SEEDS="${SEEDS:-0}"
+N_DRAWS=$(echo "$SEEDS" | tr ',' '\n' | grep -c .)
+MAX_SEED=$(echo "$SEEDS" | tr ',' '\n' | sort -n | tail -1)
+# Per-draw timed repeats. With multiple draws the draws themselves provide
+# the statistical replication, so the default drops to 1 when N_DRAWS>1.
+if [[ "$N_DRAWS" -gt 1 ]]; then E2E_REPEAT="${E2E_REPEAT:-1}"; else E2E_REPEAT="${E2E_REPEAT:-3}"; fi
+
 {
     echo "=== final_paper ${MODEL_TAG} started $(date -Iseconds) ==="
     echo "model: $BE_MODEL  (nproc=$NPROC, dtype=$BE_DTYPE, kv=$BE_KV_DTYPE)"
+    echo "data draws: SEEDS=[$SEEDS] (N=$N_DRAWS), per-draw repeats=$E2E_REPEAT"
 } | tee -a "$LOG"
 
-# --- multi_doc_qa dataset: 128 questions/row, prefix capped ~80K ---------
-DATA_FILE="data/hotpotqa_multi_q_K128_80k.jsonl"
+# --- multi_doc_qa (F1) dataset: 128 questions/row, prefix capped ~80K -----
+# Need >= MAX_SEED+1 distinct doc-sets so each draw reads a distinct line
+# (build_multi_doc_qa picks line = b + data_seed*B). Floor of 4 matches the
+# historic file. The build is deterministic (--seed 0), so the guard / any
+# concurrent rebuild yields identical content.
+F1_NPROMPTS=$(( MAX_SEED + 1 )); (( F1_NPROMPTS < 4 )) && F1_NPROMPTS=4
+DATA_FILE="data/hotpotqa_multi_q_K128_80k_n${F1_NPROMPTS}.jsonl"
 if [[ ! -s "$DATA_FILE" ]]; then
-    echo "=== building $DATA_FILE (questions-per=128, cap-prefix-tokens=80000) ===" | tee -a "$LOG"
+    echo "=== building $DATA_FILE (questions-per=128, cap=80000, n=$F1_NPROMPTS) ===" | tee -a "$LOG"
     uv run python scripts/data/build_hotpotqa_multi_q.py \
         --out "$DATA_FILE" \
         --questions-per 128 \
         --target-tokens 80000 \
         --cap-prefix-tokens 80000 \
-        --n-prompts 4 \
+        --n-prompts "$F1_NPROMPTS" \
+        2>&1 | tee -a "$LOG"
+fi
+
+# --- beam_search (F3) prompt pool: one HotpotQA question per prompt -------
+# Each draw uses B prompts (window usable[seed*B : seed*B+B]); B<=16, so we
+# need >= N_DRAWS*16 prompts >= L_p=16000 tokens. Build at ~45k tok each so
+# all clear L_p; floor 30 matches the historic file.
+F3_PROMPTS="data/hotpotqa_f3_pool.jsonl"
+F3_NEED=$(( N_DRAWS * 16 )); (( F3_NEED < 30 )) && F3_NEED=30
+if [[ ! -s "$F3_PROMPTS" || "$(grep -c . "$F3_PROMPTS" 2>/dev/null || echo 0)" -lt "$F3_NEED" ]]; then
+    echo "=== building $F3_PROMPTS (n-prompts=$F3_NEED, ~45k tok each) ===" | tee -a "$LOG"
+    uv run python scripts/data/build_hotpotqa_prompts.py \
+        --out "$F3_PROMPTS" --n-prompts "$F3_NEED" --target-tokens 45000 \
         2>&1 | tee -a "$LOG"
 fi
 # Point the multi_doc_qa builder at the K=128/85K file via env override
@@ -65,7 +96,7 @@ run_sglang_attempt () {
         benchmarks/bs_kernel/bench_sglang_e2e.py \
         --methods $SGLANG_CORE \
         --paper-exact --no-stage2 \
-        --max-new "$mn" --repeat 3 --warmup \
+        --max-new "$mn" --repeat "$E2E_REPEAT" --warmup --data-seeds "$SEEDS" \
         --scenarios "$scenario" --k-override "$K" --b-override "$B" \
         --out "$csv" 2>&1 | tee -a "$LOG" || true
     if ! uv run python scripts/paper-exp/cell_complete.py "$csv" sglang "$SGLANG_CORE_CSV"; then
@@ -82,7 +113,7 @@ run_sglang_attempt () {
             benchmarks/bs_kernel/bench_sglang_e2e.py \
             --methods $SGLANG_EXTRA \
             --paper-exact --no-stage2 \
-            --max-new "$mn" --repeat 3 --warmup \
+            --max-new "$mn" --repeat "$E2E_REPEAT" --warmup --data-seeds "$SEEDS" \
             --scenarios "$scenario" --k-override "$K" --b-override "$B" \
             --out "$etmp" 2>&1 | tee -a "$LOG" || \
             echo "  (extra sglang pass crashed/partial; core kept)" | tee -a "$LOG"
@@ -101,20 +132,25 @@ run_batched_attempt () {
     } | tee -a "$LOG"
     rm -f "$csv"
     local first=1
+    # One torchrun process per (data-draw seed, method). The per-seed prompt
+    # window (usable[seed*B : seed*B+B]) gives each draw distinct HotpotQA
+    # prompts; L_p truncation pins the shape across draws.
+    for s in ${SEEDS//,/ }; do
     for m in $BATCHED_CORE $BATCHED_EXTRA; do
-        echo "  --- method: $m ---" | tee -a "$LOG"
-        local tmp="$OUT_DIR/${tag}_${m}_K${K}_B${B}.tmp.csv"
+        echo "  --- method: $m (seed=$s) ---" | tee -a "$LOG"
+        local tmp="$OUT_DIR/${tag}_${m}_K${K}_B${B}_s${s}.tmp.csv"
         rm -f "$tmp"
         torchrun --standalone --nproc_per_node="$NPROC" \
             benchmarks/bs_kernel/bench_batched.py \
             --K "$K" --L_p "$Lp" --B "$B" --max_new "$mn" \
-            --prompts-file data/hotpotqa.jsonl \
+            --prompts-file "$F3_PROMPTS" --data-seed "$s" \
             --warmup --methods "$m" --out "$tmp" 2>&1 | tee -a "$LOG" || true
         if [[ -f "$tmp" ]]; then
             if [[ $first -eq 1 ]]; then cp "$tmp" "$csv"; first=0
             else tail -n +2 "$tmp" >> "$csv"; fi
             rm -f "$tmp"
         fi
+    done
     done
     # Gate on CORE only; EXTRA methods are best-effort.
     if uv run python scripts/paper-exp/cell_complete.py "$csv" batched "$BATCHED_CORE_CSV"; then

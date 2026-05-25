@@ -1,0 +1,61 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+=== Beam-search end-to-end demo ===
+K=16  L_p=8192  max_new=32
+model=meta-llama/Llama-3.1-8B
+
+Loading model and tokenizer...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 25308.47it/s]
+prompt length = 8192 tokens
+prompt prefix = 'Once upon a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across '...
+
+--- running paged ---
+  total_wall = 1.76s  prefill = 1209ms  decode_p50 = 12.5ms
+--- running tree ---
+  total_wall = 0.82s  prefill = 230ms  decode_p50 = 16.1ms
+--- running fasttree ---
+  total_wall = 1.19s  prefill = 229ms  decode_p50 = 16.5ms
+--- running mlca ---
+  total_wall = 0.67s  prefill = 235ms  decode_p50 = 13.2ms
+--- running adaptive_pool ---
+  total_wall = 0.64s  prefill = 238ms  decode_p50 = 11.7ms
+--- running bs_kernel ---
+  total_wall = 0.59s  prefill = 235ms  decode_p50 = 11.3ms
+--- running dbs ---
+  total_wall = 0.65s  prefill = 239ms  decode_p50 = 13.1ms
+
+====================================================================================================
+method             total_s   prefill_ms    p50_ms    p99_ms   mean_ms  speedup_decode
+----------------------------------------------------------------------------------------------------
+paged                 1.76         1209      12.5      15.4      15.6           1.00×
+tree                  0.82          230      16.1      16.2      18.8           0.78×
+fasttree              1.19          229      16.5      21.0      30.8           0.76×
+mlca                  0.67          235      13.2      15.9      13.9           0.95×
+adaptive_pool         0.64          238      11.7      14.7      12.8           1.07×
+bs_kernel             0.59          235      11.3      13.2      11.4           1.11×
+dbs                   0.65          239      13.1      15.0      13.3           0.96×
+
+====================================================================================================
+Best beam from each method (token continuation, score=cum_log_prob):
+
+  [paged] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'
+
+  [tree] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'
+
+  [fasttree] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'
+
+  [mlca] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'
+
+  [adaptive_pool] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'
+
+  [bs_kernel] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'
+
+  [dbs] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'

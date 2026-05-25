@@ -1,0 +1,85 @@
+=== bs_1b_lp8k started 2026-05-14T22:52:23+08:00 ===
+config:  L_p=8192, K=32, B=32, max_new=256
+methods: fasttree bs_kernel paged mlca
+--warmup (1 discarded + 1 measured per method)
+model:   meta-llama/Llama-3.2-1B
+GPU:     NVIDIA H100 80GB HBM3
+
+=== running method: fasttree ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['fasttree']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 101241.82it/s]
+Model loaded.
+
+  fasttree       warmup K=32  L_p=8192   B=32 discard          decode_total=11386.4ms  ( 14.1s wall)
+  fasttree              K=32  L_p=8192   B=32 prefill= 1258.3ms  decode_total=10839.5ms  per_pt_token=  1.33ms  ( 12.5s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/bs_1b_lp8k-20260514-225223/fasttree.csv
+[W514 22:52:59.190310084 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: bs_kernel ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 27311.75it/s]
+Model loaded.
+
+  bs_kernel      warmup K=32  L_p=8192   B=32 discard          decode_total= 8454.2ms  ( 11.0s wall)
+  bs_kernel             K=32  L_p=8192   B=32 prefill= 1254.5ms  decode_total= 8366.1ms  per_pt_token=  1.03ms  ( 10.0s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/bs_1b_lp8k-20260514-225223/bs_kernel.csv
+[W514 22:53:29.110219696 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: paged ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 24944.88it/s]
+Model loaded.
+
+  paged          warmup K=32  L_p=8192   B=32 discard          decode_total=17637.5ms  ( 20.2s wall)
+  paged                 K=32  L_p=8192   B=32 prefill= 1265.5ms  decode_total=17548.5ms  per_pt_token=  2.15ms  ( 19.2s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/bs_1b_lp8k-20260514-225223/paged.csv
+[W514 22:54:17.422712397 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: mlca ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 16796.41it/s]
+Model loaded.
+
+  mlca           warmup K=32  L_p=8192   B=32 discard          decode_total=15717.2ms  ( 18.3s wall)
+  mlca                  K=32  L_p=8192   B=32 prefill= 1268.6ms  decode_total=15560.2ms  per_pt_token=  1.91ms  ( 17.2s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/bs_1b_lp8k-20260514-225223/mlca.csv
+[W514 22:55:02.155061250 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== merging CSVs to benchmarks/bs_kernel/results/bs_1b_lp8k-20260514-225223/merged.csv ===
+
+=== merged results ===
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
+fasttree,32,8192,32,256,1258.2655,10839.5137,42.5079,1.3284
+bs_kernel,32,8192,32,256,1254.5495,8366.1284,32.8083,1.0253
+paged,32,8192,32,256,1265.5445,17548.4629,68.8175,2.1505
+mlca,32,8192,32,256,1268.5845,15560.2322,61.0205,1.9069
+
+Done. Results: benchmarks/bs_kernel/results/bs_1b_lp8k-20260514-225223

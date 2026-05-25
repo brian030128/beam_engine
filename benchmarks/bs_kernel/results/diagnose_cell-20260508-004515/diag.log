@@ -1,0 +1,108 @@
+=== diagnose_cell started 2026-05-08T00:45:15+08:00 ===
+K=64 L_p=8192 B=32 max_new=256 distinct=True
+GPU: NVIDIA H100 80GB HBM3
+
+=== mode: auto ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+loading model meta-llama/Llama-3.2-1B...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 21446.40it/s]
+  loaded in 2.5s
+building 32 distinct prompts of length 8192...
+running mode='auto' filter=None
+  prefill=2299.3ms  decode_total=37934.2ms  median_step=126.368ms  wall=40.7s
+wrote benchmarks/bs_kernel/results/diagnose_cell-20260508-004515/auto.json
+[W508 00:46:05.062225412 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== mode: per_beam ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+loading model meta-llama/Llama-3.2-1B...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 69245.58it/s]
+  loaded in 2.5s
+building 32 distinct prompts of length 8192...
+running mode='per_beam' filter={<Strategy.PER_BEAM: 'per_beam'>}
+  prefill=2273.1ms  decode_total=76138.1ms  median_step=275.574ms  wall=78.9s
+wrote benchmarks/bs_kernel/results/diagnose_cell-20260508-004515/per_beam.json
+[W508 00:47:33.753026467 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== mode: 2l1p ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+loading model meta-llama/Llama-3.2-1B...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 3852.02it/s]
+  loaded in 2.5s
+building 32 distinct prompts of length 8192...
+running mode='2l1p' filter={<Strategy.SHARED_2L_1POOL: 'shared_2l_1pool'>}
+  prefill=2284.0ms  decode_total=44599.1ms  median_step=154.593ms  wall=47.3s
+wrote benchmarks/bs_kernel/results/diagnose_cell-20260508-004515/2l1p.json
+[W508 00:48:31.895527286 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== mode: 2l2p ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+loading model meta-llama/Llama-3.2-1B...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 56679.78it/s]
+  loaded in 2.4s
+building 32 distinct prompts of length 8192...
+running mode='2l2p' filter={<Strategy.SHARED_2L_2POOL: 'shared_2l_2pool'>}
+  prefill=2276.8ms  decode_total=45974.1ms  median_step=158.595ms  wall=48.7s
+wrote benchmarks/bs_kernel/results/diagnose_cell-20260508-004515/2l2p.json
+[W508 00:49:29.295916680 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== mode: 3l1p ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+loading model meta-llama/Llama-3.2-1B...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 23118.21it/s]
+  loaded in 2.4s
+building 32 distinct prompts of length 8192...
+running mode='3l1p' filter={<Strategy.SHARED_2L_1POOL: 'shared_2l_1pool'>, <Strategy.SHARED_3L_1POOL: 'shared_3l_1pool'>}
+  prefill=2298.5ms  decode_total=36331.0ms  median_step=121.182ms  wall=39.1s
+wrote benchmarks/bs_kernel/results/diagnose_cell-20260508-004515/3l1p.json
+[W508 00:50:18.206157887 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== mode: 3l2p ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+loading model meta-llama/Llama-3.2-1B...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 105611.97it/s]
+  loaded in 2.5s
+building 32 distinct prompts of length 8192...
+running mode='3l2p' filter={<Strategy.SHARED_2L_2POOL: 'shared_2l_2pool'>, <Strategy.SHARED_3L_2POOL: 'shared_3l_2pool'>}
+  prefill=2292.5ms  decode_total=40538.8ms  median_step=135.228ms  wall=43.3s
+wrote benchmarks/bs_kernel/results/diagnose_cell-20260508-004515/3l2p.json
+[W508 00:51:11.298144218 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== merging into per-step CSV ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+wrote benchmarks/bs_kernel/results/diagnose_cell-20260508-004515/per_step.csv (255 rows, 21 cols)
+
+=== per-mode totals ===
+  mode         prefill_ms   decode_total_ms   decode_median_ms   wall_s
+  auto             2299.3           37934.2           126.3679     40.7
+  per_beam         2273.1           76138.1           275.5745     78.9
+  2l1p             2284.0           44599.1           154.5933     47.3
+  2l2p             2276.8           45974.1           158.5949     48.7
+  3l1p             2298.5           36331.0           121.1822     39.1
+  3l2p             2292.5           40538.8           135.2275     43.3
+
+=== per-step argmin analysis (excluding auto) ===
+  step-level wins (out of 255 steps):
+    per_beam       0  (0.0%)
+    2l1p          12  (4.7%)
+    2l2p           1  (0.4%)
+    3l1p         211  (82.7%)
+    3l2p          31  (12.2%)
+  auto-vs-best regret: mean=13.860% p50=4.633% p90=75.397% p99=97.794% max=104.982%
+[W508 00:51:17.518842054 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+Done. Results: benchmarks/bs_kernel/results/diagnose_cell-20260508-004515

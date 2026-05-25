@@ -1,0 +1,4 @@
+K,L_p,max_new,model_pick,oracle_pick,regret_pct,t_per_beam_ms,t_shared_2l_1pool_ms,t_shared_2l_2pool_ms
+16,8192,16,shared_2l_1pool,shared_2l_2pool,1.38,12.7188,11.6401,11.4817
+32,8192,16,shared_2l_1pool,shared_2l_2pool,0.70,16.5927,13.7860,13.6900
+64,8192,16,shared_2l_1pool,shared_2l_1pool,0.00,26.5380,19.6468,19.8178

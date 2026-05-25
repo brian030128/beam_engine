@@ -1,0 +1,112 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 14887.82it/s]
+grid: 12 workloads × 4 runs each
+
+=== K=16 L_p=2048 max_new=16 ===
+  forced per_beam               median decode =  10.66 ms
+  forced shared_2l_1pool        median decode =  10.83 ms
+  forced shared_2l_2pool        median decode =  10.80 ms
+  model picks per_beam  (t_model=10.66ms)
+  oracle      per_beam               (t_oracle=10.66ms)
+  regret      +0.0%
+
+=== K=16 L_p=8192 max_new=16 ===
+  forced per_beam               median decode =  12.64 ms
+  forced shared_2l_1pool        median decode =  11.52 ms
+  forced shared_2l_2pool        median decode =  11.52 ms
+  model picks shared_2l_1pool  (t_model=11.52ms)
+  oracle      shared_2l_1pool        (t_oracle=11.52ms)
+  regret      +0.0%
+
+=== K=16 L_p=32768 max_new=16 ===
+  forced per_beam               median decode =  21.22 ms
+  forced shared_2l_1pool        median decode =  14.23 ms
+  forced shared_2l_2pool        median decode =  14.24 ms
+  model picks shared_2l_1pool  (t_model=14.23ms)
+  oracle      shared_2l_1pool        (t_oracle=14.23ms)
+  regret      +0.0%
+
+=== K=16 L_p=65536 max_new=16 ===
+  forced per_beam               median decode =  34.25 ms
+  forced shared_2l_1pool        median decode =  19.05 ms
+  forced shared_2l_2pool        median decode =  19.07 ms
+  model picks shared_2l_1pool  (t_model=19.05ms)
+  oracle      shared_2l_1pool        (t_oracle=19.05ms)
+  regret      +0.0%
+
+=== K=32 L_p=2048 max_new=16 ===
+  forced per_beam               median decode =  12.48 ms
+  forced shared_2l_1pool        median decode =  12.36 ms
+  forced shared_2l_2pool        median decode =  12.35 ms
+  model picks shared_2l_1pool  (t_model=12.36ms)
+  oracle      shared_2l_2pool        (t_oracle=12.35ms)
+  regret      +0.1%
+
+=== K=32 L_p=8192 max_new=16 ===
+  forced per_beam               median decode =  16.76 ms
+  forced shared_2l_1pool        median decode =  13.82 ms
+  forced shared_2l_2pool        median decode =  13.82 ms
+  model picks shared_2l_1pool  (t_model=13.82ms)
+  oracle      shared_2l_2pool        (t_oracle=13.82ms)
+  regret      +0.0%
+
+=== K=32 L_p=32768 max_new=16 ===
+  forced per_beam               median decode =  34.45 ms
+  forced shared_2l_1pool        median decode =  18.21 ms
+  forced shared_2l_2pool        median decode =  18.17 ms
+  model picks shared_2l_1pool  (t_model=18.21ms)
+  oracle      shared_2l_2pool        (t_oracle=18.17ms)
+  regret      +0.2%
+
+=== K=32 L_p=65536 max_new=16 ===
+  forced per_beam               median decode =  61.49 ms
+  forced shared_2l_1pool        median decode =  26.26 ms
+  forced shared_2l_2pool        median decode =  26.24 ms
+  model picks shared_2l_1pool  (t_model=26.26ms)
+  oracle      shared_2l_2pool        (t_oracle=26.24ms)
+  regret      +0.1%
+
+=== K=64 L_p=2048 max_new=16 ===
+  forced per_beam               median decode =  18.48 ms
+  forced shared_2l_1pool        median decode =  16.90 ms
+  forced shared_2l_2pool        median decode =  16.90 ms
+  model picks shared_2l_1pool  (t_model=16.90ms)
+  oracle      shared_2l_1pool        (t_oracle=16.90ms)
+  regret      +0.0%
+
+=== K=64 L_p=8192 max_new=16 ===
+  forced per_beam               median decode =  26.61 ms
+  forced shared_2l_1pool        median decode =  19.71 ms
+  forced shared_2l_2pool        median decode =  19.69 ms
+  model picks shared_2l_1pool  (t_model=19.71ms)
+  oracle      shared_2l_2pool        (t_oracle=19.69ms)
+  regret      +0.1%
+
+=== K=64 L_p=32768 max_new=16 ===
+  forced per_beam               median decode =  59.46 ms
+  forced shared_2l_1pool        median decode =  26.34 ms
+  forced shared_2l_2pool        median decode =  26.42 ms
+  model picks shared_2l_1pool  (t_model=26.34ms)
+  oracle      shared_2l_1pool        (t_oracle=26.34ms)
+  regret      +0.0%
+
+=== K=64 L_p=65536 max_new=16 ===
+  forced per_beam               median decode = 113.99 ms
+  forced shared_2l_1pool        median decode =  44.40 ms
+  forced shared_2l_2pool        median decode =  44.56 ms
+  model picks shared_2l_1pool  (t_model=44.40ms)
+  oracle      shared_2l_1pool        (t_oracle=44.40ms)
+  regret      +0.0%
+
+============================================================
+Regret distribution:
+  mean  = +0.04%
+  p50   = +0.00%
+  p90   = +0.10%
+  p99   = +0.23%
+  max   = +0.23%
+
+wrote 12 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-174623/05-oracle-vs-model.csv

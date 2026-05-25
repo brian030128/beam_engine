@@ -1,0 +1,60 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+Loading 'meta-llama/Llama-3.2-1B'...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 115137.76it/s]
+Cell: B=32 K=4 L_p=8192 max_new=128 dbs=True cap_depths=[2]
+
+GQA group G = 4
+Building 32 pairwise-distinct prompts of length 8192...
+
+Warmup pass...
+
+--- Iteration 1/5 ---
+  Running bs_kernel_default...
+  Running bs_kernel_cap2...
+
+--- Iteration 2/5 ---
+  Running bs_kernel_default...
+  Running bs_kernel_cap2...
+
+--- Iteration 3/5 ---
+  Running bs_kernel_default...
+  Running bs_kernel_cap2...
+
+--- Iteration 4/5 ---
+  Running bs_kernel_default...
+  Running bs_kernel_cap2...
+
+--- Iteration 5/5 ---
+  Running bs_kernel_default...
+  Running bs_kernel_cap2...
+
+==================================================================================================================================
+Wall-time comparison — DECODE STEP (mean ± σ over 5 repeats)
+==================================================================================================================================
+method                                  decode_ms (μ±σ)                   Δ vs default
+----------------------------------------------------------------------------------------------------------------------------------
+bs_kernel_default                        4901.65 ± 40.44                                  —
+bs_kernel_cap2                           4941.07 ± 48.51           +39.42 ± 63.16 (+0.80%) 
+
+==================================================================================================================================
+Phase breakdown — FORWARD ms = GPU attention+MLP, mean ± σ over 5 repeats
+==================================================================================================================================
+method                                    forward (μ±σ)                   Δfwd       plan      cow       topk     fork
+----------------------------------------------------------------------------------------------------------------------------------
+bs_kernel_default                   2218.30 ±  2.31                         —     415.84     5.72    2253.60     6.62
+bs_kernel_cap2                      2219.82 ±  2.99    +1.52 ± 3.78 (+0.07%)      454.07     5.74    2253.26     6.60
+
+'*' = |Δ| > 2σ (statistically distinguishable at this sample size)
+
+--- bs_kernel_default picker stats ---
+  Steps × prompts total : 4064
+  Cut-count distribution (per prompt × step):
+    1 cuts (2L cascade    ) :    4064  (100.0%)
+
+--- bs_kernel_cap2 picker stats ---
+  Steps × prompts total : 4064
+  Cut-count distribution (per prompt × step):
+    1 cuts (2L cascade    ) :    4064  (100.0%)
+

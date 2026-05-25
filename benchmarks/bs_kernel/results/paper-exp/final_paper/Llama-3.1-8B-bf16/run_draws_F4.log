@@ -1,0 +1,54 @@
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['self_consistency']
+methods:   ['paged', 'fasttree', 'deft', 'mlca', 'bs_kernel', 'bsk_2l_1p_single', 'bsk_2l_dt']
+max_new:   12000, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 139387.75it/s]
+Model loaded.
+
+k_overrides: [16]
+data_seeds: [0, 1, 2]  (seed 0 = reference shape)
+Building TreeSpecs (this tokenizes the inputs)...
+  self_consistency         [K=16    ] B=1   K=16  L_shared~16384 L_priv~11    n_leaves=16  draws=3
+
+--- self_consistency [K=16] ---
+  [draw seed=0]
+  paged        seed=0 warmup  wall=187.5s  decode_total=185412.8ms
+  paged        seed=0 r=0  prefill=  526.3ms  decode=181002.0ms  plan/step= 0.51ms  fwd/step=14.45ms  p50/step=15.08ms  wall=182.0s
+  fasttree     seed=0 warmup  wall=195.3s  decode_total=194297.2ms
+  fasttree     seed=0 r=0  prefill=  525.0ms  decode=191885.9ms  plan/step= 1.00ms  fwd/step=14.88ms  p50/step=15.76ms  wall=192.9s
+  deft         seed=0 warmup  wall=786.0s  decode_total=785032.2ms
+  deft         seed=0 r=0  prefill=  524.3ms  decode=785550.9ms  plan/step= 0.34ms  fwd/step=65.01ms  p50/step=62.40ms  wall=786.6s
+  mlca         seed=0 warmup  wall=386.9s  decode_total=385873.3ms
+  mlca         seed=0 r=0  prefill=  525.1ms  decode=382467.2ms  plan/step= 0.90ms  fwd/step=30.86ms  p50/step=32.21ms  wall=383.5s
+  bs_kernel    seed=0 warmup  wall=171.0s  decode_total=169943.9ms
+  bs_kernel    seed=0 r=0  prefill=  526.4ms  decode=169187.3ms  plan/step= 0.53ms  fwd/step=13.45ms  p50/step=14.18ms  wall=170.2s
+  bsk_2l_1p_single seed=0 warmup  wall=178.9s  decode_total=177834.0ms
+  bsk_2l_1p_single seed=0 r=0  prefill=  526.2ms  decode=178675.6ms  plan/step= 0.69ms  fwd/step=14.08ms  p50/step=15.08ms  wall=179.7s
+  bsk_2l_dt    seed=0 warmup  wall=166.1s  decode_total=165107.8ms
+  bsk_2l_dt    seed=0 r=0  prefill=  527.0ms  decode=164514.6ms  plan/step= 0.42ms  fwd/step=13.17ms  p50/step=13.66ms  wall=165.5s
+  [draw seed=1]
+  paged        seed=1 r=0  prefill=  525.0ms  decode=183936.2ms  plan/step= 0.51ms  fwd/step=14.71ms  p50/step=15.41ms  wall=184.9s
+  fasttree     seed=1 r=0  prefill=  524.7ms  decode=193760.2ms  plan/step= 0.99ms  fwd/step=15.04ms  p50/step=15.77ms  wall=194.8s
+  deft         seed=1 r=0  prefill=  527.0ms  decode=784517.3ms  plan/step= 0.34ms  fwd/step=64.93ms  p50/step=62.30ms  wall=785.5s
+  mlca         seed=1 r=0  prefill=  523.9ms  decode=385699.4ms  plan/step= 0.88ms  fwd/step=31.15ms  p50/step=32.17ms  wall=386.7s
+  bs_kernel    seed=1 r=0  prefill=  525.0ms  decode=169016.2ms  plan/step= 0.52ms  fwd/step=13.45ms  p50/step=14.17ms  wall=170.0s
+  bsk_2l_1p_single seed=1 r=0  prefill=  525.5ms  decode=177611.0ms  plan/step= 0.69ms  fwd/step=14.00ms  p50/step=15.05ms  wall=178.6s
+  bsk_2l_dt    seed=1 r=0  prefill=  525.5ms  decode=164829.8ms  plan/step= 0.42ms  fwd/step=13.20ms  p50/step=13.78ms  wall=165.8s
+  [draw seed=2]
+  paged        seed=2 r=0  prefill=  524.2ms  decode=185116.4ms  plan/step= 0.51ms  fwd/step=14.81ms  p50/step=15.41ms  wall=186.1s
+  fasttree     seed=2 r=0  prefill=  525.1ms  decode=193642.3ms  plan/step= 0.98ms  fwd/step=15.04ms  p50/step=15.78ms  wall=194.6s
+  deft         seed=2 r=0  prefill=  529.0ms  decode=784550.6ms  plan/step= 0.34ms  fwd/step=64.93ms  p50/step=62.32ms  wall=785.6s
+  mlca         seed=2 r=0  prefill=  525.4ms  decode=385558.1ms  plan/step= 0.88ms  fwd/step=31.13ms  p50/step=32.18ms  wall=386.6s
+  bs_kernel    seed=2 r=0  prefill=  526.3ms  decode=168759.6ms  plan/step= 0.52ms  fwd/step=13.43ms  p50/step=14.16ms  wall=169.8s
+  bsk_2l_1p_single seed=2 r=0  prefill=  526.9ms  decode=178444.9ms  plan/step= 0.69ms  fwd/step=14.07ms  p50/step=15.06ms  wall=179.5s
+  bsk_2l_dt    seed=2 r=0  prefill=  526.6ms  decode=164406.9ms  plan/step= 0.42ms  fwd/step=13.17ms  p50/step=13.64ms  wall=165.4s
+  rank (decode_total): bsk_2l_dt=164406.9, bs_kernel=168759.6, bsk_2l_1p_single=177611.0, paged=181002.0, fasttree=191885.9, mlca=382467.2, deft=784517.3
+
+
+wrote 21 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3.1-8B-bf16/F4_self_consistency_K16_B1_Lp16384_mn12000_draws012.csv
+
+=== summary (best decode_total per method, ms) ===
+self_consistency         [K=16    ]   rank (decode_total): bsk_2l_dt=164406.9, bs_kernel=168759.6, bsk_2l_1p_single=177611.0, paged=181002.0, fasttree=191885.9, mlca=382467.2, deft=784517.3
+[W525 20:13:32.425225625 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

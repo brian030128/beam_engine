@@ -1,0 +1,106 @@
+=== chain_K_sweep started 2026-05-14T17:13:04+08:00 ===
+scenario: multi_chain_reasoning (paper-exact two-stage)
+K values: 4 (paper default), 8, 16
+methods:  fasttree bs_kernel paged
+models:   Llama-3.2-1B, Llama-3.1-8B
+GPU:      NVIDIA H100 80GB HBM3
+
+############ MODEL: Llama-3.2-1B ############
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_chain_reasoning']
+methods:   ['fasttree', 'bs_kernel', 'paged']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 41883.21it/s]
+Model loaded.
+
+k_overrides: [4, 8, 16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=4     ] B=32  K=4   L_shared~2574  L_priv~23    n_leaves=128
+  multi_chain_reasoning (stage2) [K=4     ] B=32  K=1   L_shared~3648  L_priv~    0 n_leaves=32
+  multi_chain_reasoning    [K=8     ] B=32  K=8   L_shared~2574  L_priv~23    n_leaves=256
+  multi_chain_reasoning (stage2) [K=8     ] B=32  K=1   L_shared~4696  L_priv~    0 n_leaves=32
+  multi_chain_reasoning    [K=16    ] B=32  K=16  L_shared~2574  L_priv~23    n_leaves=512
+  multi_chain_reasoning (stage2) [K=16    ] B=32  K=1   L_shared~6792  L_priv~    0 n_leaves=32
+
+--- multi_chain_reasoning [K=4] ---
+  fasttree     r=0  prefill= 1632.3ms  decode= 3897.4ms  plan/step= 1.93ms  fwd/step= 5.58ms  p50/step= 6.50ms  wall=  5.7s
+  bs_kernel    r=0  prefill=  808.4ms  decode= 3145.6ms  plan/step= 1.95ms  fwd/step= 4.08ms  p50/step= 6.08ms  wall=  4.1s
+  paged        r=0  prefill=  808.4ms  decode= 2557.8ms  plan/step= 0.81ms  fwd/step= 4.07ms  p50/step= 5.08ms  wall=  3.4s
+  rank (decode_total): paged=2557.8, bs_kernel=3145.6, fasttree=3897.4
+
+--- multi_chain_reasoning [K=8] ---
+  fasttree     r=0  prefill=  992.7ms  decode= 3851.1ms  plan/step= 2.71ms  fwd/step= 4.70ms  p50/step= 7.21ms  wall=  4.9s
+  bs_kernel    r=0  prefill=  986.4ms  decode= 3311.3ms  plan/step= 2.01ms  fwd/step= 4.34ms  p50/step= 6.21ms  wall=  4.4s
+  paged        r=0  prefill=  991.5ms  decode= 3344.1ms  plan/step= 1.25ms  fwd/step= 5.16ms  p50/step= 6.60ms  wall=  4.4s
+  rank (decode_total): bs_kernel=3311.3, paged=3344.1, fasttree=3851.1
+
+--- multi_chain_reasoning [K=16] ---
+  fasttree     r=0  prefill= 1408.8ms  decode= 5132.5ms  plan/step= 4.41ms  fwd/step= 5.48ms  p50/step= 9.53ms  wall=  6.7s
+  bs_kernel    r=0  prefill= 1410.1ms  decode= 4074.3ms  plan/step= 2.37ms  fwd/step= 5.44ms  p50/step= 7.20ms  wall=  5.6s
+  paged        r=0  prefill= 1407.1ms  decode= 5156.3ms  plan/step= 2.12ms  fwd/step= 7.82ms  p50/step=10.08ms  wall=  6.7s
+  rank (decode_total): bs_kernel=4074.3, fasttree=5132.5, paged=5156.3
+
+
+wrote 9 rows to benchmarks/bs_kernel/results/chain_K_sweep-20260514-171304/Llama-3.2-1B.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=4     ]   rank (decode_total): paged=2557.8, bs_kernel=3145.6, fasttree=3897.4
+multi_chain_reasoning    [K=8     ]   rank (decode_total): bs_kernel=3311.3, paged=3344.1, fasttree=3851.1
+multi_chain_reasoning    [K=16    ]   rank (decode_total): bs_kernel=4074.3, fasttree=5132.5, paged=5156.3
+[W514 17:14:00.545541105 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+############ MODEL: Llama-3.1-8B ############
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B
+scenarios: ['multi_chain_reasoning']
+methods:   ['fasttree', 'bs_kernel', 'paged']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 76640.11it/s]
+Model loaded.
+
+k_overrides: [4, 8, 16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=4     ] B=32  K=4   L_shared~2574  L_priv~23    n_leaves=128
+  multi_chain_reasoning (stage2) [K=4     ] B=32  K=1   L_shared~3648  L_priv~    0 n_leaves=32
+  multi_chain_reasoning    [K=8     ] B=32  K=8   L_shared~2574  L_priv~23    n_leaves=256
+  multi_chain_reasoning (stage2) [K=8     ] B=32  K=1   L_shared~4696  L_priv~    0 n_leaves=32
+  multi_chain_reasoning    [K=16    ] B=32  K=16  L_shared~2574  L_priv~23    n_leaves=512
+  multi_chain_reasoning (stage2) [K=16    ] B=32  K=1   L_shared~6792  L_priv~    0 n_leaves=32
+
+--- multi_chain_reasoning [K=4] ---
+  fasttree     r=0  prefill= 5765.6ms  decode= 8749.2ms  plan/step= 1.97ms  fwd/step=15.06ms  p50/step=15.75ms  wall= 14.7s
+  bs_kernel    r=0  prefill= 4915.8ms  decode= 7786.8ms  plan/step= 2.00ms  fwd/step=13.12ms  p50/step=14.77ms  wall= 12.9s
+  paged        r=0  prefill= 4922.0ms  decode= 7249.2ms  plan/step= 0.84ms  fwd/step=13.24ms  p50/step=14.23ms  wall= 12.3s
+  rank (decode_total): paged=7249.2, bs_kernel=7786.8, fasttree=8749.2
+
+--- multi_chain_reasoning [K=8] ---
+  fasttree     r=0  prefill= 5890.0ms  decode= 9938.8ms  plan/step= 2.75ms  fwd/step=16.59ms  p50/step=18.96ms  wall= 16.0s
+  bs_kernel    r=0  prefill= 5895.2ms  decode= 8724.4ms  plan/step= 2.03ms  fwd/step=14.93ms  p50/step=16.26ms  wall= 14.8s
+  paged        r=0  prefill= 5895.1ms  decode= 9664.8ms  plan/step= 1.29ms  fwd/step=17.52ms  p50/step=18.88ms  wall= 15.7s
+  rank (decode_total): bs_kernel=8724.4, paged=9664.8, fasttree=9938.8
+
+--- multi_chain_reasoning [K=16] ---
+  fasttree     r=0  prefill= 7972.0ms  decode=13699.3ms  plan/step= 4.51ms  fwd/step=22.18ms  p50/step=26.51ms  wall= 21.9s
+  bs_kernel    r=0  prefill= 7972.5ms  decode=11403.5ms  plan/step= 2.37ms  fwd/step=19.80ms  p50/step=22.21ms  wall= 19.6s
+  paged        r=0  prefill= 7978.4ms  decode=14864.1ms  plan/step= 2.15ms  fwd/step=26.81ms  p50/step=28.39ms  wall= 23.1s
+  rank (decode_total): bs_kernel=11403.5, fasttree=13699.3, paged=14864.1
+
+
+wrote 9 rows to benchmarks/bs_kernel/results/chain_K_sweep-20260514-171304/Llama-3.1-8B.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=4     ]   rank (decode_total): paged=7249.2, bs_kernel=7786.8, fasttree=8749.2
+multi_chain_reasoning    [K=8     ]   rank (decode_total): bs_kernel=8724.4, paged=9664.8, fasttree=9938.8
+multi_chain_reasoning    [K=16    ]   rank (decode_total): bs_kernel=11403.5, fasttree=13699.3, paged=14864.1
+[W514 17:16:46.377160796 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+Done. Results: benchmarks/bs_kernel/results/chain_K_sweep-20260514-171304

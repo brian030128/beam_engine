@@ -1,0 +1,4 @@
+method,K,L_p,max_new,prefill_ms,decode_step_ms_p50,decode_step_ms_p90,decode_step_ms_p99,decode_step_ms_mean,decode_step_count
+fasttree,16,8192,16,1136.0728,16.3425,20.2290,527.6517,50.7475,15
+fasttree,32,8192,16,228.7904,24.3260,29.2064,41.7100,26.4136,15
+fasttree,64,8192,16,229.1440,34.3365,38.8030,42.7308,35.5673,15

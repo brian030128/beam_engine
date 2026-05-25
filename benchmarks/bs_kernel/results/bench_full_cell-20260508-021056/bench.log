@@ -1,0 +1,123 @@
+=== bench_full_cell started 2026-05-08T02:10:56+08:00 ===
+config: K=64, L_p=8192, B=32, max_new=256, distinct=True
+methods: paged mlca adaptive_pool bs_kernel bs_kernel_2l1p
+GPU: NVIDIA H100 80GB HBM3
+
+=== running method: paged ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['paged']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 18168.40it/s]
+Model loaded.
+
+  paged          K=64  L_p=8192   B=32 prefill= 2280.9ms  decode_total=74769.9ms  per_pt_token=  9.16ms  ( 77.5s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/bench_full_cell-20260508-021056/paged.csv
+[W508 02:12:23.991389664 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: mlca ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 23525.74it/s]
+Model loaded.
+
+  mlca           K=64  L_p=8192   B=32 prefill= 2264.6ms  decode_total=28313.4ms  per_pt_token=  3.47ms  ( 31.0s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/bench_full_cell-20260508-021056/mlca.csv
+[W508 02:13:04.890132064 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: adaptive_pool ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['adaptive_pool']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 21992.61it/s]
+Model loaded.
+
+  adaptive_pool  K=64  L_p=8192   B=32 prefill= 2278.2ms  decode_total=26356.4ms  per_pt_token=  3.23ms  ( 29.1s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/bench_full_cell-20260508-021056/adaptive_pool.csv
+[W508 02:13:42.703907980 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: bs_kernel ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 22866.14it/s]
+Model loaded.
+
+  bs_kernel      K=64  L_p=8192   B=32 prefill= 2283.0ms  decode_total=30110.2ms  per_pt_token=  3.69ms  ( 32.9s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/bench_full_cell-20260508-021056/bs_kernel.csv
+[W508 02:14:25.388118295 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: bs_kernel_2l1p ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2l1p']
+max_new: 256
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 109963.03it/s]
+Model loaded.
+
+  bs_kernel_2l1p K=64  L_p=8192   B=32 prefill= 2266.7ms  decode_total=28065.9ms  per_pt_token=  3.44ms  ( 30.8s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/bench_full_cell-20260508-021056/bs_kernel_2l1p.csv
+[W508 02:15:06.925566803 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== merging CSVs to benchmarks/bs_kernel/results/bench_full_cell-20260508-021056/bench.csv ===
+
+=== merged results ===
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
+paged,64,8192,32,256,2280.8561,74769.9460,293.2155,9.1630
+mlca,64,8192,32,256,2264.6256,28313.3526,111.0328,3.4698
+adaptive_pool,64,8192,32,256,2278.1624,26356.4468,103.3586,3.2300
+bs_kernel,64,8192,32,256,2282.9760,30110.1550,118.0790,3.6900
+bs_kernel_2l1p,64,8192,32,256,2266.6634,28065.9286,110.0625,3.4395
+
+=== bs_kernel pick histogram (auto mode) ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+Loading model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 72853.92it/s]
+Model loaded.
+
+================================================================================
+K=64  L_p=8192  B=32  max_new=256
+================================================================================
+
+Strategy histogram across 255 steps:
+  shared_3l_2pool        239
+  shared_2l_2pool         16
+
+(t_large, pool_count, depth) histogram for SHARED steps:
+  t_large=64   pool=2  depth=3   239
+  t_large=64   pool=2  depth=2    16
+
+Per-level CTA_Q padding (mean across decode steps):
+  level            T_used  total_tiles  tiles/wave   padding%
+  L0_shared            64         32.0        0.24       0.0%
+  L_per_beam           16       2048.0       15.52      93.8%
+
+[W508 02:15:51.800282561 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+Done. Results: benchmarks/bs_kernel/results/bench_full_cell-20260508-021056

@@ -1,0 +1,37 @@
+=== deft smoke test 2026-05-17T22:07:33+08:00 ===
+GPU: NVIDIA H100 80GB HBM3
+
+--- small cell (K=4, L_p=128, B=2, max_new=8) ---
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 2 methods = 2 runs
+methods: ['deft', 'fasttree']
+max_new: 8
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 3442.79it/s]
+Model loaded.
+
+  deft                  K=4   L_p=128    B=2  prefill=  875.6ms  decode_total= 1641.1ms  per_pt_token=117.22ms  (  2.7s wall)
+  fasttree              K=4   L_p=128    B=2  prefill=    4.9ms  decode_total=   55.5ms  per_pt_token=  3.97ms  (  0.1s wall)
+
+wrote 2 rows to benchmarks/bs_kernel/results/smoke/deft_small.csv
+[W517 22:07:47.933600494 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+--- midK cell (K=64, L_p=512, B=2, max_new=8) — tests BLOCK_M chunking ---
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 2 methods = 2 runs
+methods: ['deft', 'fasttree']
+max_new: 8
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 73954.98it/s]
+Model loaded.
+
+  deft                  K=64  L_p=512    B=2  prefill=  861.5ms  decode_total= 1053.1ms  per_pt_token= 75.22ms  (  2.1s wall)
+  fasttree              K=64  L_p=512    B=2  prefill=    5.5ms  decode_total=   66.6ms  per_pt_token=  4.76ms  (  0.1s wall)
+
+wrote 2 rows to benchmarks/bs_kernel/results/smoke/deft_midk.csv
+[W517 22:07:59.612882739 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+Done.

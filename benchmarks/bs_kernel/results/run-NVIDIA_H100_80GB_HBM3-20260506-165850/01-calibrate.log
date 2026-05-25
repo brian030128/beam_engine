@@ -1,0 +1,24 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+<frozen runpy>:128: RuntimeWarning: 'beam_engine.methods.bs_kernel.calibrate' found in sys.modules after import of package 'beam_engine.methods.bs_kernel', but prior to execution of 'beam_engine.methods.bs_kernel.calibrate'; this may result in unpredictable behaviour
+[calibrate] probing NVIDIA H100 80GB HBM3
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/methods/bs_kernel/calibrate.py", line 303, in <module>
+    c = calibrate(args.device, force=args.force, verbose=True)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/methods/bs_kernel/calibrate.py", line 277, in calibrate
+    per_tile_us={
+                ^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/methods/bs_kernel/calibrate.py", line 278, in <dictcomp>
+    T: measure_per_tile_us(device, T)
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/methods/bs_kernel/calibrate.py", line 227, in measure_per_tile_us
+    wrapper.plan(
+  File "/home/u4320956/beam_engine-v3/3rdparty/flashinfer/flashinfer/prefill.py", line 2037, in plan
+    self._plan_info = self._cached_module.plan(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "python/tvm_ffi/cython/function.pxi", line 929, in tvm_ffi.core.Function.__call__
+RuntimeError: Error in function 'aligned_alloc' at /home/u4320956/beam_engine-v3/3rdparty/flashinfer/include/flashinfer/allocator.h:49: Buffer overflow when allocating memory for batch_prefill_tmp_s with size 524288 and alignment 16, but only 0 bytes available in AlignedAllocator. Increase the workspace buffer size.

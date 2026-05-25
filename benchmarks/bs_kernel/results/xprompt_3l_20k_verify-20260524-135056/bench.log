@@ -1,0 +1,76 @@
+=== verify cross-prompt 3L_dt 2026-05-24T13:50:56+08:00 ===
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bsk_2l_dt']
+max_new:   128, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 107941.65it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=16    ] B=16  K=16  L_shared~40000 L_priv~80    n_leaves=256
+
+--- multi_few_shot [K=16] ---
+  bsk_2l_dt    r=0  prefill= 5870.3ms  decode= 2318.7ms  plan/step= 1.50ms  fwd/step=16.60ms  p50/step=17.37ms  wall=  8.6s
+  rank (decode_total): bsk_2l_dt=2318.7
+
+
+wrote 1 rows to /home/u4320956/beam_engine-v3/benchmarks/bs_kernel/results/bench_sglang_e2e-NVIDIA_H100_80GB_HBM3-20260524-135136.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=16    ]   rank (decode_total): bsk_2l_dt=2318.7
+[W524 13:51:37.111599387 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bs_kernel']
+max_new:   128, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 62072.15it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=16    ] B=16  K=16  L_shared~40000 L_priv~80    n_leaves=256
+
+--- multi_few_shot [K=16] ---
+  bs_kernel    r=0  prefill= 5785.0ms  decode= 2035.0ms  plan/step= 1.70ms  fwd/step=14.17ms  p50/step=15.23ms  wall=  8.2s
+  rank (decode_total): bs_kernel=2035.0
+
+
+wrote 1 rows to /home/u4320956/beam_engine-v3/benchmarks/bs_kernel/results/bench_sglang_e2e-NVIDIA_H100_80GB_HBM3-20260524-135218.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=16    ]   rank (decode_total): bs_kernel=2035.0
+[W524 13:52:18.518401716 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+model: meta-llama/Llama-3.2-1B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['bs_kernel']
+max_new:   128, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 71785.15it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=16    ] B=16  K=16  L_shared~40000 L_priv~80    n_leaves=256
+
+--- multi_few_shot [K=16] ---
+  bs_kernel    r=0  prefill= 5755.4ms  decode= 2011.2ms  plan/step= 1.72ms  fwd/step=13.96ms  p50/step=14.89ms  wall=  8.2s
+  rank (decode_total): bs_kernel=2011.2
+
+
+wrote 1 rows to /home/u4320956/beam_engine-v3/benchmarks/bs_kernel/results/bench_sglang_e2e-NVIDIA_H100_80GB_HBM3-20260524-135259.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=16    ]   rank (decode_total): bs_kernel=2011.2
+[W524 13:53:00.986674919 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== compare ===
+  xp3l_1p vs xp3l_dt: leaves=256/256  mismatched=22/256
+  2l_dt vs xp3l_dt: leaves=256/256  mismatched=27/256
+  2l_dt vs xp3l_1p: leaves=256/256  mismatched=21/256
+Done. benchmarks/bs_kernel/results/xprompt_3l_20k_verify-20260524-135056

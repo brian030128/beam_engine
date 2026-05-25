@@ -1,0 +1,1188 @@
+=== exp1c_v2 smallB Qwen3-4B TP=2 started 2026-05-21T02:22:46+08:00 ===
+model:    Qwen/Qwen3-4B  (tp=2)
+GPUs:     NVIDIA H100 80GB HBM3 × 2
+HF_HOME:  /work/u4320956/hf
+
+==========================================================
+=== cell: multi_level_system  (B=1, K=64, max_new=256, tp=2) ===
+==========================================================
+W0521 02:22:47.593000 3997996 torch/distributed/run.py:803] 
+W0521 02:22:47.593000 3997996 torch/distributed/run.py:803] *****************************************
+W0521 02:22:47.593000 3997996 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:22:47.593000 3997996 torch/distributed/run.py:803] *****************************************
+model: Qwen/Qwen3-4B  (tp_size=2)
+scenarios: ['multi_level_system']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 101203.05it/s]
+Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 64860.37it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=1   K=64  L_shared~2522  L_priv~80    n_leaves=64
+
+--- multi_level_system [K=64] ---
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.063      0.028      0.035      0.572        16.14
+  pick_ms                     0.055      0.054      0.056      0.073        14.02
+  shared_pack_ms              0.174      0.171      0.193      0.283        44.31
+  shared_plan_ms              0.351      0.058      0.068      0.696        89.51
+  shared_write_ms             0.056      0.054      0.057      0.097        14.33
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.062      0.028      0.031      0.575        15.78
+  pick_ms                     0.055      0.054      0.057      0.070        14.01
+  shared_pack_ms              0.165      0.163      0.184      0.244        42.09
+  shared_plan_ms              0.233      0.055      0.060      0.669        59.34
+  shared_write_ms             0.053      0.052      0.055      0.071        13.54
+  bs_kernel    warmup  wall=  6.8s  decode_total= 4004.8ms
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.064      0.028      0.030      0.607        16.23
+  pick_ms                     0.055      0.055      0.057      0.065        14.09
+  shared_pack_ms              0.174      0.173      0.194      0.215        44.29
+  shared_plan_ms              0.102      0.059      0.067      0.685        26.08
+  shared_write_ms             0.054      0.053      0.055      0.074        13.89
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.063      0.028      0.030      0.572        16.01
+  pick_ms                     0.055      0.055      0.057      0.062        14.14
+  shared_pack_ms              0.167      0.166      0.184      0.217        42.56
+  shared_plan_ms              0.095      0.055      0.059      0.650        24.22
+  shared_write_ms             0.052      0.052      0.054      0.060        13.28
+  bs_kernel    r=0  prefill=   81.9ms  decode= 3962.9ms  plan/step= 0.54ms  fwd/step=14.88ms  p50/step=14.90ms  wall=  4.2s
+  bsk_2l_1p    warmup  wall=  4.2s  decode_total= 3964.4ms
+  bsk_2l_1p    r=0  prefill=   92.4ms  decode= 3964.1ms  plan/step= 0.54ms  fwd/step=14.89ms  p50/step=14.88ms  wall=  4.2s
+  bsk_2l_dt    warmup  wall=  4.6s  decode_total= 4340.2ms
+  bsk_2l_dt    r=0  prefill=   81.8ms  decode= 4260.9ms  plan/step= 0.41ms  fwd/step=16.18ms  p50/step=16.17ms  wall=  4.6s
+  rank (decode_total): bs_kernel=3962.9, bsk_2l_1p=3964.1, bsk_2l_dt=4260.9
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/multi_level_system_B1.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): bs_kernel=3962.9, bsk_2l_1p=3964.1, bsk_2l_dt=4260.9
+[W521 02:23:33.645272031 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:23:33.651524949 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:23:34.524195188 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== cell: multi_chain_reasoning  (B=1, K=64, max_new=256, tp=2) ===
+==========================================================
+W0521 02:23:35.567000 4005493 torch/distributed/run.py:803] 
+W0521 02:23:35.567000 4005493 torch/distributed/run.py:803] *****************************************
+W0521 02:23:35.567000 4005493 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:23:35.567000 4005493 torch/distributed/run.py:803] *****************************************
+model: Qwen/Qwen3-4B  (tp_size=2)
+scenarios: ['multi_chain_reasoning']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 109416.63it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 106634.85it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=64    ] B=1   K=64  L_shared~2588  L_priv~23    n_leaves=64
+
+--- multi_chain_reasoning [K=64] ---
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  -- SHARED path (255 steps) --
+
+  strategy mix: {'SHARED_2L_1POOL': 255}  strategy mix: {'SHARED_2L_1POOL': 255}
+
+  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)
+
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.061      0.027      0.031      0.530        15.43
+  phase                        mean     median        p90        p99        total  pick_ms                     0.054      0.053      0.055      0.071        13.80
+
+  decomp_ms                   0.061      0.027      0.031      0.552        15.54  shared_pack_ms              0.155      0.154      0.174      0.202        39.57
+
+  pick_ms                     0.055      0.054      0.056      0.068        13.95  shared_plan_ms              0.335      0.056      0.064      0.655        85.38
+
+  shared_write_ms             0.054      0.053      0.055      0.064        13.76  shared_pack_ms              0.158      0.157      0.176      0.255        40.30
+
+  shared_plan_ms              0.203      0.056      0.065      0.663        51.69
+  shared_write_ms             0.054      0.053      0.055      0.067        13.84
+  bs_kernel    warmup  wall=  7.0s  decode_total= 3865.9ms
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)  strategy mix: {'SHARED_2L_1POOL': 255}
+
+  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.062      0.028      0.034      0.585        15.82
+  pick_ms                     0.054      0.054      0.056      0.064        13.88
+  shared_pack_ms              0.157      0.157      0.176      0.204        39.99
+  shared_plan_ms              0.097      0.056      0.065      0.658        24.67
+  shared_write_ms             0.054      0.053      0.057      0.074        13.79
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.063      0.028      0.031      0.578        15.94
+  pick_ms                     0.054      0.054      0.056      0.064        13.88
+  shared_pack_ms              0.159      0.157      0.178      0.251        40.60
+  shared_plan_ms              0.097      0.056      0.063      0.673        24.84
+  shared_write_ms             0.054      0.053      0.056      0.066        13.71
+  bs_kernel    r=0  prefill=   57.4ms  decode= 3812.2ms  plan/step= 0.54ms  fwd/step=14.30ms  p50/step=14.55ms  wall=  4.0s
+  bsk_2l_1p    warmup  wall=  4.1s  decode_total= 3818.0ms
+  bsk_2l_1p    r=0  prefill=   54.5ms  decode= 3844.8ms  plan/step= 0.53ms  fwd/step=14.43ms  p50/step=14.56ms  wall=  4.1s
+  bsk_2l_dt    warmup  wall=  4.7s  decode_total= 4464.6ms
+  bsk_2l_dt    r=0  prefill=   61.1ms  decode= 4324.3ms  plan/step= 0.41ms  fwd/step=16.44ms  p50/step=16.50ms  wall=  4.6s
+  rank (decode_total): bs_kernel=3812.2, bsk_2l_1p=3844.8, bsk_2l_dt=4324.3
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/multi_chain_reasoning_B1.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=64    ]   rank (decode_total): bs_kernel=3812.2, bsk_2l_1p=3844.8, bsk_2l_dt=4324.3
+[W521 02:24:21.074164394 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:24:21.083772108 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:24:22.897995330 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== cell: multi_few_shot  (B=1, K=64, max_new=256, tp=2) ===
+==========================================================
+W0521 02:24:24.555000 4010842 torch/distributed/run.py:803] 
+W0521 02:24:24.555000 4010842 torch/distributed/run.py:803] *****************************************
+W0521 02:24:24.555000 4010842 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:24:24.555000 4010842 torch/distributed/run.py:803] *****************************************
+model: Qwen/Qwen3-4B  (tp_size=2)
+scenarios: ['multi_few_shot']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 102857.59it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 108162.57it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=64    ] B=1   K=64  L_shared~6727  L_priv~132   n_leaves=64
+
+--- multi_few_shot [K=64] ---
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.065      0.028      0.033      0.615        16.59
+  pick_ms                     0.054      0.054      0.055      0.076        13.89
+  shared_pack_ms              0.183      0.181      0.201      0.291        46.56
+  shared_plan_ms              0.212      0.059      0.065      0.688        53.95
+  shared_write_ms             0.055      0.054      0.057      0.071        14.10
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.066      0.028      0.034      0.618        16.84
+  pick_ms                     0.055      0.054      0.056      0.079        14.11
+  shared_pack_ms              0.183      0.182      0.201      0.224        46.71
+  shared_plan_ms              0.346      0.059      0.067      0.704        88.13
+  shared_write_ms             0.056      0.055      0.057      0.066        14.36
+  bs_kernel    warmup  wall=  7.0s  decode_total= 4096.9ms
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.067      0.028      0.031      0.620        16.98
+  pick_ms                     0.055      0.054      0.056      0.063        13.93
+  shared_pack_ms              0.190      0.187      0.206      0.319        48.42
+  shared_plan_ms              0.103      0.059      0.070      0.683        26.38
+  shared_write_ms             0.056      0.054      0.057      0.104        14.35
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 255)
+
+  -- SHARED path (255 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 255}
+  level-0 pack cache hits: 254/255 (99.6%)   plan_info cache hits: 238/255 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.065      0.028      0.030      0.615        16.70
+  pick_ms                     0.055      0.054      0.056      0.063        13.99
+  shared_pack_ms              0.185      0.183      0.203      0.304        47.30
+  shared_plan_ms              0.102      0.059      0.067      0.691        25.96
+  shared_write_ms             0.055      0.054      0.057      0.088        14.09
+  bs_kernel    r=0  prefill=  210.1ms  decode= 4029.2ms  plan/step= 0.58ms  fwd/step=15.10ms  p50/step=15.25ms  wall=  4.5s
+  bsk_2l_1p    warmup  wall=  4.6s  decode_total= 4042.4ms
+  bsk_2l_1p    r=0  prefill=  199.3ms  decode= 4034.4ms  plan/step= 0.57ms  fwd/step=15.13ms  p50/step=15.22ms  wall=  4.4s
+  bsk_2l_dt    warmup  wall=  4.8s  decode_total= 4447.6ms
+  bsk_2l_dt    r=0  prefill=  199.2ms  decode= 4384.4ms  plan/step= 0.42ms  fwd/step=16.66ms  p50/step=16.56ms  wall=  4.8s
+  rank (decode_total): bs_kernel=4029.2, bsk_2l_1p=4034.4, bsk_2l_dt=4384.4
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/multi_few_shot_B1.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=64    ]   rank (decode_total): bs_kernel=4029.2, bsk_2l_1p=4034.4, bsk_2l_dt=4384.4
+[W521 02:25:12.629061310 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:25:12.678583515 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:25:12.413165691 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== cell: beam_search  (K=32, L_p=8192, B=1, max_new=2048, tp=2) ===
+==========================================================
+  --- method: bs_kernel ---
+W0521 02:25:14.457000 4017941 torch/distributed/run.py:803] 
+W0521 02:25:14.457000 4017941 torch/distributed/run.py:803] *****************************************
+W0521 02:25:14.457000 4017941 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:25:14.457000 4017941 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runsgrid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+
+methods: ['bs_kernel']
+methods: ['bs_kernel']max_new: 2048
+
+max_new: 2048Loading tokenizer + model...
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 110700.11it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 107546.26it/s]
+Model loaded.
+
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel      warmup K=32  L_p=8192   B=1  loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel      warmup K=32  L_p=8192   B=1  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 1306, SHARED: 741)
+
+  -- DEC_TAIL path (1306 steps) --
+  prefix re-plans: 3/1306 (0.2%)   decode full re-plans: 1/1306 (0.1%)
+
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 1306, SHARED: 741)
+
+  -- DEC_TAIL path (1306 steps) --
+  prefix re-plans: 3/1306 (0.2%)   decode full re-plans: 1/1306 (0.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.355      0.480      0.496      0.510       463.69
+  pick_ms                     0.077      0.077      0.080      0.085       100.81
+  prefix_plan_ms              0.052      0.034      0.038      0.286        68.33
+  decode_build_ms             0.300      0.281      0.373      0.426       392.25
+  decode_plan_ms              0.048      0.011      0.012      0.015        62.88
+
+  -- SHARED path (741 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 484, 'SHARED_3L_1POOL': 257}
+  level-0 pack cache hits: 702/741 (94.7%)   plan_info cache hits: 538/741 (72.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.352      0.476      0.491      0.503       459.37
+  pick_ms                     0.077      0.077      0.080      0.085       100.80
+  prefix_plan_ms              0.051      0.034      0.038      0.280        67.10
+  decode_build_ms             0.276      0.268      0.311      0.473       360.87
+  decode_plan_ms              0.059      0.011      0.011      0.016        77.12
+
+  -- SHARED path (741 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 484, 'SHARED_3L_1POOL': 257}
+  level-0 pack cache hits: 702/741 (94.7%)   plan_info cache hits: 538/741 (72.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.429      0.428      0.473      0.481       317.90
+  pick_ms                     0.076      0.076      0.082      0.096        56.49
+  shared_pack_ms              3.055      2.116      6.205      8.492      2263.64
+  shared_plan_ms              1.920      0.807      6.753      9.260      1422.44
+  shared_write_ms             0.946      0.924      1.799      1.912       700.96
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.426      0.425      0.473      0.483       315.63
+  pick_ms                     0.076      0.076      0.082      0.097        56.57
+  shared_pack_ms              2.664      1.974      6.141      7.536      1974.05
+  shared_plan_ms              1.924      0.735      7.317     10.234      1425.66
+  shared_write_ms             0.542      0.047      1.660      1.832       401.75
+discard          decode_total=41989.2ms  ( 43.9s wall)
+discard          decode_total=41954.4ms  ( 43.8s wall)
+  bs_kernel             K=32  L_p=8192   B=1    bs_kernel             K=32  L_p=8192   B=1  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 1306, SHARED: 741)
+
+  -- DEC_TAIL path (1306 steps) --
+  prefix re-plans: 3/1306 (0.2%)   decode full re-plans: 1/1306 (0.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.355      0.481      0.495      0.503       463.30
+  pick_ms                     0.077      0.077      0.081      0.085       100.95
+  prefix_plan_ms              0.063      0.035      0.038      0.311        82.27
+  decode_build_ms             0.301      0.289      0.371      0.488       393.36
+  decode_plan_ms              0.011      0.011      0.012      0.015        14.93
+
+  -- SHARED path (741 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 484, 'SHARED_3L_1POOL': 257}
+  level-0 pack cache hits: 702/741 (94.7%)   plan_info cache hits: 538/741 (72.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.431      0.429      0.478      0.488       319.46
+  pick_ms                     0.076      0.076      0.082      0.097        56.39
+  shared_pack_ms              3.424      2.236      6.203      9.178      2537.42
+  shared_plan_ms              2.025      0.817      6.854      7.498      1500.82
+  shared_write_ms             1.071      1.605      1.808      1.841       793.82
+prefill=  306.1ms  decode_total=41955.1ms  per_pt_token= 20.50ms  ( 42.6s wall)
+
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 1306, SHARED: 741)
+
+  -- DEC_TAIL path (1306 steps) --
+  prefix re-plans: 3/1306 (0.2%)   decode full re-plans: 1/1306 (0.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.354      0.479      0.493      0.501       462.48
+  pick_ms                     0.078      0.077      0.081      0.084       101.69
+  prefix_plan_ms              0.060      0.035      0.039      0.306        78.46
+  decode_build_ms             0.277      0.269      0.300      0.444       361.52
+  decode_plan_ms              0.012      0.011      0.012      0.016        15.89
+
+  -- SHARED path (741 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 484, 'SHARED_3L_1POOL': 257}
+  level-0 pack cache hits: 702/741 (94.7%)   plan_info cache hits: 538/741 (72.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.426      0.425      0.474      0.482       315.89
+  pick_ms                     0.077      0.076      0.082      0.098        56.81
+  shared_pack_ms              2.812      1.049      6.468      7.612      2083.37
+  shared_plan_ms              1.998      0.301      7.589      9.690      1480.20
+  shared_write_ms             0.380      0.047      1.610      1.903       281.93
+prefill=  304.4ms  decode_total=41938.7ms  per_pt_token= 20.49ms  ( 42.6s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B1_bs_kernel.csv
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B1_bs_kernel.csv
+[W521 02:27:03.707149645 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:27:03.709185231 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:27:03.493793789 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel_2l1p ---
+W0521 02:27:05.666000 4031492 torch/distributed/run.py:803] 
+W0521 02:27:05.666000 4031492 torch/distributed/run.py:803] *****************************************
+W0521 02:27:05.666000 4031492 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:27:05.666000 4031492 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runsgrid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+
+methods: ['bs_kernel_2l1p']methods: ['bs_kernel_2l1p']
+
+max_new: 2048max_new: 2048
+
+Loading tokenizer + model...Loading tokenizer + model...
+
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 76414.45it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 96791.63it/s]
+Model loaded.
+
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_2l1p warmup K=32  L_p=8192   B=1  loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_2l1p warmup K=32  L_p=8192   B=1  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2035/2047 (99.4%)   plan_info cache hits: 1909/2047 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.384      0.467      0.496      0.508       785.70
+  pick_ms                     0.047      0.047      0.051      0.055        97.15
+  shared_pack_ms              2.292      1.962      4.978      8.489      4692.08
+  shared_plan_ms              0.854      0.681      1.641      8.537      1748.61
+  shared_write_ms             1.091      0.626      2.772      3.832      2232.91
+discard          decode_total=44009.1ms  ( 46.1s wall)
+  bs_kernel_2l1p        K=32  L_p=8192   B=1  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2035/2047 (99.4%)   plan_info cache hits: 1909/2047 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.379      0.461      0.491      0.506       776.32
+  pick_ms                     0.046      0.046      0.050      0.053        95.17
+  shared_pack_ms              2.407      2.077      5.412      8.847      4927.28
+  shared_plan_ms              0.902      0.729      1.851      8.499      1845.63
+  shared_write_ms             1.130      0.873      2.464      4.173      2313.60
+discard          decode_total=44507.8ms  ( 46.8s wall)
+  bs_kernel_2l1p        K=32  L_p=8192   B=1  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2035/2047 (99.4%)   plan_info cache hits: 1909/2047 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.385      0.467      0.498      0.508       788.67
+  pick_ms                     0.047      0.047      0.051      0.054        96.89
+  shared_pack_ms              2.296      1.962      5.026      8.575      4700.33
+  shared_plan_ms              0.860      0.625      1.657      8.727      1760.79
+  shared_write_ms             1.087      0.625      2.699      3.880      2225.94
+prefill=  216.2ms  decode_total=44197.3ms  per_pt_token= 21.59ms  ( 45.6s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B1_bs_kernel_2l1p.csv
+
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2035/2047 (99.4%)   plan_info cache hits: 1909/2047 (93.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.381      0.463      0.493      0.513       780.46
+  pick_ms                     0.047      0.046      0.050      0.052        95.58
+  shared_pack_ms              2.391      2.075      5.334      8.737      4895.33
+  shared_plan_ms              0.874      0.737      1.714      8.351      1789.64
+  shared_write_ms             1.132      0.879      2.474      4.043      2318.19
+prefill=  236.2ms  decode_total=44496.6ms  per_pt_token= 21.74ms  ( 45.0s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B1_bs_kernel_2l1p.csv
+[W521 02:28:58.499031851 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:28:59.899507825 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:29:00.707969163 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel_2ldt ---
+W0521 02:29:01.943000 4045716 torch/distributed/run.py:803] 
+W0521 02:29:01.943000 4045716 torch/distributed/run.py:803] *****************************************
+W0521 02:29:01.943000 4045716 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:29:01.943000 4045716 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runsgrid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+
+methods: ['bs_kernel_2ldt']methods: ['bs_kernel_2ldt']
+
+max_new: 2048max_new: 2048
+
+Loading tokenizer + model...Loading tokenizer + model...
+
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 89877.94it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 98048.66it/s]
+Model loaded.
+
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_2ldt warmup K=32  L_p=8192   B=1  loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_2ldt warmup K=32  L_p=8192   B=1  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 2047, SHARED: 0)
+
+  -- DEC_TAIL path (2047 steps) --
+  prefix re-plans: 11/2047 (0.5%)   decode full re-plans: 1/2047 (0.0%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.380      0.462      0.496      0.509       777.92
+  pick_ms                     0.036      0.035      0.039      0.042        72.99
+  prefix_plan_ms              0.068      0.032      0.038      0.333       138.20
+  decode_build_ms             0.283      0.257      0.406      0.552       579.51
+  decode_plan_ms              0.017      0.011      0.012      0.015        35.66
+discard          decode_total=39412.5ms  ( 41.5s wall)
+
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 2047, SHARED: 0)
+
+  -- DEC_TAIL path (2047 steps) --
+  prefix re-plans: 13/2047 (0.6%)   decode full re-plans: 1/2047 (0.0%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.387      0.468      0.498      0.511       792.73
+  pick_ms                     0.036      0.035      0.039      0.042        73.60
+  prefix_plan_ms              0.100      0.033      0.039      0.374       204.73
+  decode_build_ms             0.281      0.258      0.389      0.592       574.45
+  decode_plan_ms              0.018      0.011      0.012      0.016        37.45
+discard          decode_total=39512.0ms  ( 41.5s wall)
+  bs_kernel_2ldt        K=32  L_p=8192   B=1    bs_kernel_2ldt        K=32  L_p=8192   B=1  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 2047, SHARED: 0)
+
+  -- DEC_TAIL path (2047 steps) --
+  prefix re-plans: 13/2047 (0.6%)   decode full re-plans: 1/2047 (0.0%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.388      0.470      0.498      0.509       793.79
+  pick_ms                     0.036      0.035      0.039      0.041        72.96
+  prefix_plan_ms              0.070      0.033      0.038      0.350       144.01
+  decode_build_ms             0.285      0.258      0.405      0.606       583.95
+  decode_plan_ms              0.011      0.011      0.012      0.014        23.38
+prefill=  312.4ms  decode_total=39299.5ms  per_pt_token= 19.20ms  ( 39.9s wall)
+
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 2047, SHARED: 0)
+
+  -- DEC_TAIL path (2047 steps) --
+  prefix re-plans: 13/2047 (0.6%)   decode full re-plans: 1/2047 (0.0%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.387      0.470      0.499      0.511       792.36
+  pick_ms                     0.036      0.035      0.039      0.042        73.16
+  prefix_plan_ms              0.069      0.033      0.039      0.377       141.64
+  decode_build_ms             0.282      0.259      0.396      0.637       576.59
+  decode_plan_ms              0.012      0.011      0.012      0.016        24.31
+prefill=  303.6ms  decode_total=39336.4ms  per_pt_token= 19.22ms  ( 39.9s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B1_bs_kernel_2ldt.csv
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B1_bs_kernel_2ldt.csv
+[W521 02:30:45.269572311 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:30:45.324187419 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:30:46.199403537 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== cell: multi_level_system  (B=2, K=64, max_new=256, tp=2) ===
+==========================================================
+W0521 02:30:48.325000 4060523 torch/distributed/run.py:803] 
+W0521 02:30:48.325000 4060523 torch/distributed/run.py:803] *****************************************
+W0521 02:30:48.325000 4060523 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:30:48.325000 4060523 torch/distributed/run.py:803] *****************************************
+model: Qwen/Qwen3-4B  (tp_size=2)
+scenarios: ['multi_level_system']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 93206.76it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 98304.00it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=2   K=64  L_shared~2522  L_priv~80    n_leaves=128
+
+--- multi_level_system [K=64] ---
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 73, SHARED: 182)
+
+  -- DEC_TAIL path (73 steps) --
+  prefix re-plans: 1/73 (1.4%)   decode full re-plans: 1/73 (1.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.109      0.048      0.056      0.942         7.96
+  pick_ms                     0.067      0.067      0.068      0.078         4.87
+  prefix_plan_ms              0.030      0.018      0.019      0.031         2.20
+  decode_build_ms             0.236      0.234      0.244      0.260        17.21
+  decode_plan_ms              0.933      0.011      0.012      0.020        68.09
+
+  -- SHARED path (182 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 182}
+  level-0 pack cache hits: 181/182 (99.5%)   plan_info cache hits: 170/182 (93.4%)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 73, SHARED: 182)
+
+  -- DEC_TAIL path (73 steps) --
+  prefix re-plans: 1/73 (1.4%)   decode full re-plans: 1/73 (1.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.102      0.045      0.052      0.958        18.63
+  pick_ms                     0.067      0.065      0.069      0.079        12.11
+  shared_pack_ms              0.220      0.219      0.247      0.306        40.04
+  shared_plan_ms              0.258      0.059      0.068      0.735        46.95
+  shared_write_ms             0.068      0.066      0.071      0.115        12.30
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.109      0.048      0.055      0.950         7.98
+  pick_ms                     0.067      0.066      0.069      0.077         4.88
+  prefix_plan_ms              0.030      0.018      0.019      0.032         2.17
+  decode_build_ms             0.234      0.232      0.239      0.270        17.11
+  decode_plan_ms              0.605      0.011      0.012      0.015        44.18
+
+  -- SHARED path (182 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 182}
+  level-0 pack cache hits: 181/182 (99.5%)   plan_info cache hits: 170/182 (93.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.103      0.046      0.052      0.976        18.83
+  pick_ms                     0.066      0.064      0.067      0.080        12.00
+  shared_pack_ms              0.218      0.216      0.245      0.287        39.75
+  shared_plan_ms              0.438      0.057      0.063      0.732        79.72
+  shared_write_ms             0.067      0.065      0.071      0.083        12.20
+  bs_kernel    warmup  wall=  7.0s  decode_total= 4226.2ms
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 73, SHARED: 182)
+
+  -- DEC_TAIL path (73 steps) --
+  prefix re-plans: 1/73 (1.4%)   decode full re-plans: 1/73 (1.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.106      0.048      0.053      0.903         7.76
+  pick_ms                     0.067      0.066      0.069      0.077         4.87
+  prefix_plan_ms              0.029      0.018      0.019      0.029         2.14
+  decode_build_ms             0.242      0.241      0.251      0.263        17.69
+  decode_plan_ms              0.019      0.011      0.012      0.017         1.38
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 73, SHARED: 182)
+
+  -- DEC_TAIL path (73 steps) --
+  prefix re-plans: 1/73 (1.4%)   decode full re-plans: 1/73 (1.4%)
+
+  -- SHARED path (182 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 182}
+  level-0 pack cache hits: 181/182 (99.5%)   plan_info cache hits: 170/182 (93.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.109      0.049      0.058      0.904         7.93
+  pick_ms                     0.066      0.066      0.068      0.076         4.84
+  prefix_plan_ms              0.029      0.017      0.019      0.031         2.14
+  decode_build_ms             0.240      0.237      0.247      0.272        17.51
+  decode_plan_ms              0.020      0.011      0.012      0.017         1.43
+
+  -- SHARED path (182 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 182}
+  level-0 pack cache hits: 181/182 (99.5%)   plan_info cache hits: 170/182 (93.4%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.105      0.046      0.053      0.985        19.14
+  pick_ms                     0.066      0.065      0.067      0.076        11.95
+  shared_pack_ms              0.226      0.223      0.254      0.352        41.19
+  shared_plan_ms              0.109      0.059      0.068      0.749        19.90
+  shared_write_ms             0.068      0.066      0.073      0.111        12.43
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.107      0.047      0.054      1.005        19.42
+  pick_ms                     0.065      0.065      0.067      0.074        11.82
+  shared_pack_ms              0.225      0.223      0.252      0.310        40.92
+  shared_plan_ms              0.108      0.058      0.065      0.745        19.68
+  shared_write_ms             0.068      0.066      0.072      0.106        12.34
+  bs_kernel    r=0  prefill=  153.9ms  decode= 4007.8ms  plan/step= 0.68ms  fwd/step=14.90ms  p50/step=14.84ms  wall=  4.4s
+  bsk_2l_1p    warmup  wall=  4.3s  decode_total= 3897.0ms
+  bsk_2l_1p    r=0  prefill=  152.8ms  decode= 3878.8ms  plan/step= 0.71ms  fwd/step=14.37ms  p50/step=14.73ms  wall=  4.3s
+  bsk_2l_dt    warmup  wall=  4.8s  decode_total= 4302.5ms
+  bsk_2l_dt    r=0  prefill=  162.6ms  decode= 4339.1ms  plan/step= 0.55ms  fwd/step=16.33ms  p50/step=16.41ms  wall=  4.8s
+  rank (decode_total): bsk_2l_1p=3878.8, bs_kernel=4007.8, bsk_2l_dt=4339.1
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/multi_level_system_B2.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): bsk_2l_1p=3878.8, bs_kernel=4007.8, bsk_2l_dt=4339.1
+[W521 02:31:35.955246584 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:31:35.956378709 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:31:36.678997342 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== cell: multi_chain_reasoning  (B=2, K=64, max_new=256, tp=2) ===
+==========================================================
+W0521 02:31:37.794000 4065598 torch/distributed/run.py:803] 
+W0521 02:31:37.794000 4065598 torch/distributed/run.py:803] *****************************************
+W0521 02:31:37.794000 4065598 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:31:37.794000 4065598 torch/distributed/run.py:803] *****************************************
+model: Qwen/Qwen3-4B  (tp_size=2)
+scenarios: ['multi_chain_reasoning']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 98048.66it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 80316.46it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_chain_reasoning    [K=64    ] B=2   K=64  L_shared~2569  L_priv~23    n_leaves=128
+
+--- multi_chain_reasoning [K=64] ---
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 18, SHARED: 237)
+
+  -- DEC_TAIL path (18 steps) --
+  prefix re-plans: 1/18 (5.6%)   decode full re-plans: 1/18 (5.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.123      0.048      0.488      0.495         2.21
+  pick_ms                     0.066      0.067      0.069      0.069         1.20
+  prefix_plan_ms              0.061      0.018      0.023      0.023         1.10
+  decode_build_ms             0.242      0.235      0.247      0.253         4.35
+  decode_plan_ms              3.633      0.012      0.013      0.013        65.39
+
+  -- SHARED path (237 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 237}
+  level-0 pack cache hits: 236/237 (99.6%)   plan_info cache hits: 207/237 (87.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.106      0.046      0.484      0.579        25.12
+  pick_ms                     0.066      0.065      0.068      0.079        15.70
+  shared_pack_ms              0.211      0.212      0.245      0.299        50.02
+  shared_plan_ms              0.446      0.058      0.669      0.686       105.81
+  shared_write_ms             0.068      0.065      0.073      0.102        16.03
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 18, SHARED: 237)
+
+  -- DEC_TAIL path (18 steps) --
+  prefix re-plans: 1/18 (5.6%)   decode full re-plans: 1/18 (5.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.124      0.049      0.492      0.503         2.23
+  pick_ms                     0.068      0.067      0.069      0.075         1.22
+  prefix_plan_ms              0.063      0.019      0.023      0.023         1.14
+  decode_build_ms             0.243      0.241      0.248      0.255         4.38
+  decode_plan_ms              2.286      0.012      0.013      0.013        41.15
+
+  -- SHARED path (237 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 237}
+  level-0 pack cache hits: 236/237 (99.6%)   plan_info cache hits: 207/237 (87.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.107      0.046      0.493      0.591        25.45
+  pick_ms                     0.066      0.065      0.069      0.078        15.73
+  shared_pack_ms              0.215      0.215      0.252      0.282        50.93
+  shared_plan_ms              0.295      0.062      0.696      0.715        70.01
+  shared_write_ms             0.070      0.067      0.075      0.101        16.48
+  bs_kernel    warmup  wall=  7.2s  decode_total= 4265.2ms
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 18, SHARED: 237)
+
+  -- DEC_TAIL path (18 steps) --
+  prefix re-plans: 1/18 (5.6%)   decode full re-plans: 1/18 (5.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.130      0.048      0.504      0.504         2.34
+  pick_ms                     0.068      0.067      0.070      0.076         1.23
+  prefix_plan_ms              0.061      0.017      0.024      0.028         1.09
+  decode_build_ms             0.238      0.233      0.249      0.249         4.28
+  decode_plan_ms              0.042      0.012      0.013      0.013         0.76
+
+  -- SHARED path (237 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 237}
+  level-0 pack cache hits: 236/237 (99.6%)   plan_info cache hits: 207/237 (87.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.112      0.046      0.502      0.619        26.56
+  pick_ms                     0.066      0.066      0.068      0.075        15.66
+  shared_pack_ms              0.214      0.216      0.250      0.280        50.73
+  shared_plan_ms              0.139      0.058      0.676      0.722        33.01
+  shared_write_ms             0.067      0.066      0.072      0.086        15.91
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 18, SHARED: 237)
+
+  -- DEC_TAIL path (18 steps) --
+  prefix re-plans: 1/18 (5.6%)   decode full re-plans: 1/18 (5.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.131      0.048      0.500      0.510         2.36
+  pick_ms                     0.067      0.067      0.069      0.071         1.21
+  prefix_plan_ms              0.062      0.018      0.022      0.025         1.11
+  decode_build_ms             0.238      0.235      0.249      0.250         4.29
+  decode_plan_ms              0.045      0.012      0.021      0.028         0.80
+
+  -- SHARED path (237 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 237}
+  level-0 pack cache hits: 236/237 (99.6%)   plan_info cache hits: 207/237 (87.3%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.113      0.047      0.516      0.611        26.74
+  pick_ms                     0.066      0.065      0.068      0.077        15.55
+  shared_pack_ms              0.218      0.219      0.254      0.274        51.76
+  shared_plan_ms              0.148      0.062      0.702      0.746        35.13
+  shared_write_ms             0.069      0.067      0.074      0.125        16.43
+  bs_kernel    r=0  prefill=  116.4ms  decode= 4052.4ms  plan/step= 0.73ms  fwd/step=15.02ms  p50/step=15.15ms  wall=  4.4s
+  bsk_2l_1p    warmup  wall=  4.4s  decode_total= 4040.9ms
+  bsk_2l_1p    r=0  prefill=  104.0ms  decode= 4054.4ms  plan/step= 0.73ms  fwd/step=15.03ms  p50/step=15.09ms  wall=  4.4s
+  bsk_2l_dt    warmup  wall=  4.9s  decode_total= 4457.2ms
+  bsk_2l_dt    r=0  prefill=  123.1ms  decode= 4409.9ms  plan/step= 0.55ms  fwd/step=16.60ms  p50/step=16.83ms  wall=  4.7s
+  rank (decode_total): bs_kernel=4052.4, bsk_2l_1p=4054.4, bsk_2l_dt=4409.9
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/multi_chain_reasoning_B2.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_chain_reasoning    [K=64    ]   rank (decode_total): bs_kernel=4052.4, bsk_2l_1p=4054.4, bsk_2l_dt=4409.9
+[W521 02:32:25.055678967 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:32:25.055679139 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:32:26.845708410 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== cell: multi_few_shot  (B=2, K=64, max_new=256, tp=2) ===
+==========================================================
+W0521 02:32:28.017000 4072777 torch/distributed/run.py:803] 
+W0521 02:32:28.017000 4072777 torch/distributed/run.py:803] *****************************************
+W0521 02:32:28.017000 4072777 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:32:28.017000 4072777 torch/distributed/run.py:803] *****************************************
+model: Qwen/Qwen3-4B  (tp_size=2)
+scenarios: ['multi_few_shot']
+methods:   ['bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 22604.03it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 111025.69it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=64    ] B=2   K=64  L_shared~6457  L_priv~134   n_leaves=128
+
+--- multi_few_shot [K=64] ---
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 129, SHARED: 126)
+
+  -- DEC_TAIL path (129 steps) --
+  prefix re-plans: 1/129 (0.8%)   decode full re-plans: 1/129 (0.8%)
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 129, SHARED: 126)
+
+  -- DEC_TAIL path (129 steps) --
+  prefix re-plans: 1/129 (0.8%)   decode full re-plans: 1/129 (0.8%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.111      0.049      0.501      0.517        14.35
+  pick_ms                     0.067      0.066      0.069      0.076         8.58
+  prefix_plan_ms              0.025      0.018      0.023      0.027         3.22
+  decode_build_ms             0.243      0.241      0.252      0.265        31.29
+  decode_plan_ms              0.325      0.012      0.012      0.019        41.92
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.111      0.049      0.496      0.524        14.34
+  pick_ms                     0.067      0.066      0.069      0.078         8.64
+  prefix_plan_ms              0.025      0.018      0.024      0.027         3.28
+  decode_build_ms             0.247      0.246      0.259      0.273        31.90
+  decode_plan_ms              0.520      0.012      0.012      0.014        67.04
+
+  -- SHARED path (126 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 126}
+  level-0 pack cache hits: 125/126 (99.2%)   plan_info cache hits: 109/126 (86.5%)
+
+  -- SHARED path (126 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 126}
+  level-0 pack cache hits: 125/126 (99.2%)   plan_info cache hits: 109/126 (86.5%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.109      0.046      0.491      0.583        13.75
+  pick_ms                     0.066      0.064      0.068      0.079         8.34
+  shared_pack_ms              0.236      0.232      0.258      0.280        29.69
+  shared_plan_ms              0.636      0.061      0.685      0.710        80.19
+  shared_write_ms             0.069      0.067      0.074      0.077         8.70
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.109      0.046      0.484      0.588        13.77
+  pick_ms                     0.067      0.065      0.071      0.080         8.43
+  shared_pack_ms              0.240      0.238      0.261      0.291        30.28
+  shared_plan_ms              0.383      0.063      0.700      0.725        48.21
+  shared_write_ms             0.071      0.069      0.076      0.080         8.92
+  bs_kernel    warmup  wall=  7.6s  decode_total= 4468.3ms
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 129, SHARED: 126)
+
+  -- DEC_TAIL path (129 steps) --
+  prefix re-plans: 1/129 (0.8%)   decode full re-plans: 1/129 (0.8%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.111      0.049      0.499      0.523        14.29
+  pick_ms                     0.067      0.067      0.069      0.072         8.66
+  prefix_plan_ms              0.025      0.018      0.024      0.027         3.24
+  decode_build_ms             0.253      0.252      0.263      0.276        32.60
+  decode_plan_ms              0.016      0.012      0.012      0.019         2.11
+
+  -- SHARED path (126 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 126}
+  level-0 pack cache hits: 125/126 (99.2%)   plan_info cache hits: 109/126 (86.5%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.111      0.046      0.493      0.582        13.93
+  pick_ms                     0.066      0.066      0.068      0.076         8.36
+  shared_pack_ms              0.243      0.242      0.273      0.286        30.67
+  shared_plan_ms              0.153      0.063      0.699      0.718        19.22
+  shared_write_ms             0.069      0.068      0.072      0.079         8.66
+
+[bs_kernel plan-trace] 255 steps (PER_BEAM: 0, DEC_TAIL: 129, SHARED: 126)
+
+  -- DEC_TAIL path (129 steps) --
+  prefix re-plans: 1/129 (0.8%)   decode full re-plans: 1/129 (0.8%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.112      0.049      0.505      0.530        14.39
+  pick_ms                     0.067      0.067      0.069      0.071         8.66
+  prefix_plan_ms              0.025      0.017      0.022      0.025         3.17
+  decode_build_ms             0.251      0.250      0.261      0.285        32.42
+  decode_plan_ms              0.016      0.012      0.013      0.013         2.10
+
+  -- SHARED path (126 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 126}
+  level-0 pack cache hits: 125/126 (99.2%)   plan_info cache hits: 109/126 (86.5%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.111      0.046      0.499      0.597        13.99
+  pick_ms                     0.066      0.066      0.068      0.074         8.35
+  shared_pack_ms              0.241      0.237      0.265      0.310        30.38
+  shared_plan_ms              0.150      0.062      0.686      0.701        18.93
+  shared_write_ms             0.068      0.067      0.072      0.080         8.60
+  bs_kernel    r=0  prefill=  387.7ms  decode= 4299.4ms  plan/step= 0.70ms  fwd/step=16.02ms  p50/step=17.12ms  wall=  5.0s
+  bsk_2l_1p    warmup  wall=  4.9s  decode_total= 4100.1ms
+  bsk_2l_1p    r=0  prefill=  386.1ms  decode= 4073.3ms  plan/step= 0.79ms  fwd/step=15.05ms  p50/step=15.49ms  wall=  4.7s
+  bsk_2l_dt    warmup  wall=  5.3s  decode_total= 4537.4ms
+  bsk_2l_dt    r=0  prefill=  405.2ms  decode= 4485.9ms  plan/step= 0.58ms  fwd/step=16.87ms  p50/step=17.17ms  wall=  5.1s
+  rank (decode_total): bsk_2l_1p=4073.3, bs_kernel=4299.4, bsk_2l_dt=4485.9
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/multi_few_shot_B2.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=64    ]   rank (decode_total): bsk_2l_1p=4073.3, bs_kernel=4299.4, bsk_2l_dt=4485.9
+[W521 02:33:18.092803173 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:33:18.097350071 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:33:19.882515111 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== cell: beam_search  (K=32, L_p=8192, B=2, max_new=2048, tp=2) ===
+==========================================================
+  --- method: bs_kernel ---
+W0521 02:33:20.994000 4078257 torch/distributed/run.py:803] 
+W0521 02:33:20.994000 4078257 torch/distributed/run.py:803] *****************************************
+W0521 02:33:20.994000 4078257 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:33:20.994000 4078257 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 2048
+Loading tokenizer + model...
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 2048
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 94608.36it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 58434.58it/s]
+Model loaded.
+
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel      warmup K=32  L_p=8192   B=2  loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel      warmup K=32  L_p=8192   B=2  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 1903, SHARED: 144)
+
+  -- DEC_TAIL path (1903 steps) --
+  prefix re-plans: 13/1903 (0.7%)   decode full re-plans: 1/1903 (0.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.859      0.925      0.960      1.024      1634.77
+  pick_ms                     0.107      0.106      0.116      0.127       203.84
+  prefix_plan_ms              0.153      0.050      0.061      0.473       291.45
+  decode_build_ms             0.596      0.366      1.450      2.378      1133.90
+  decode_plan_ms              0.034      0.012      0.013      0.017        64.54
+
+  -- SHARED path (144 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 138, 'SHARED_3L_1POOL': 6}
+  level-0 pack cache hits: 129/144 (89.6%)   plan_info cache hits: 116/144 (80.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.764      0.761      0.779      0.865       109.99
+  pick_ms                     0.101      0.106      0.121      0.134        14.56
+  shared_pack_ms              7.237      8.694      9.235     16.787      1042.16
+  shared_plan_ms              2.168      0.878      2.871     10.489       312.17
+  shared_write_ms             1.077      0.575      1.912      4.823       155.13
+discard          decode_total=79475.7ms  ( 81.9s wall)
+
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 1903, SHARED: 144)
+
+  -- DEC_TAIL path (1903 steps) --
+  prefix re-plans: 13/1903 (0.7%)   decode full re-plans: 1/1903 (0.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.854      0.920      0.954      1.017      1625.27
+  pick_ms                     0.106      0.105      0.115      0.126       202.30
+  prefix_plan_ms              0.132      0.051      0.061      0.475       250.61
+  decode_build_ms             1.281      1.727      2.194      2.386      2438.04
+  decode_plan_ms              0.019      0.012      0.013      0.017        35.74
+
+  -- SHARED path (144 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 138, 'SHARED_3L_1POOL': 6}
+  level-0 pack cache hits: 129/144 (89.6%)   plan_info cache hits: 116/144 (80.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.766      0.762      0.780      0.895       110.33
+  pick_ms                     0.101      0.107      0.121      0.134        14.56
+  shared_pack_ms              6.972      8.714      9.282     15.426      1003.97
+  shared_plan_ms              1.718      0.784      2.629     11.595       247.37
+  shared_write_ms             0.876      0.572      2.655      4.823       126.13
+discard          decode_total=79436.0ms  ( 82.0s wall)
+  bs_kernel             K=32  L_p=8192   B=2    bs_kernel             K=32  L_p=8192   B=2  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 1903, SHARED: 144)
+
+  -- DEC_TAIL path (1903 steps) --
+  prefix re-plans: 13/1903 (0.7%)   decode full re-plans: 1/1903 (0.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.866      0.932      0.973      1.041      1648.45
+  pick_ms                     0.108      0.107      0.116      0.126       205.35
+  prefix_plan_ms              0.159      0.051      0.064      0.542       302.46
+  decode_build_ms             0.615      0.371      1.608      2.434      1170.03
+  decode_plan_ms              0.015      0.012      0.013      0.017        27.65
+
+  -- SHARED path (144 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 138, 'SHARED_3L_1POOL': 6}
+  level-0 pack cache hits: 129/144 (89.6%)   plan_info cache hits: 116/144 (80.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.766      0.762      0.777      0.876       110.35
+  pick_ms                     0.101      0.107      0.121      0.135        14.57
+  shared_pack_ms              7.345      8.685      9.289     16.917      1057.61
+  shared_plan_ms              1.890      0.917      2.788      8.787       272.10
+  shared_write_ms             1.195      0.586      2.902      4.834       172.12
+prefill=  571.9ms  decode_total=79435.7ms  per_pt_token= 19.40ms  ( 80.5s wall)
+
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 1903, SHARED: 144)
+
+  -- DEC_TAIL path (1903 steps) --
+  prefix re-plans: 13/1903 (0.7%)   decode full re-plans: 1/1903 (0.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.865      0.933      0.971      1.040      1645.50
+  pick_ms                     0.107      0.106      0.116      0.126       204.00
+  prefix_plan_ms              0.150      0.053      0.067      0.579       286.02
+  decode_build_ms             1.144      1.254      2.179      2.380      2176.57
+  decode_plan_ms              0.013      0.012      0.013      0.018        23.93
+
+  -- SHARED path (144 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 138, 'SHARED_3L_1POOL': 6}
+  level-0 pack cache hits: 129/144 (89.6%)   plan_info cache hits: 116/144 (80.6%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.764      0.761      0.776      0.852       110.04
+  pick_ms                     0.101      0.109      0.122      0.134        14.57
+  shared_pack_ms              7.184      8.700      9.286     16.579      1034.53
+  shared_plan_ms              1.460      0.763      2.644      8.007       210.24
+  shared_write_ms             0.842      0.572      2.134      4.814       121.29
+prefill=  577.3ms  decode_total=79380.3ms  per_pt_token= 19.39ms  ( 80.4s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B2_bs_kernel.csv
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B2_bs_kernel.csv
+[W521 02:36:25.956632416 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:36:25.062711005 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:36:26.870008985 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel_2l1p ---
+W0521 02:36:27.954000 4102706 torch/distributed/run.py:803] 
+W0521 02:36:27.954000 4102706 torch/distributed/run.py:803] *****************************************
+W0521 02:36:27.954000 4102706 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:36:27.954000 4102706 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runsgrid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+
+methods: ['bs_kernel_2l1p']
+methods: ['bs_kernel_2l1p']max_new: 2048
+
+Loading tokenizer + model...max_new: 2048
+
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 104857.60it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 74017.13it/s]
+Model loaded.
+
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_2l1p warmup K=32  L_p=8192   B=2  loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_2l1p warmup K=32  L_p=8192   B=2  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2031/2047 (99.2%)   plan_info cache hits: 1905/2047 (93.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.851      0.878      0.995      1.053      1742.40
+  pick_ms                     0.057      0.057      0.060      0.064       117.55
+  shared_pack_ms              8.471      8.634      8.988      9.519     17339.76
+  shared_plan_ms              2.089      1.976      2.407      8.663      4277.01
+  shared_write_ms             1.041      0.573      2.452      4.802      2130.55
+discard          decode_total=73274.3ms  ( 75.7s wall)
+
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2031/2047 (99.2%)   plan_info cache hits: 1905/2047 (93.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.848      0.873      0.990      1.048      1736.51
+  pick_ms                     0.058      0.057      0.060      0.064       117.97
+  shared_pack_ms              8.459      8.607      8.977      9.574     17315.23
+  shared_plan_ms              2.209      2.164      2.407     10.153      4522.70
+  shared_write_ms             1.102      0.576      2.274      4.193      2256.66
+discard          decode_total=73239.4ms  ( 75.6s wall)
+  bs_kernel_2l1p        K=32  L_p=8192   B=2    bs_kernel_2l1p        K=32  L_p=8192   B=2  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2031/2047 (99.2%)   plan_info cache hits: 1905/2047 (93.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.855      0.880      0.999      1.060      1749.74
+  pick_ms                     0.057      0.057      0.060      0.064       117.62
+  shared_pack_ms              8.444      8.637      8.986      9.524     17284.15
+  shared_plan_ms              2.054      1.958      2.407      8.619      4205.34
+  shared_write_ms             1.030      0.573      2.463      4.805      2108.84
+prefill=  621.0ms  decode_total=73184.6ms  per_pt_token= 17.88ms  ( 74.3s wall)
+
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2031/2047 (99.2%)   plan_info cache hits: 1905/2047 (93.1%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.853      0.878      0.997      1.055      1745.10
+  pick_ms                     0.058      0.058      0.060      0.063       118.35
+  shared_pack_ms              8.465      8.600      8.968      9.581     17327.27
+  shared_plan_ms              2.201      2.155      2.407     10.148      4504.75
+  shared_write_ms             1.103      0.592      2.271      3.390      2257.88
+prefill=  628.7ms  decode_total=73170.1ms  per_pt_token= 17.87ms  ( 74.3s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B2_bs_kernel_2l1p.csv
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B2_bs_kernel_2l1p.csv
+[W521 02:39:19.087228482 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:39:19.103687573 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:39:20.949033611 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  --- method: bs_kernel_2ldt ---
+W0521 02:39:22.019000 4124327 torch/distributed/run.py:803] 
+W0521 02:39:22.019000 4124327 torch/distributed/run.py:803] *****************************************
+W0521 02:39:22.019000 4124327 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0521 02:39:22.019000 4124327 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 2048
+Loading tokenizer + model...
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 2048
+Loading tokenizer + model...
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 103705.32it/s]
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 100932.45it/s]
+Model loaded.
+
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_2ldt warmup K=32  L_p=8192   B=2  loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_2ldt warmup K=32  L_p=8192   B=2  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 2047, SHARED: 0)
+
+  -- DEC_TAIL path (2047 steps) --
+  prefix re-plans: 17/2047 (0.8%)   decode full re-plans: 1/2047 (0.0%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.848      0.904      0.985      1.045      1735.19
+  pick_ms                     0.041      0.041      0.043      0.047        84.50
+  prefix_plan_ms              0.174      0.050      0.059      0.559       356.53
+  decode_build_ms             0.762      0.400      1.985      2.365      1560.54
+  decode_plan_ms              0.020      0.011      0.012      0.016        40.78
+discard          decode_total=78702.4ms  ( 81.6s wall)
+  bs_kernel_2ldt        K=32  L_p=8192   B=2  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 2047, SHARED: 0)
+
+  -- DEC_TAIL path (2047 steps) --
+  prefix re-plans: 17/2047 (0.8%)   decode full re-plans: 1/2047 (0.0%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.857      0.918      0.995      1.055      1754.46
+  pick_ms                     0.041      0.041      0.043      0.047        84.63
+  prefix_plan_ms              0.176      0.050      0.059      0.573       359.50
+  decode_build_ms             1.165      1.305      2.176      2.390      2384.60
+  decode_plan_ms              0.018      0.011      0.012      0.017        36.20
+discard          decode_total=78722.4ms  ( 81.8s wall)
+  bs_kernel_2ldt        K=32  L_p=8192   B=2  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 2047, SHARED: 0)
+
+  -- DEC_TAIL path (2047 steps) --
+  prefix re-plans: 17/2047 (0.8%)   decode full re-plans: 1/2047 (0.0%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.849      0.904      0.986      1.045      1737.69
+  pick_ms                     0.041      0.041      0.042      0.047        84.44
+  prefix_plan_ms              0.144      0.050      0.059      0.600       295.31
+  decode_build_ms             1.006      0.583      2.217      2.376      2058.66
+  decode_plan_ms              0.014      0.012      0.012      0.016        29.12
+prefill=  323.2ms  decode_total=78527.2ms  per_pt_token= 19.18ms  ( 79.4s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B2_bs_kernel_2ldt.csv
+
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 2047, SHARED: 0)
+
+  -- DEC_TAIL path (2047 steps) --
+  prefix re-plans: 16/2047 (0.8%)   decode full re-plans: 1/2047 (0.0%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   0.908      0.969      1.002      1.065      1859.54
+  pick_ms                     0.041      0.041      0.042      0.046        83.81
+  prefix_plan_ms              0.168      0.050      0.059      0.615       344.74
+  decode_build_ms             0.972      0.759      2.107      2.381      1990.56
+  decode_plan_ms              0.012      0.012      0.013      0.016        25.07
+prefill=  449.5ms  decode_total=78501.4ms  per_pt_token= 19.17ms  ( 79.5s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp1c_v2_smallB/Qwen3-4B/beam_search_B2_bs_kernel_2ldt.csv
+[W521 02:42:25.105084906 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:42:25.328616520 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W521 02:42:26.113859634 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== done 2026-05-21T02:42:27+08:00 ===

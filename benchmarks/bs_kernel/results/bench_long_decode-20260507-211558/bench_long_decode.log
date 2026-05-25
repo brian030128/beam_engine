@@ -1,0 +1,54 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 12 (K,L_p,B) cells × 6 methods = 72 runs
+methods: ['paged', 'tree', 'fasttree', 'mlca', 'adaptive_pool', 'bs_kernel']
+max_new: 512
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files:  29%|██▊       | 2/7 [00:00<00:01,  3.73it/s]Fetching 7 files:  43%|████▎     | 3/7 [00:06<00:09,  2.47s/it]Fetching 7 files: 100%|██████████| 7/7 [00:06<00:00,  1.15it/s]
+Model loaded.
+
+  paged          K=16  L_p=8192   B=1  prefill=  912.1ms  decode_total= 2995.8ms  per_pt_token=  5.86ms  ( 17.1s wall)
+  tree           K=16  L_p=8192   B=1  prefill=   41.9ms  decode_total= 5838.4ms  per_pt_token= 11.43ms  (  5.9s wall)
+  fasttree       K=16  L_p=8192   B=1  prefill=   41.6ms  decode_total= 7003.2ms  per_pt_token= 13.70ms  (  7.1s wall)
+  mlca           K=16  L_p=8192   B=1  prefill=   44.6ms  decode_total= 3273.2ms  per_pt_token=  6.41ms  (  3.3s wall)
+  adaptive_pool  K=16  L_p=8192   B=1  prefill=   44.3ms  decode_total=12184.9ms  per_pt_token= 23.85ms  ( 12.2s wall)
+  bs_kernel      K=16  L_p=8192   B=1  prefill=   44.2ms  decode_total= 2871.4ms  per_pt_token=  5.62ms  (  2.9s wall)
+  paged          K=16  L_p=8192   B=16 prefill=  697.7ms  decode_total=19803.3ms  per_pt_token=  2.42ms  ( 20.6s wall)
+  tree           K=16  L_p=8192   B=16 prefill=  660.1ms  decode_total=92375.9ms  per_pt_token= 11.30ms  ( 93.2s wall)
+  fasttree       K=16  L_p=8192   B=16 prefill=  652.5ms  decode_total=59748.8ms  per_pt_token=  7.31ms  ( 60.5s wall)
+  mlca           K=16  L_p=8192   B=16 prefill=  696.5ms  decode_total=11861.4ms  per_pt_token=  1.45ms  ( 12.6s wall)
+  adaptive_pool  K=16  L_p=8192   B=16 prefill=  700.7ms  decode_total=11928.7ms  per_pt_token=  1.46ms  ( 12.7s wall)
+  bs_kernel      K=16  L_p=8192   B=16 prefill=  700.4ms  decode_total=11845.3ms  per_pt_token=  1.45ms  ( 12.6s wall)
+  paged          K=16  L_p=8192   B=32 prefill= 1431.5ms  decode_total=39016.4ms  per_pt_token=  2.39ms  ( 40.6s wall)
+  tree           K=16  L_p=8192   B=32 prefill= 1311.3ms  decode_total=184800.2ms  per_pt_token= 11.30ms  (186.3s wall)
+  fasttree       K=16  L_p=8192   B=32 prefill= 1329.7ms  decode_total=128520.6ms  per_pt_token=  7.86ms  (130.0s wall)
+  mlca           K=16  L_p=8192   B=32 prefill= 1422.8ms  decode_total=22741.3ms  per_pt_token=  1.39ms  ( 24.4s wall)
+  adaptive_pool  K=16  L_p=8192   B=32 prefill= 1422.9ms  decode_total=22996.4ms  per_pt_token=  1.41ms  ( 24.6s wall)
+  bs_kernel      K=16  L_p=8192   B=32 prefill= 1427.4ms  decode_total=22473.7ms  per_pt_token=  1.37ms  ( 24.1s wall)
+  paged          K=16  L_p=50000  B=1  prefill=  766.5ms  decode_total= 5147.4ms  per_pt_token= 10.07ms  (  6.0s wall)
+  tree           K=16  L_p=50000  B=1  prefill=  663.7ms  decode_total=21039.2ms  per_pt_token= 41.17ms  ( 21.7s wall)
+  fasttree       K=16  L_p=50000  B=1  prefill=  658.9ms  decode_total=18740.0ms  per_pt_token= 36.67ms  ( 19.4s wall)
+  mlca           K=16  L_p=50000  B=1  prefill=  757.0ms  decode_total= 4339.9ms  per_pt_token=  8.49ms  (  5.1s wall)
+  adaptive_pool  K=16  L_p=50000  B=1  prefill=  755.9ms  decode_total= 3990.5ms  per_pt_token=  7.81ms  (  4.8s wall)
+  bs_kernel      K=16  L_p=50000  B=1  prefill=  755.7ms  decode_total= 3968.2ms  per_pt_token=  7.77ms  (  4.8s wall)
+  paged          K=16  L_p=50000  B=16   [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 12.21 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.77 GiB is free. Including non-PyTorch memory, this process has 75.32 GiB memory in use. Of the allocated memory 65.47 GiB is allocated by PyTorch, and 9.19 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  tree           K=16  L_p=50000  B=16 prefill=10550.0ms  decode_total=331626.7ms  per_pt_token= 40.56ms  (342.4s wall)
+  fasttree       K=16  L_p=50000  B=16   [fasttree] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 12.21 GiB. GPU 0 has a total capacity of 79.10 GiB of which 4.29 GiB is free. Including non-PyTorch memory, this process has 74.80 GiB memory in use. Of the allocated memory 64.98 GiB is allocated by PyTorch, and 9.16 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  mlca           K=16  L_p=50000  B=16   [mlca] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 12.21 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.77 GiB is free. Including non-PyTorch memory, this process has 75.32 GiB memory in use. Of the allocated memory 65.48 GiB is allocated by PyTorch, and 9.18 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  adaptive_pool  K=16  L_p=50000  B=16   [adaptive_pool] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 12.21 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.79 GiB is free. Including non-PyTorch memory, this process has 75.30 GiB memory in use. Of the allocated memory 65.46 GiB is allocated by PyTorch, and 9.18 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  bs_kernel      K=16  L_p=50000  B=16   [bs_kernel] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 12.21 GiB. GPU 0 has a total capacity of 79.10 GiB of which 3.77 GiB is free. Including non-PyTorch memory, this process has 75.32 GiB memory in use. Of the allocated memory 65.47 GiB is allocated by PyTorch, and 9.19 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  paged          K=16  L_p=50000  B=32   [paged] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 9.16 GiB. GPU 0 has a total capacity of 79.10 GiB of which 5.49 GiB is free. Including non-PyTorch memory, this process has 73.60 GiB memory in use. Of the allocated memory 72.93 GiB is allocated by PyTorch, and 14.74 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_batched.py", line 208, in <module>
+    main()
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_batched.py", line 178, in main
+    torch.cuda.empty_cache()
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/cuda/memory.py", line 224, in empty_cache
+    torch._C._cuda_emptyCache()
+torch.AcceleratorError: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+

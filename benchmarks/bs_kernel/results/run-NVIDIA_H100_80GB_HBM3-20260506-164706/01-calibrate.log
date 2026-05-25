@@ -1,0 +1,55 @@
+/home/u4320956/beam_engine-v3/.venv/lib64/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+<frozen runpy>:128: RuntimeWarning: 'beam_engine.methods.bs_kernel.calibrate' found in sys.modules after import of package 'beam_engine.methods.bs_kernel', but prior to execution of 'beam_engine.methods.bs_kernel.calibrate'; this may result in unpredictable behaviour
+/tmp/tmp98uw_b_m/cuda_utils.c:6:10: fatal error: Python.h: No such file or directory
+ #include <Python.h>
+          ^~~~~~~~~~
+compilation terminated.
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/methods/bs_kernel/calibrate.py", line 303, in <module>
+    c = calibrate(args.device, force=args.force, verbose=True)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/methods/bs_kernel/calibrate.py", line 274, in calibrate
+    launch_us=measure_launch_us(device),
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/methods/bs_kernel/calibrate.py", line 158, in measure_launch_us
+    return _time_event_us(lambda: _empty[(1,)](), n, device=device)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/methods/bs_kernel/calibrate.py", line 121, in _time_event_us
+    fn()
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/methods/bs_kernel/calibrate.py", line 158, in <lambda>
+    return _time_event_us(lambda: _empty[(1,)](), n, device=device)
+                                  ^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib64/python3.11/site-packages/triton/runtime/jit.py", line 419, in <lambda>
+    return lambda *args, **kwargs: self.run(grid=grid, warmup=False, *args, **kwargs)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib64/python3.11/site-packages/triton/runtime/jit.py", line 713, in run
+    device = driver.active.get_current_device()
+             ^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib64/python3.11/site-packages/triton/runtime/driver.py", line 28, in active
+    self._active = self.default
+                   ^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib64/python3.11/site-packages/triton/runtime/driver.py", line 22, in default
+    self._default = _create_driver()
+                    ^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib64/python3.11/site-packages/triton/runtime/driver.py", line 10, in _create_driver
+    return active_drivers[0]()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib64/python3.11/site-packages/triton/backends/nvidia/driver.py", line 719, in __init__
+    self.utils = CudaUtils()  # TODO: make static
+                 ^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib64/python3.11/site-packages/triton/backends/nvidia/driver.py", line 63, in __init__
+    mod = compile_module_from_src(
+          ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib64/python3.11/site-packages/triton/runtime/build.py", line 89, in compile_module_from_src
+    so = _build(name, src_path, tmpdir, library_dirs or [], include_dirs or [], libraries or [], ccflags or [])
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib64/python3.11/site-packages/triton/runtime/build.py", line 51, in _build
+    subprocess.check_call(cc_cmd, stdout=subprocess.DEVNULL)
+  File "/usr/lib64/python3.11/subprocess.py", line 413, in check_call
+    raise CalledProcessError(retcode, cmd)
+subprocess.CalledProcessError: Command '['/usr/bin/gcc', '/tmp/tmp98uw_b_m/cuda_utils.c', '-O3', '-shared', '-fPIC', '-Wno-psabi', '-o', '/tmp/tmp98uw_b_m/cuda_utils.cpython-311-x86_64-linux-gnu.so', '-lcuda', '-L/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/triton/backends/nvidia/lib', '-L/lib64', '-I/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/triton/backends/nvidia/include', '-I/tmp/tmp98uw_b_m', '-I/usr/include/python3.11']' returned non-zero exit status 1.
+[calibrate] probing NVIDIA H100 80GB HBM3

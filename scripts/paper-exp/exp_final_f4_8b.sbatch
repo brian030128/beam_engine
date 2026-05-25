@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:H100:1
-#SBATCH --time=02:00:00
+#SBATCH --time=07:00:00
 #SBATCH --output=slurm/logs/f4_8b_%j.out
 #SBATCH --error=slurm/logs/f4_8b_%j.err
 
@@ -27,6 +27,10 @@ export BS_KERNEL_TRACE_PLAN=1
 export BE_MODEL="meta-llama/Llama-3.1-8B-Instruct"
 export BE_DTYPE=bf16
 export BE_KV_DTYPE=bf16
+
+# Data draws for F4 (content-independent long-decode; see 1B wrapper note).
+# deft on 8B F4 is ~12 min/run, so keep this modest.
+export F4_SEEDS="${F4_SEEDS:-0,1,2}"
 
 MODEL_TAG="Llama-3.1-8B-bf16"
 NPROC=1

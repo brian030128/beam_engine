@@ -1,0 +1,70 @@
+=== exp4 TP=2 70B-FP8 K=128 slow methods (fasttree, deft) ===
+started 2026-05-19T11:19:37+08:00
+model:    RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp=2, dtype=bf16, kv=bf16)
+cell:     L_p=8192, K=128, B=2, max_new=768
+methods:  fasttree deft
+GPUs:     NVIDIA H100 80GB HBM3 × 2
+
+=== running method: fasttree ===
+W0519 11:19:38.519000 386912 torch/distributed/run.py:803] 
+W0519 11:19:38.519000 386912 torch/distributed/run.py:803] *****************************************
+W0519 11:19:38.519000 386912 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0519 11:19:38.519000 386912 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs  (tp_size=2)
+methods: ['fasttree']
+max_new: 768
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:02,  6.58it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  5.13it/s]Fetching 21 files:  14%|█▍        | 3/21 [00:33<04:12, 14.05s/it]Fetching 21 files:  14%|█▍        | 3/21 [00:33<04:12, 14.04s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:52<04:30, 15.89s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:52<04:30, 15.89s/it]Fetching 21 files:  52%|█████▏    | 11/21 [00:59<00:41,  4.17s/it]Fetching 21 files:  52%|█████▏    | 11/21 [01:00<00:41,  4.17s/it]Fetching 21 files:  57%|█████▋    | 12/21 [01:03<00:36,  4.05s/it]Fetching 21 files:  57%|█████▋    | 12/21 [01:03<00:36,  4.05s/it]Fetching 21 files:  62%|██████▏   | 13/21 [01:03<00:27,  3.49s/it]Fetching 21 files:  62%|██████▏   | 13/21 [01:03<00:27,  3.49s/it]Fetching 21 files:  71%|███████▏  | 15/21 [01:05<00:15,  2.57s/it]Fetching 21 files: 100%|██████████| 21/21 [01:05<00:00,  3.11s/it]
+Fetching 21 files:  71%|███████▏  | 15/21 [01:05<00:15,  2.57s/it]Fetching 21 files: 100%|██████████| 21/21 [01:05<00:00,  3.11s/it]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  fasttree       warmup K=128 L_p=8192   B=2  discard          decode_total=166299.1ms  (170.4s wall)
+  fasttree              K=128 L_p=8192   B=2  prefill= 1916.2ms  decode_total=139740.2ms  per_pt_token= 91.10ms  (142.1s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2_K128_slow/fasttree.csv
+[W519 11:26:48.186417620 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 11:26:48.186935686 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 11:26:49.055953690 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: deft ===
+W0519 11:26:50.720000 419587 torch/distributed/run.py:803] 
+W0519 11:26:50.720000 419587 torch/distributed/run.py:803] *****************************************
+W0519 11:26:50.720000 419587 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0519 11:26:50.720000 419587 torch/distributed/run.py:803] *****************************************
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs  (tp_size=2)
+methods: ['deft']
+max_new: 768
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 75996.88it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 244667.73it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  deft                  K=128 L_p=8192   B=2  prefill= 3638.2ms  decode_total=105847.6ms  per_pt_token= 69.00ms  (110.0s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2_K128_slow/deft.csv
+[W519 11:29:31.550361176 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 11:29:31.551058028 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W519 11:29:32.449755987 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== merging CSVs to benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2_K128_slow/merged.csv ===
+
+=== merged results ===
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms,plan_mean_ms,plan_total_ms,forward_mean_ms,forward_total_ms,cow_mean_ms,cow_total_ms,topk_mean_ms,topk_total_ms,fork_mean_ms,fork_total_ms
+fasttree,128,8192,2,768,1916.1800,139740.2472,182.1907,91.0953,5.0499,3873.3022,173.6850,133216.3739,1.5008,1151.1310,1.2963,994.2777,0.6426,492.9081
+deft,128,8192,2,768,3638.1849,105847.6053,138.0021,69.0010,3.1828,2441.1787,131.4083,100790.1731,1.4600,1119.8295,1.3422,1029.4463,0.5930,454.7961
+
+Done. Results: benchmarks/bs_kernel/results/paper-exp/exp4_70b_fp8_tp2_K128_slow

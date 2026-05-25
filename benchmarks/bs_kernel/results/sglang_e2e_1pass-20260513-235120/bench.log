@@ -1,0 +1,123 @@
+=== bench_sglang_e2e_1pass started 2026-05-13T23:51:20+08:00 ===
+scenarios: multi_level_system multi_few_shot multi_chain_reasoning multi_document
+methods:   bs_kernel fasttree paged mlca
+max_new:   256
+repeat:    1   (no warmup)
+models:    Llama-3.2-1B, Llama-3.1-8B
+GPU:       NVIDIA H100 80GB HBM3
+
+############ MODEL: Llama-3.2-1B ############
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.2-1B
+scenarios: ['multi_level_system', 'multi_few_shot', 'multi_chain_reasoning', 'multi_document']
+methods:   ['bs_kernel', 'fasttree', 'paged', 'mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 24125.00it/s]
+Model loaded.
+
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       B=4   K=32  L_shared~4096  L_priv~80    n_leaves=128
+  multi_few_shot           B=8   K=16  L_shared~6656  L_priv~80    n_leaves=128
+  multi_chain_reasoning    B=32  K=4   L_shared~4176  L_priv~0     n_leaves=128
+  multi_document           B=16  K=8   L_shared~4400  L_priv~80    n_leaves=128
+
+--- multi_level_system ---
+  bs_kernel    r=0  prefill=  940.9ms  decode= 1411.0ms  p50/step= 5.33ms  total= 2351.8ms  wall=  2.5s
+  fasttree     r=0  prefill=  132.7ms  decode= 2562.0ms  p50/step= 8.30ms  total= 2694.7ms  wall=  2.7s
+  paged        r=0  prefill=  131.6ms  decode= 1665.1ms  p50/step= 6.48ms  total= 1796.7ms  wall=  1.8s
+  mlca         r=0  prefill=  132.0ms  decode= 2391.3ms  p50/step= 9.52ms  total= 2523.4ms  wall=  2.5s
+  rank (decode_total): bs_kernel=1411.0, paged=1665.1, mlca=2391.3, fasttree=2562.0
+
+--- multi_few_shot ---
+  bs_kernel    r=0  prefill=  318.8ms  decode= 1393.6ms  p50/step= 4.72ms  total= 1712.4ms  wall=  1.8s
+  fasttree     r=0  prefill=  317.7ms  decode= 1790.6ms  p50/step= 7.01ms  total= 2108.2ms  wall=  2.1s
+  paged        r=0  prefill=  322.3ms  decode= 2198.9ms  p50/step= 8.56ms  total= 2521.2ms  wall=  3.1s
+  mlca         r=0  prefill=  320.9ms  decode= 3180.7ms  p50/step=12.59ms  total= 3501.6ms  wall=  3.5s
+  rank (decode_total): bs_kernel=1393.6, fasttree=1790.6, paged=2198.9, mlca=3180.7
+
+--- multi_chain_reasoning ---
+  bs_kernel    r=0  prefill=  543.4ms  decode= 1554.0ms  p50/step= 5.72ms  total= 2097.4ms  wall=  2.2s
+  fasttree     r=0  prefill=  545.2ms  decode= 1950.7ms  p50/step= 7.64ms  total= 2496.0ms  wall=  2.6s
+  paged        r=0  prefill=  548.4ms  decode= 1745.1ms  p50/step= 6.77ms  total= 2293.5ms  wall=  2.4s
+  mlca         r=0  prefill=  546.9ms  decode= 5593.2ms  p50/step=21.94ms  total= 6140.2ms  wall=  6.2s
+  rank (decode_total): bs_kernel=1554.0, paged=1745.1, fasttree=1950.7, mlca=5593.2
+
+--- multi_document ---
+  bs_kernel    r=0  prefill=  357.4ms  decode= 1335.7ms  p50/step= 4.88ms  total= 1693.1ms  wall=  1.7s
+  fasttree     r=0  prefill=  359.3ms  decode= 1830.2ms  p50/step= 7.17ms  total= 2189.5ms  wall=  2.2s
+  paged        r=0  prefill=  357.9ms  decode= 1763.5ms  p50/step= 6.96ms  total= 2121.4ms  wall=  2.2s
+  mlca         r=0  prefill=  359.8ms  decode= 3901.1ms  p50/step=15.46ms  total= 4261.0ms  wall=  4.3s
+  rank (decode_total): bs_kernel=1335.7, paged=1763.5, fasttree=1830.2, mlca=3901.1
+
+
+wrote 16 rows to benchmarks/bs_kernel/results/sglang_e2e_1pass-20260513-235120/Llama-3.2-1B.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system         rank (decode_total): bs_kernel=1411.0, paged=1665.1, mlca=2391.3, fasttree=2562.0
+multi_few_shot             rank (decode_total): bs_kernel=1393.6, fasttree=1790.6, paged=2198.9, mlca=3180.7
+multi_chain_reasoning      rank (decode_total): bs_kernel=1554.0, paged=1745.1, fasttree=1950.7, mlca=5593.2
+multi_document             rank (decode_total): bs_kernel=1335.7, paged=1763.5, fasttree=1830.2, mlca=3901.1
+[W513 23:52:26.362982685 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+############ MODEL: Llama-3.1-8B ############
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+model: meta-llama/Llama-3.1-8B
+scenarios: ['multi_level_system', 'multi_few_shot', 'multi_chain_reasoning', 'multi_document']
+methods:   ['bs_kernel', 'fasttree', 'paged', 'mlca']
+max_new:   256, repeat: 1
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 20156.11it/s]
+Model loaded.
+
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       B=4   K=32  L_shared~4096  L_priv~80    n_leaves=128
+  multi_few_shot           B=8   K=16  L_shared~6656  L_priv~80    n_leaves=128
+  multi_chain_reasoning    B=32  K=4   L_shared~4176  L_priv~0     n_leaves=128
+  multi_document           B=16  K=8   L_shared~4400  L_priv~80    n_leaves=128
+
+--- multi_level_system ---
+  bs_kernel    r=0  prefill= 1592.8ms  decode= 3201.4ms  p50/step=12.09ms  total= 4794.2ms  wall=  5.0s
+  fasttree     r=0  prefill=  685.7ms  decode= 6313.7ms  p50/step=23.10ms  total= 6999.4ms  wall=  7.1s
+  paged        r=0  prefill=  681.4ms  decode= 4512.1ms  p50/step=17.65ms  total= 5193.5ms  wall=  5.2s
+  mlca         r=0  prefill=  682.0ms  decode= 4929.7ms  p50/step=19.73ms  total= 5611.7ms  wall=  5.7s
+  rank (decode_total): bs_kernel=3201.4, paged=4512.1, mlca=4929.7, fasttree=6313.7
+
+--- multi_few_shot ---
+  bs_kernel    r=0  prefill= 1704.9ms  decode= 4153.2ms  p50/step=16.77ms  total= 5858.1ms  wall=  5.9s
+  fasttree     r=0  prefill= 1716.8ms  decode= 4032.2ms  p50/step=15.76ms  total= 5748.9ms  wall=  5.8s
+  paged        r=0  prefill= 1750.5ms  decode= 5939.6ms  p50/step=23.32ms  total= 7690.1ms  wall=  7.8s
+  mlca         r=0  prefill= 1703.6ms  decode= 6324.1ms  p50/step=25.18ms  total= 8027.8ms  wall=  8.1s
+  rank (decode_total): fasttree=4032.2, bs_kernel=4153.2, paged=5939.6, mlca=6324.1
+
+--- multi_chain_reasoning ---
+  bs_kernel    r=0  prefill= 3308.1ms  decode= 4447.1ms  p50/step=17.34ms  total= 7755.2ms  wall=  7.9s
+  fasttree     r=0  prefill= 3294.0ms  decode= 5065.9ms  p50/step=20.07ms  total= 8359.9ms  wall=  8.5s
+  paged        r=0  prefill= 3304.2ms  decode= 4742.7ms  p50/step=18.53ms  total= 8046.9ms  wall=  8.2s
+  mlca         r=0  prefill= 3303.8ms  decode= 9995.1ms  p50/step=39.31ms  total=13298.9ms  wall= 13.4s
+  rank (decode_total): bs_kernel=4447.1, paged=4742.7, fasttree=5065.9, mlca=9995.1
+
+--- multi_document ---
+  bs_kernel    r=0  prefill= 2059.9ms  decode= 4273.4ms  p50/step=14.63ms  total= 6333.3ms  wall=  6.4s
+  fasttree     r=0  prefill= 2065.8ms  decode= 4352.1ms  p50/step=16.82ms  total= 6417.8ms  wall=  6.5s
+  paged        r=0  prefill= 2063.6ms  decode= 4830.5ms  p50/step=19.01ms  total= 6894.1ms  wall=  7.0s
+  mlca         r=0  prefill= 2059.8ms  decode= 7348.3ms  p50/step=29.17ms  total= 9408.1ms  wall=  9.5s
+  rank (decode_total): bs_kernel=4273.4, fasttree=4352.1, paged=4830.5, mlca=7348.3
+
+
+wrote 16 rows to benchmarks/bs_kernel/results/sglang_e2e_1pass-20260513-235120/Llama-3.1-8B.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system         rank (decode_total): bs_kernel=3201.4, paged=4512.1, mlca=4929.7, fasttree=6313.7
+multi_few_shot             rank (decode_total): fasttree=4032.2, bs_kernel=4153.2, paged=5939.6, mlca=6324.1
+multi_chain_reasoning      rank (decode_total): bs_kernel=4447.1, paged=4742.7, fasttree=5065.9, mlca=9995.1
+multi_document             rank (decode_total): bs_kernel=4273.4, fasttree=4352.1, paged=4830.5, mlca=7348.3
+[W513 23:54:43.086316766 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+Done. Results: benchmarks/bs_kernel/results/sglang_e2e_1pass-20260513-235120

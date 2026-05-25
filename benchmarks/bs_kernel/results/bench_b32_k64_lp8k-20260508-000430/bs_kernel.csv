@@ -1,0 +1,2 @@
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
+bs_kernel,64,8192,32,16,2302.3736,3020.3364,201.3558,6.2924

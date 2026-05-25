@@ -1258,13 +1258,23 @@ totals for FastTree and bs_kernel are trace-mode-inflated by sync
 calls, but the cross-method comparison is internally consistent.
 Reproducer: `slurm/plan_breakdown_1b_fewshot.sbatch`.
 
-| method     | build_indices (ms) | dispatch (ms) | plan_total (ms) | dispatch % |
-|------------|-------------------:|--------------:|----------------:|-----------:|
-| deft       |             1,334  |             0 |          1,334  |       0.0% |
-| mlca       |             1,401  |             0 |          1,401  |       0.0% |
-| bs_kernel  |             2,119  |           105 |          2,225  |       4.7% |
-| fasttree   |             2,881  |         5,877 |          8,758  |      67.1% |
-| paged      |             6,471  |             0 |          6,471  |       0.0% |
+| method     | build_indices (ms) | dispatch (ms) | plan_total (ms) | dispatch % | plan % of decode |
+|------------|-------------------:|--------------:|----------------:|-----------:|-----------------:|
+| deft       |             1,334  |             0 |          1,334  |       0.0% |             5.6% |
+| mlca       |             1,401  |             0 |          1,401  |       0.0% |             7.1% |
+| bs_kernel  |             2,119  |           105 |          2,225  |       4.7% |            24.3% |
+| fasttree   |             2,881  |         5,877 |          8,758  |      67.1% |            48.0% |
+| paged      |             3,036  |             0 |          3,036  |       0.0% |            13.7% |
+
+The last column is plan_total as a fraction of the method's full decode
+time over the 255 steps (plan + forward) on this cell — i.e. how much of
+the decode loop is host-side planning. Decode totals (ms): deft 23,795,
+mlca 19,857, bs_kernel 9,162, fasttree 18,235, paged 22,154 (paged's
+decode is the post-fix re-run that matches its 3,036 plan; the other four
+are the same trace-mode run as their plan numbers). FastTree spends ~48%
+of its decode wall-clock planning; bs_kernel 24% (it has the fastest
+decode, so a fixed plan cost is a larger fraction); the index-only
+methods 6-14%.
 
 - **FastTree's index-building cost is comparable to bs_kernel's**
   (2.9 s vs 2.1 s — the radix-tree walk vs cascade-level
@@ -1276,7 +1286,11 @@ Reproducer: `slurm/plan_breakdown_1b_fewshot.sbatch`.
   ~1.5 s untraced harness overhead), while bs_kernel's 105 ms
   dispatch is four closed-form cost evaluations.
 - **paged / deft / mlca have zero dispatch** by construction:
-  paged's per-beam decode template is fixed; deft emits one
+  paged's per-beam decode template is fixed (and its index build now
+  uses the same LCA-prefix-skip as bs_kernel — the shared prefill
+  prefix is converted once per prompt, not once per beam — cutting
+  paged's build_indices to 3.0 s here, ~2.1× on this short-prefix
+  cell and up to ~8-9× on the long-prefix F1 cells); deft emits one
   flat-array metadata table per step regardless of tree shape;
   mlca's cascade structure is fixed at wrapper construction (only
   the per-level `kv_len` is patched per step via the SM90 plan-

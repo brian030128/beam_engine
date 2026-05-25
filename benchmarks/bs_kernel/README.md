@@ -51,6 +51,7 @@ top-K). Toggle via `bench_batched.py --methods dbs_<name>`.
 | `bench_modes.sbatch` / `bench_modes_single*.sbatch` | forced-strategy ablation (per-cell)                      |
 | `bench_dbs_single.sbatch`                   | DBS variants at the canonical cell                               |
 | `bench_fasttree_check.sbatch`               | fasttree only, used to track integration optimization wins      |
+| `bench_tree_kernel.sbatch`                  | tree-structure taxonomy: single-step kernel competition across families (paper) |
 | `dump_picks_*.sbatch`                       | picker decision histograms (depth / pool / tail-kernel)         |
 | `autotune_h100.sbatch`                      | re-fit cost-model coefficients on H100                          |
 
@@ -65,6 +66,14 @@ uv run python -m beam_engine.methods.bs_kernel.autotune --save
 
 # correctness — bs_kernel beams must match tree.py
 uv run python tests/test_bs_kernel.py
+
+# tree-structure taxonomy — single-step kernel competition (paper figure).
+# Families span prefix-len / K / B / tail-len / depth / cross-prompt sys;
+# competes paged, mlca, fasttree, picker-dispatched bs_kernel, and the
+# forced 2l1p / 2dt / 3dt variants. Reports per-shape oracle + picker regret.
+uv run python benchmarks/bs_kernel/bench_tree_kernel.py            # all families
+uv run python benchmarks/bs_kernel/bench_tree_kernel.py --family cross_prompt_sys wide_fanout
+uv run python benchmarks/bs_kernel/bench_tree_kernel.py --kernels paged bs_kernel bs_2dt bs_3dt
 
 # cross-method bench (foreground)
 uv run python benchmarks/bs_kernel/bench_batched.py \

@@ -1,0 +1,5 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+usage: oracle_vs_model.py [-h] [--full] [--out OUT]
+oracle_vs_model.py: error: unrecognized arguments: --quick

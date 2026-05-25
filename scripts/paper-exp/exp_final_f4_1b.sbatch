@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:H100:1
-#SBATCH --time=01:30:00
+#SBATCH --time=05:00:00
 #SBATCH --output=slurm/logs/f4_1b_%j.out
 #SBATCH --error=slurm/logs/f4_1b_%j.err
 
@@ -27,6 +27,11 @@ export BS_KERNEL_TRACE_PLAN=1
 export BE_MODEL="meta-llama/Llama-3.2-1B-Instruct"
 export BE_DTYPE=bf16
 export BE_KV_DTYPE=bf16
+
+# Data draws for F4. Long-decode (mn=12k) timing is content-independent, so
+# draws serve the example-count statistic + a small variance estimate, not the
+# median. deft on F4 is very slow (~8 min/run at 1B), so keep this modest.
+export F4_SEEDS="${F4_SEEDS:-0,1,2}"
 
 MODEL_TAG="Llama-3.2-1B-bf16"
 NPROC=1

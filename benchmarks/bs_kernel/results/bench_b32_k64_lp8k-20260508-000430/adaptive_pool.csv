@@ -1,0 +1,2 @@
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
+adaptive_pool,64,8192,32,16,2289.6996,2950.8915,196.7261,6.1477

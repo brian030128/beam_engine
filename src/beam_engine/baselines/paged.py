@@ -194,6 +194,7 @@ class PagedBackend:
         import os as _os
         import time as _time
         trace_on = bool(int(_os.environ.get("PAGED_TRACE_PLAN", "0")))
+        _verify_lca = bool(int(_os.environ.get("PAGED_VERIFY_LCA", "0")))
         if trace_on:
             torch.cuda.synchronize()
             _t0 = _time.perf_counter()
@@ -235,10 +236,38 @@ class PagedBackend:
         indices_np = np.empty(total, dtype=np.int32)
         row = 0
         for b in range(B):
-            for beam in beams_per_prompt[b]:
+            beams = beams_per_prompt[b]
+            # LCA-prefix-skip for the index build: all K beams of a prompt
+            # share identical prefix pages — the prefill prefix (length
+            # ``last_lca_per_prompt[b]``) is refcounted and never rewritten
+            # during decode (CoW only touches the active tail page). So
+            # convert that prefix Python-list→numpy ONCE per prompt and
+            # memcpy it into every beam's slot (numpy→numpy), instead of
+            # re-converting it K times. On long-prefix cells this prefix is
+            # the bulk of the index array (e.g. ~5000 of ~5016 pages/beam at
+            # L_p=80K), so this removes ~K× of the per-step build cost. The
+            # emitted indices are bit-identical to the per-beam build.
+            lca = last_lca_per_prompt[b]
+            prefix_arr = (
+                np.asarray(beams[0].pages[:lca], dtype=np.int32)
+                if lca else None
+            )
+            for beam in beams:
                 start = indptr_np[row]
                 end = indptr_np[row + 1]
-                indices_np[start:end] = beam.pages
+                if prefix_arr is not None:
+                    indices_np[start:start + lca] = prefix_arr
+                    if end > start + lca:
+                        indices_np[start + lca:end] = beam.pages[lca:]
+                else:
+                    indices_np[start:end] = beam.pages
+                if _verify_lca:
+                    # Prove the dedup matches the naive per-beam build
+                    # (the shared-prefix invariant holds). Raises if not.
+                    assert indices_np[start:end].tolist() == list(beam.pages), (
+                        f"LCA dedup mismatch at prompt {b} (lca={lca}): "
+                        f"prefix not shared across beams"
+                    )
                 row += 1
         if trace_on:
             _t_pass2 = _time.perf_counter()

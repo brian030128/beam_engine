@@ -82,6 +82,40 @@ def _bs_kernel_force_2l1p(
     )
 
 
+def _bs_kernel_force_2l1p_single(
+    model, config, prompts, max_new_tokens, beam_width,
+    *, return_timings: bool = False, max_num_pages: int = 2048,
+    return_phase_timings: bool = False,
+    dtype: torch.dtype = torch.float16,
+    kv_dtype: torch.dtype | None = None,
+):
+    """bs_kernel pinned to SHARED_2L_1POOL but with the FusedMultiLevelCascade
+    wrapper configured for ``single_launch=True`` — every (req, qo_tile) goes
+    into ONE pool whose CTA_TILE_Q is derived from the prefix-level packed_qo
+    (typically T=128 for K≥8). Drops the per-step cascade dispatch from two
+    ``fused_paged_run`` launches (small-Q + large-Q pools) to one."""
+    import flashinfer
+    _orig_init = flashinfer.FusedMultiLevelCascadeAttentionWrapper.__init__
+
+    def _patched_init(self, *a, **kw):
+        kw.setdefault("single_launch", True)
+        return _orig_init(self, *a, **kw)
+
+    flashinfer.FusedMultiLevelCascadeAttentionWrapper.__init__ = _patched_init
+    try:
+        return bs_kernel.beam_search(
+            model, config, prompts, max_new_tokens, beam_width,
+            return_timings=return_timings,
+            return_phase_timings=return_phase_timings,
+            max_num_pages=max_num_pages,
+            dtype=dtype,
+            kv_dtype=kv_dtype,
+            available_strategies={Strategy.SHARED_2L_1POOL},
+        )
+    finally:
+        flashinfer.FusedMultiLevelCascadeAttentionWrapper.__init__ = _orig_init
+
+
 def _bs_kernel_force_2l_dec_tail(
     model, config, prompts, max_new_tokens, beam_width,
     *, return_timings: bool = False, max_num_pages: int = 2048,
@@ -157,8 +191,11 @@ def _bs_kernel_force_4l1p(
     """bs_kernel pinned to SHARED_4L_1POOL. Requires
     ``max_cascade_levels=4`` (wrapper allocation) and
     ``max_dispatch_depth=4`` in the coefficients (picker enumeration).
-    Workloads without a depth-4 intermediate structure fall back to
-    SHARED_3L_1POOL / SHARED_2L_1POOL via the picker's auto-fallback."""
+    Hard-forced to the 4L family only: when a step's beam tree supports
+    fewer than 4 qualifying levels the cost model auto-falls-back to the
+    deepest supported 1POOL depth (so the strategy-mix trace reports the
+    real per-step depth instead of letting a cheaper shallow variant win
+    the cost comparison)."""
     from beam_engine.methods.bs_kernel.calibrate import load_or_defaults
     from dataclasses import replace
     coeffs = replace(load_or_defaults("cuda"), max_dispatch_depth=4)
@@ -171,11 +208,7 @@ def _bs_kernel_force_4l1p(
         coefficients=coeffs,
         dtype=dtype,
         kv_dtype=kv_dtype,
-        available_strategies={
-            Strategy.SHARED_4L_1POOL,
-            Strategy.SHARED_3L_1POOL,
-            Strategy.SHARED_2L_1POOL,
-        },
+        available_strategies={Strategy.SHARED_4L_1POOL},
     )
 
 
@@ -186,7 +219,9 @@ def _bs_kernel_force_4l_dec_tail(
     dtype: torch.dtype = torch.float16,
     kv_dtype: torch.dtype | None = None,
 ):
-    """bs_kernel pinned to SHARED_4L_DEC_TAIL with shallower fallbacks."""
+    """bs_kernel hard-forced to SHARED_4L_DEC_TAIL. Auto-falls-back to the
+    deepest supported DEC_TAIL depth only when the beam tree lacks 4
+    qualifying levels (see ``_bs_kernel_force_4l1p``)."""
     from beam_engine.methods.bs_kernel.calibrate import load_or_defaults
     from dataclasses import replace
     coeffs = replace(load_or_defaults("cuda"), max_dispatch_depth=4)
@@ -199,11 +234,59 @@ def _bs_kernel_force_4l_dec_tail(
         coefficients=coeffs,
         dtype=dtype,
         kv_dtype=kv_dtype,
-        available_strategies={
-            Strategy.SHARED_4L_DEC_TAIL,
-            Strategy.SHARED_3L_DEC_TAIL,
-            Strategy.SHARED_2L_DEC_TAIL,
-        },
+        available_strategies={Strategy.SHARED_4L_DEC_TAIL},
+    )
+
+
+def _bs_kernel_force_5l1p(
+    model, config, prompts, max_new_tokens, beam_width,
+    *, return_timings: bool = False, max_num_pages: int = 2048,
+    return_phase_timings: bool = False,
+    dtype: torch.dtype = torch.float16,
+    kv_dtype: torch.dtype | None = None,
+):
+    """bs_kernel hard-forced to SHARED_5L_1POOL (max_cascade_levels=5,
+    max_dispatch_depth=5). Auto-falls-back to the deepest supported 1POOL
+    depth when the beam tree has fewer than 5 qualifying levels."""
+    from beam_engine.methods.bs_kernel.calibrate import load_or_defaults
+    from dataclasses import replace
+    coeffs = replace(load_or_defaults("cuda"), max_dispatch_depth=5)
+    return bs_kernel.beam_search(
+        model, config, prompts, max_new_tokens, beam_width,
+        return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
+        max_num_pages=max_num_pages,
+        max_cascade_levels=5,
+        coefficients=coeffs,
+        dtype=dtype,
+        kv_dtype=kv_dtype,
+        available_strategies={Strategy.SHARED_5L_1POOL},
+    )
+
+
+def _bs_kernel_force_5l_dec_tail(
+    model, config, prompts, max_new_tokens, beam_width,
+    *, return_timings: bool = False, max_num_pages: int = 2048,
+    return_phase_timings: bool = False,
+    dtype: torch.dtype = torch.float16,
+    kv_dtype: torch.dtype | None = None,
+):
+    """bs_kernel hard-forced to SHARED_5L_DEC_TAIL (max_cascade_levels=5,
+    max_dispatch_depth=5). Auto-falls-back to the deepest supported
+    DEC_TAIL depth when the beam tree has fewer than 5 qualifying levels."""
+    from beam_engine.methods.bs_kernel.calibrate import load_or_defaults
+    from dataclasses import replace
+    coeffs = replace(load_or_defaults("cuda"), max_dispatch_depth=5)
+    return bs_kernel.beam_search(
+        model, config, prompts, max_new_tokens, beam_width,
+        return_timings=return_timings,
+        return_phase_timings=return_phase_timings,
+        max_num_pages=max_num_pages,
+        max_cascade_levels=5,
+        coefficients=coeffs,
+        dtype=dtype,
+        kv_dtype=kv_dtype,
+        available_strategies={Strategy.SHARED_5L_DEC_TAIL},
     )
 
 
@@ -216,11 +299,14 @@ METHODS: dict[str, Callable] = {
     "adaptive_pool":    adaptive_pool.beam_search,
     "bs_kernel":        bs_kernel.beam_search,
     "bs_kernel_2l1p":   _bs_kernel_force_2l1p,
+    "bs_kernel_2l1p_single": _bs_kernel_force_2l1p_single,
     "bs_kernel_2ldt":   _bs_kernel_force_2l_dec_tail,
     "bs_kernel_3l1p":   _bs_kernel_force_3l1p,
     "bs_kernel_3ldt":   _bs_kernel_force_3l_dec_tail,
     "bs_kernel_4l1p":   _bs_kernel_force_4l1p,
     "bs_kernel_4ldt":   _bs_kernel_force_4l_dec_tail,
+    "bs_kernel_5l1p":   _bs_kernel_force_5l1p,
+    "bs_kernel_5ldt":   _bs_kernel_force_5l_dec_tail,
     # DBS variants — same kernel, diversity-penalized top-K
     # (num_groups=4, λ=0.5 default).
     "dbs_paged":         dbs.dbs_paged,
@@ -239,6 +325,7 @@ class Row:
     L_p: int
     B: int
     max_new: int
+    data_seed: int
     prefill_ms: float
     decode_total_ms: float
     decode_per_token_ms: float
@@ -254,6 +341,9 @@ class Row:
     topk_total_ms: float = 0.0
     fork_mean_ms: float = 0.0
     fork_total_ms: float = 0.0
+    # Dispatch-decision sub-total of plan time (build_indices = plan_total -
+    # dispatch_total). Populated only under FT_TRACE_PLAN / BS_KERNEL_TRACE_PLAN.
+    dispatch_total_ms: float = 0.0
 
 
 def _phase_mean_total(xs):
@@ -347,6 +437,8 @@ def run_one(
     K: int,
     max_new: int,
     max_pages_override: int | None = None,
+    measure_start: int = 0,
+    measure_end: int | None = None,
 ) -> Row | None:
     B = len(prompts)
     L_p = len(prompts[0])
@@ -388,22 +480,38 @@ def run_one(
         torch.cuda.empty_cache()
         return None
 
-    decode_steps = timings["decode_step_ms"]
+    # Measurement window: restrict all per-step aggregates to decode steps
+    # [measure_start, measure_end). Used by the dispatch-space depth
+    # ablation to time forward over the deep-decode tail (e.g. steps
+    # 1500-2000), where the beam tree has accumulated long, stable shared
+    # runs that deeper cascade levels can exploit. Default (0, None) = all.
+    def _win(xs: list) -> list:
+        return xs[measure_start:measure_end]
+
+    decode_steps = _win(timings["decode_step_ms"])
     decode_total = sum(decode_steps)
     n_steps = len(decode_steps)
     # All methods are batched now: n_steps == max_new - 1 regardless of B.
-    # Per-(prompt,token) latency normalizes by total tokens decoded
-    # (B * (max_new - 1)).
-    total_tokens = B * (max_new - 1)
+    # Per-(prompt,token) latency normalizes by total tokens decoded over the
+    # measured window (B * n_steps).
+    total_tokens = B * n_steps
     per_token = decode_total / max(1, total_tokens)
-    plan_mean, plan_total = _phase_mean_total(timings.get("plan_ms", []))
-    fwd_mean,  fwd_total  = _phase_mean_total(timings.get("forward_ms", []))
-    cow_mean,  cow_total  = _phase_mean_total(timings.get("cow_ms", []))
-    topk_mean, topk_total = _phase_mean_total(timings.get("topk_ms", []))
-    fork_mean, fork_total = _phase_mean_total(timings.get("fork_ms", []))
+    plan_mean, plan_total = _phase_mean_total(_win(timings.get("plan_ms", [])))
+    fwd_mean,  fwd_total  = _phase_mean_total(_win(timings.get("forward_ms", [])))
+    cow_mean,  cow_total  = _phase_mean_total(_win(timings.get("cow_ms", [])))
+    topk_mean, topk_total = _phase_mean_total(_win(timings.get("topk_ms", [])))
+    fork_mean, fork_total = _phase_mean_total(_win(timings.get("fork_ms", [])))
+    # Dispatch-decision total across decode steps (same convention as
+    # bench_sglang_e2e): fasttree logs per-step 'dispatch_ms', bs_kernel
+    # logs 'pick_ms', into the backend plan trace. paged/mlca/deft have no
+    # dispatch decision → 0. Requires the per-method TRACE_PLAN flag.
+    dispatch_total = 0.0
+    for e in _win(timings.get("plan_trace", [])):
+        dispatch_total += float(e.get("dispatch_ms", 0.0)) + float(e.get("pick_ms", 0.0))
     return Row(
         method=method_name,
         K=K, L_p=L_p, B=B, max_new=max_new,
+        data_seed=0,  # overwritten by the caller with the active draw seed
         prefill_ms=timings["prefill_ms"],
         decode_total_ms=decode_total,
         decode_per_token_ms=decode_total / max(1, n_steps),
@@ -413,6 +521,7 @@ def run_one(
         cow_mean_ms=cow_mean, cow_total_ms=cow_total,
         topk_mean_ms=topk_mean, topk_total_ms=topk_total,
         fork_mean_ms=fork_mean, fork_total_ms=fork_total,
+        dispatch_total_ms=dispatch_total,
     )
 
 
@@ -441,6 +550,20 @@ def main():
                          "First B records are taken (skipping any with "
                          "token_len < L_p) and truncated to L_p tokens. "
                          "Overrides --distinct.")
+    ap.add_argument("--data-seed", type=int, default=0,
+                    help="data-draw index for --prompts-file: take the "
+                         "window usable[data_seed*B : data_seed*B+B] instead "
+                         "of the first B prompts, so distinct draws use "
+                         "distinct HotpotQA prompts. L_p truncation already "
+                         "fixes the shape, so every draw feeds the model the "
+                         "same shape. data_seed=0 = original first-B behaviour.")
+    ap.add_argument("--measure_start", type=int, default=0,
+                    help="first decode-step index to include in the timing "
+                         "aggregates (default 0). Use with --measure_end to "
+                         "time the deep-decode tail only (dispatch ablation).")
+    ap.add_argument("--measure_end", type=int, default=None,
+                    help="one-past-last decode-step index for the timing "
+                         "window (default: all steps).")
     args = ap.parse_args()
 
     methods = {k: METHODS[k] for k in args.methods if k in METHODS}
@@ -493,11 +616,18 @@ def main():
     for (K, L_p, B) in grid:
         if file_prompts_raw is not None:
             usable = [ids for ids in file_prompts_raw if len(ids) >= L_p]
+            need = B if args.data_seed == 0 else args.data_seed * B + B
             if len(usable) < B:
                 _say(f"  WARNING: only {len(usable)} prompts ≥ {L_p} tokens; "
                      f"need {B}. Skipping (K={K}, L_p={L_p}, B={B}).")
                 continue
-            prompts = [usable[i][:L_p] for i in range(B)]
+            if len(usable) < need:
+                _say(f"  NOTE: only {len(usable)} prompts ≥ {L_p}; data_seed="
+                     f"{args.data_seed} window wraps (draws may overlap).")
+            # Take a per-seed window so distinct draws use distinct prompts;
+            # wrap if the file is short. data_seed=0 -> first B (original).
+            off = args.data_seed * B
+            prompts = [usable[(off + i) % len(usable)][:L_p] for i in range(B)]
         elif args.distinct:
             prompts = _make_distinct_prompts(tok, L_p, B)
         else:
@@ -510,7 +640,9 @@ def main():
                 _say(f"  {name:<14} {tag}K={K:<3d} L_p={L_p:<6d} B={B:<2d}", end=" ", flush=True)
                 t0 = time.perf_counter()
                 row = run_one(name, fn, model, config, prompts, K, args.max_new,
-                              max_pages_override=args.max_pages)
+                              max_pages_override=args.max_pages,
+                              measure_start=args.measure_start,
+                              measure_end=args.measure_end)
                 t1 = time.perf_counter()
                 if row is None:
                     torch.cuda.empty_cache()
@@ -522,6 +654,7 @@ def main():
                         f"({t1 - t0:5.1f}s wall)"
                     )
                 else:
+                    row.data_seed = args.data_seed
                     rows.append(row)
                     _say(
                         f"prefill={row.prefill_ms:7.1f}ms  "
@@ -548,7 +681,7 @@ def main():
     with out.open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow([
-            "method", "K", "L_p", "B", "max_new",
+            "method", "K", "L_p", "B", "max_new", "data_seed",
             "prefill_ms", "decode_total_ms",
             "decode_per_token_ms", "decode_per_prompt_per_token_ms",
             "plan_mean_ms", "plan_total_ms",
@@ -556,10 +689,11 @@ def main():
             "cow_mean_ms", "cow_total_ms",
             "topk_mean_ms", "topk_total_ms",
             "fork_mean_ms", "fork_total_ms",
+            "dispatch_total_ms",
         ])
         for r in rows:
             w.writerow([
-                r.method, r.K, r.L_p, r.B, r.max_new,
+                r.method, r.K, r.L_p, r.B, r.max_new, r.data_seed,
                 f"{r.prefill_ms:.4f}",
                 f"{r.decode_total_ms:.4f}",
                 f"{r.decode_per_token_ms:.4f}",
@@ -569,6 +703,7 @@ def main():
                 f"{r.cow_mean_ms:.4f}",     f"{r.cow_total_ms:.4f}",
                 f"{r.topk_mean_ms:.4f}",    f"{r.topk_total_ms:.4f}",
                 f"{r.fork_mean_ms:.4f}",    f"{r.fork_total_ms:.4f}",
+                f"{r.dispatch_total_ms:.4f}",
             ])
     print(f"\nwrote {len(rows)} rows to {out}")
     destroy_tp()

@@ -1,0 +1,131 @@
+=== mlca 70B-fp8 backfill started 2026-05-23T18:19:21+08:00 ===
+=== F1: mlca multi_doc_qa K=128 B=1 ===
+W0523 18:19:22.624000 573893 torch/distributed/run.py:803] 
+W0523 18:19:22.624000 573893 torch/distributed/run.py:803] *****************************************
+W0523 18:19:22.624000 573893 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 18:19:22.624000 573893 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_doc_qa']
+methods:   ['mlca']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:01, 11.15it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  5.36it/s]Fetching 21 files:  10%|▉         | 2/21 [00:19<00:01, 11.15it/s]Fetching 21 files:  14%|█▍        | 3/21 [00:39<04:51, 16.21s/it]Fetching 21 files:  14%|█▍        | 3/21 [00:38<04:51, 16.17s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:59<05:03, 17.85s/it]Fetching 21 files:  19%|█▉        | 4/21 [00:59<05:03, 17.83s/it]Fetching 21 files:  57%|█████▋    | 12/21 [01:09<00:39,  4.43s/it]Fetching 21 files: 100%|██████████| 21/21 [01:09<00:00,  3.33s/it]
+Fetching 21 files:  57%|█████▋    | 12/21 [01:09<00:39,  4.42s/it]Fetching 21 files: 100%|██████████| 21/21 [01:09<00:00,  3.32s/it]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_doc_qa             [K=128   ] B=1   K=128 L_shared~80132 L_priv~51    n_leaves=128
+
+--- multi_doc_qa [K=128] ---
+  mlca         warmup  wall= 70.6s  decode_total=31396.6ms
+  mlca         r=0  prefill=36504.0ms  decode=31354.3ms  plan/step= 1.44ms  fwd/step=121.37ms  p50/step=122.75ms  wall= 68.5s
+  mlca         r=1  prefill=36448.1ms  decode=31343.5ms  plan/step= 1.44ms  fwd/step=121.33ms  p50/step=122.69ms  wall= 68.6s
+  mlca         r=2  prefill=36539.9ms  decode=31384.7ms  plan/step= 1.44ms  fwd/step=121.49ms  p50/step=122.87ms  wall= 68.6s
+  rank (decode_total): mlca=31343.5
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/_mlca_F1.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_doc_qa             [K=128   ]   rank (decode_total): mlca=31343.5
+[W523 18:25:58.605662604 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 18:25:58.606622768 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 18:25:59.607454873 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: +3 'mlca' rows into benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F1_multi_doc_qa_K128_B1_mn256.csv
+=== F2: mlca multi_few_shot K=128 B=4 ===
+W0523 18:26:01.317000 622941 torch/distributed/run.py:803] 
+W0523 18:26:01.317000 622941 torch/distributed/run.py:803] *****************************************
+W0523 18:26:01.317000 622941 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 18:26:01.317000 622941 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['multi_few_shot']
+methods:   ['mlca']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 129150.12it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 221864.95it/s]
+Model loaded.
+
+k_overrides: [128]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=128   ] B=4   K=128 L_shared~6656  L_priv~80    n_leaves=512
+
+--- multi_few_shot [K=128] ---
+  mlca         warmup  wall= 40.9s  decode_total=28199.9ms
+  mlca         r=0  prefill= 9947.9ms  decode=28139.4ms  plan/step= 3.71ms  fwd/step=106.40ms  p50/step=109.29ms  wall= 38.8s
+  mlca         r=1  prefill= 9918.3ms  decode=28118.2ms  plan/step= 3.70ms  fwd/step=106.32ms  p50/step=109.18ms  wall= 38.8s
+  mlca         r=2  prefill= 9859.7ms  decode=28134.5ms  plan/step= 3.72ms  fwd/step=106.36ms  p50/step=109.23ms  wall= 38.7s
+  rank (decode_total): mlca=28118.2
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/_mlca_F2.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=128   ]   rank (decode_total): mlca=28118.2
+[W523 18:29:25.398299531 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 18:29:25.436179273 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 18:29:26.399509512 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: +3 'mlca' rows into benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F2_multi_few_shot_K128_B4_mn256.csv
+=== F4: mlca self_consistency K=16 B=1 ===
+W0523 18:29:28.002000 646443 torch/distributed/run.py:803] 
+W0523 18:29:28.002000 646443 torch/distributed/run.py:803] *****************************************
+W0523 18:29:28.002000 646443 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 18:29:28.002000 646443 torch/distributed/run.py:803] *****************************************
+model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
+scenarios: ['self_consistency']
+methods:   ['mlca']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 217482.43it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 207247.96it/s]
+Model loaded.
+
+k_overrides: [16]
+Building TreeSpecs (this tokenizes the inputs)...
+  self_consistency         [K=16    ] B=1   K=16  L_shared~16384 L_priv~11    n_leaves=16
+
+--- self_consistency [K=16] ---
+  mlca         warmup  wall= 19.6s  decode_total=14471.3ms
+  mlca         r=0  prefill= 2751.9ms  decode=14226.6ms  plan/step= 0.65ms  fwd/step=55.02ms  p50/step=55.90ms  wall= 17.2s
+  mlca         r=1  prefill= 2759.8ms  decode=14281.9ms  plan/step= 0.66ms  fwd/step=55.23ms  p50/step=55.93ms  wall= 17.3s
+  mlca         r=2  prefill= 2771.4ms  decode=14168.0ms  plan/step= 0.64ms  fwd/step=54.80ms  p50/step=55.69ms  wall= 17.1s
+  rank (decode_total): mlca=14168.0
+
+
+wrote 3 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/_mlca_F4.csv
+
+=== summary (best decode_total per method, ms) ===
+self_consistency         [K=16    ]   rank (decode_total): mlca=14168.0
+[W523 18:31:27.264392015 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 18:31:27.268708986 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 18:31:28.270577256 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: +3 'mlca' rows into benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F4_self_consistency_K16_B1_Lp16384_mn256.csv
+=== F3: mlca beam_search K=64 B=4 L_p=16000 ===
+W0523 18:31:29.910000 662544 torch/distributed/run.py:803] 
+W0523 18:31:29.910000 662544 torch/distributed/run.py:803] *****************************************
+W0523 18:31:29.910000 662544 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0523 18:31:29.910000 662544 torch/distributed/run.py:803] *****************************************
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 256
+tp_size: 2, device: cuda:0
+Loading tokenizer + model...
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 225847.14it/s]
+Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files: 100%|██████████| 21/21 [00:00<00:00, 221864.95it/s]
+Model loaded.
+
+loaded 30 prompts from data/hotpotqa.jsonl
+loaded 30 prompts from data/hotpotqa.jsonl
+  mlca           warmup K=64  L_p=16000  B=4    [mlca] FAILED: RuntimeError: Error in function 'aligned_alloc' at /home/u4320956/beam_engine-v3/3rdparty/flashinfer/include/flashinfer/allocator.h:49: Buffer overflow when allocating memory for batch_prefill_tmp_s with size 1048576 and alignment 16, but only 0 bytes available in AlignedAllocator. Increase the workspace buffer size.
+  [mlca] FAILED: RuntimeError: Error in function 'aligned_alloc' at /home/u4320956/beam_engine-v3/3rdparty/flashinfer/include/flashinfer/allocator.h:49: Buffer overflow when allocating memory for batch_prefill_tmp_s with size 1048576 and alignment 16, but only 0 bytes available in AlignedAllocator. Increase the workspace buffer size.
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/_mlca_F3.csv
+[W523 18:32:30.147349045 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 18:32:30.161222492 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 18:32:31.173308842 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  merge: no 'mlca' rows in benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/_mlca_F3.csv (left as-is)
+=== mlca backfill done 2026-05-23T18:32:31+08:00 ===

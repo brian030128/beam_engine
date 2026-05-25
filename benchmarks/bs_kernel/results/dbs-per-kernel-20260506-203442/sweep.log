@@ -1,0 +1,168 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['paged']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 134120.19it/s]
+Model loaded.
+
+  paged          K=16  L_p=8192  max_new=16   prefill=1173.4ms  decode= 13.07ms p50  (  1.5s wall)
+  paged          K=32  L_p=8192  max_new=16   prefill= 235.7ms  decode= 17.43ms p50  (  0.5s wall)
+  paged          K=64  L_p=8192  max_new=16   prefill= 232.4ms  decode= 27.94ms p50  (  0.7s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-paged.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['tree']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 101848.44it/s]
+Model loaded.
+
+  tree           K=16  L_p=8192  max_new=16   prefill=1112.6ms  decode= 15.87ms p50  (  1.6s wall)
+  tree           K=32  L_p=8192  max_new=16   prefill= 228.7ms  decode= 22.91ms p50  (  0.6s wall)
+  tree           K=64  L_p=8192  max_new=16   prefill= 229.3ms  decode= 37.17ms p50  (  0.8s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-tree.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['fasttree']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 109330.20it/s]
+Model loaded.
+
+  fasttree       K=16  L_p=8192  max_new=16   prefill=1120.2ms  decode= 16.63ms p50  (  2.0s wall)
+  fasttree       K=32  L_p=8192  max_new=16   prefill= 229.2ms  decode= 24.17ms p50  (  0.6s wall)
+  fasttree       K=64  L_p=8192  max_new=16   prefill= 228.3ms  decode= 33.73ms p50  (  0.8s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-fasttree.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['mlca']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 37267.64it/s]
+Model loaded.
+
+  mlca           K=16  L_p=8192  max_new=16   prefill=1136.9ms  decode= 13.18ms p50  (  1.5s wall)
+  mlca           K=32  L_p=8192  max_new=16   prefill= 233.7ms  decode= 14.72ms p50  (  0.5s wall)
+  mlca           K=64  L_p=8192  max_new=16   prefill= 232.3ms  decode= 19.93ms p50  (  0.5s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-mlca.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['adaptive_pool']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 42522.90it/s]
+Model loaded.
+
+  adaptive_pool  K=16  L_p=8192  max_new=16   prefill=1121.6ms  decode= 12.33ms p50  (  1.5s wall)
+  adaptive_pool  K=32  L_p=8192  max_new=16   prefill= 232.9ms  decode= 13.78ms p50  (  0.5s wall)
+  adaptive_pool  K=64  L_p=8192  max_new=16   prefill= 234.6ms  decode= 19.65ms p50  (  0.5s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-adaptive_pool.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['bs_kernel']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 60152.99it/s]
+Model loaded.
+
+  bs_kernel      K=16  L_p=8192  max_new=16   prefill=1132.3ms  decode= 11.91ms p50  (  1.5s wall)
+  bs_kernel      K=32  L_p=8192  max_new=16   prefill= 235.6ms  decode= 14.05ms p50  (  0.5s wall)
+  bs_kernel      K=64  L_p=8192  max_new=16   prefill= 233.4ms  decode= 19.98ms p50  (  0.5s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-bs_kernel.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['dbs_paged']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 26439.74it/s]
+Model loaded.
+
+  dbs_paged      K=16  L_p=8192  max_new=16   prefill=1142.0ms  decode= 13.60ms p50  (  1.5s wall)
+  dbs_paged      K=32  L_p=8192  max_new=16   prefill= 232.3ms  decode= 19.48ms p50  (  0.5s wall)
+  dbs_paged      K=64  L_p=8192  max_new=16   prefill= 235.8ms  decode= 29.34ms p50  (  0.7s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-dbs_paged.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['dbs_tree']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 34926.07it/s]
+Model loaded.
+
+  dbs_tree       K=16  L_p=8192  max_new=16   prefill=1128.8ms  decode= 16.60ms p50  (  1.6s wall)
+  dbs_tree       K=32  L_p=8192  max_new=16   prefill= 230.6ms  decode= 24.24ms p50  (  0.6s wall)
+  dbs_tree       K=64  L_p=8192  max_new=16   prefill= 233.4ms  decode= 38.75ms p50  (  0.8s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-dbs_tree.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['dbs_fasttree']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 19624.56it/s]
+Model loaded.
+
+  dbs_fasttree   K=16  L_p=8192  max_new=16   prefill=1132.3ms  decode= 17.36ms p50  (  1.9s wall)
+  dbs_fasttree   K=32  L_p=8192  max_new=16   prefill= 230.4ms  decode= 25.57ms p50  (  0.6s wall)
+  dbs_fasttree   K=64  L_p=8192  max_new=16   prefill= 227.1ms  decode= 35.75ms p50  (  0.8s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-dbs_fasttree.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['dbs_mlca']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 23818.97it/s]
+Model loaded.
+
+  dbs_mlca       K=16  L_p=8192  max_new=16   prefill=1138.1ms  decode= 13.72ms p50  (  1.5s wall)
+  dbs_mlca       K=32  L_p=8192  max_new=16   prefill= 233.8ms  decode= 17.01ms p50  (  0.5s wall)
+  dbs_mlca       K=64  L_p=8192  max_new=16   prefill= 235.8ms  decode= 21.01ms p50  (  0.6s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-dbs_mlca.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['dbs_adaptive_pool']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 43856.79it/s]
+Model loaded.
+
+  dbs_adaptive_pool K=16  L_p=8192  max_new=16   prefill=1133.8ms  decode= 12.74ms p50  (  1.5s wall)
+  dbs_adaptive_pool K=32  L_p=8192  max_new=16   prefill= 234.1ms  decode= 15.97ms p50  (  0.5s wall)
+  dbs_adaptive_pool K=64  L_p=8192  max_new=16   prefill= 235.1ms  decode= 21.62ms p50  (  0.6s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-dbs_adaptive_pool.csv
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 3 configs × 1 methods = 3 runs
+methods: ['dbs_bs_kernel']
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 29405.57it/s]
+Model loaded.
+
+  dbs_bs_kernel  K=16  L_p=8192  max_new=16   prefill=1156.2ms  decode= 12.43ms p50  (  1.5s wall)
+  dbs_bs_kernel  K=32  L_p=8192  max_new=16   prefill= 234.0ms  decode= 16.20ms p50  (  0.5s wall)
+  dbs_bs_kernel  K=64  L_p=8192  max_new=16   prefill= 236.1ms  decode= 20.98ms p50  (  0.6s wall)
+
+wrote 3 rows to benchmarks/bs_kernel/results/dbs-per-kernel-20260506-203442/sweep-dbs_bs_kernel.csv

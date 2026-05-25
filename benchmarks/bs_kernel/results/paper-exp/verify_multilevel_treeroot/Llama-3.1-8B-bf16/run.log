@@ -1,0 +1,910 @@
+=== verify multi-level (TreeSpec.root) | Llama-3.1-8B-bf16 | 2026-05-23T12:33:59+08:00 ===
+model:    meta-llama/Llama-3.1-8B-Instruct  (tp=1, dtype=bf16, kv=bf16)
+purpose:  kernels see full TreeNode tree via --tree-root and decide themselves
+git head: ba0d1dd
+branch:   cost-model/cta-granularity
+
+==========================================================
+=== B3: multi_doc_qa  (K=64, B=1, mn=256, R=64) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_doc_qa']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 2657.53it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_doc_qa             [K=64    ] B=1   K=64  L_shared~86627 L_priv~39    n_leaves=64
+
+--- multi_doc_qa [K=64] ---
+  paged        r=0  FAILED: IndexError: list index out of range
+  fasttree     r=0  FAILED: IndexError: list index out of range
+  deft         r=0  FAILED: IndexError: list index out of range
+  bs_kernel    r=0  FAILED: IndexError: list index out of range
+  bsk_2l_dt    r=0  FAILED: IndexError: list index out of range
+  bsk_2l_1p_single r=0  FAILED: IndexError: list index out of range
+  rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B3_multi_doc_qa_K64_B1_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_doc_qa             [K=64    ]   rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+[W523 12:34:55.603492586 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 12:34:56.187007991 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== B4: multi_few_shot  (K=32, B=4, mn=256, R=128) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 141961.06it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=4   K=32  L_shared~6141  L_priv~136   n_leaves=128
+
+--- multi_few_shot [K=32] ---
+  paged        r=0  FAILED: IndexError: list index out of range
+  fasttree     r=0  FAILED: IndexError: list index out of range
+  deft         r=0  FAILED: IndexError: list index out of range
+  bs_kernel    r=0  FAILED: IndexError: list index out of range
+  bsk_2l_dt    r=0  FAILED: IndexError: list index out of range
+  bsk_2l_1p_single r=0  FAILED: IndexError: list index out of range
+  rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B4_multi_few_shot_K32_B4_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+[W523 12:35:16.574269057 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 12:35:17.155590015 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== B5: multi_level_system  (K=64, B=4, mn=256, R=256) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_level_system']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 146934.22it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=4   K=64  L_shared~2516  L_priv~80    n_leaves=256
+
+--- multi_level_system [K=64] ---
+  paged        r=0  FAILED: IndexError: list index out of range
+  fasttree     r=0  FAILED: IndexError: list index out of range
+  deft         r=0  FAILED: IndexError: list index out of range
+  bs_kernel    r=0  FAILED: IndexError: list index out of range
+  bsk_2l_dt    r=0  FAILED: IndexError: list index out of range
+  bsk_2l_1p_single r=0  FAILED: IndexError: list index out of range
+  rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B5_multi_level_system_K64_B4_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+[W523 12:35:35.659964927 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 12:35:36.252360662 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== done 2026-05-23T12:35:36+08:00 ===
+Results: benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16
+=== verify multi-level (TreeSpec.root) | Llama-3.1-8B-bf16 | 2026-05-23T12:42:00+08:00 ===
+model:    meta-llama/Llama-3.1-8B-Instruct  (tp=1, dtype=bf16, kv=bf16)
+purpose:  kernels see full TreeNode tree via --tree-root and decide themselves
+git head: ba0d1dd
+branch:   cost-model/cta-granularity
+
+==========================================================
+=== B3: multi_doc_qa  (K=64, B=1, mn=256, R=64) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_doc_qa']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 138135.76it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_doc_qa             [K=64    ] B=1   K=64  L_shared~86627 L_priv~39    n_leaves=64
+
+--- multi_doc_qa [K=64] ---
+  paged        r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 829, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  fasttree     r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  deft         r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  bs_kernel    r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  bsk_2l_dt    r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  bsk_2l_1p_single r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B3_multi_doc_qa_K64_B1_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_doc_qa             [K=64    ]   rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+[W523 12:42:54.151641421 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 12:42:54.765624515 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== B4: multi_few_shot  (K=32, B=4, mn=256, R=128) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 141961.06it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=4   K=32  L_shared~6141  L_priv~136   n_leaves=128
+
+--- multi_few_shot [K=32] ---
+  paged        r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 829, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  fasttree     r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  deft         r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  bs_kernel    r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  bsk_2l_dt    r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  bsk_2l_1p_single r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B4_multi_few_shot_K32_B4_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+[W523 12:43:15.531773968 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 12:43:16.233319738 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== B5: multi_level_system  (K=64, B=4, mn=256, R=256) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_level_system']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 141525.60it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=4   K=64  L_shared~2516  L_priv~80    n_leaves=256
+
+--- multi_level_system [K=64] ---
+  paged        r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 829, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  fasttree     r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  deft         r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  bs_kernel    r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  bsk_2l_dt    r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  bsk_2l_1p_single r=0  FAILED: IndexError: list index out of range
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 474, in main
+    row, _decode = _run_one(
+                   ^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/benchmarks/bs_kernel/bench_sglang_e2e.py", line 192, in _run_one
+    result = tree_batch_decode(
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/src/beam_engine/tree_driver.py", line 817, in tree_batch_decode
+    priv_pages = private_pages_per_leaf[b][k]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+  rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+
+
+wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B5_multi_level_system_K64_B4_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): paged=inf, fasttree=inf, deft=inf, bs_kernel=inf, bsk_2l_dt=inf, bsk_2l_1p_single=inf
+[W523 12:43:35.932465772 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 12:43:36.547195905 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== done 2026-05-23T12:43:36+08:00 ===
+Results: benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16
+=== verify multi-level (TreeSpec.root) | Llama-3.1-8B-bf16 | 2026-05-23T12:47:37+08:00 ===
+model:    meta-llama/Llama-3.1-8B-Instruct  (tp=1, dtype=bf16, kv=bf16)
+purpose:  kernels see full TreeNode tree via --tree-root and decide themselves
+git head: ba0d1dd
+branch:   cost-model/cta-granularity
+
+==========================================================
+=== B3: multi_doc_qa  (K=64, B=1, mn=256, R=64) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_doc_qa']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 143283.68it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_doc_qa             [K=64    ] B=1   K=64  L_shared~86627 L_priv~39    n_leaves=64
+
+--- multi_doc_qa [K=64] ---
+  paged        warmup  wall= 33.7s  decode_total=26102.5ms
+  paged        r=0  prefill= 6284.6ms  decode=26042.7ms  plan/step= 7.42ms  fwd/step=94.59ms  p50/step=105.99ms  wall= 32.7s
+  paged        r=1  prefill= 6310.0ms  decode=26036.8ms  plan/step= 7.40ms  fwd/step=94.58ms  p50/step=105.69ms  wall= 32.8s
+  paged        r=2  prefill= 6282.0ms  decode=26007.5ms  plan/step= 7.38ms  fwd/step=94.49ms  p50/step=105.91ms  wall= 32.9s
+  fasttree     warmup  wall= 19.7s  decode_total=13057.7ms
+  fasttree     r=0  prefill= 6274.2ms  decode=12541.1ms  plan/step= 1.34ms  fwd/step=47.72ms  p50/step=49.19ms  wall= 19.2s
+  fasttree     r=1  prefill= 6280.5ms  decode=12556.5ms  plan/step= 1.39ms  fwd/step=47.73ms  p50/step=49.22ms  wall= 19.3s
+  fasttree     r=2  prefill= 6294.4ms  decode=12538.7ms  plan/step= 1.34ms  fwd/step=47.71ms  p50/step=49.18ms  wall= 19.2s
+  deft         warmup  wall= 60.0s  decode_total=53366.1ms
+  deft         r=0  prefill= 6277.2ms  decode=53310.1ms  plan/step= 0.40ms  fwd/step=208.53ms  p50/step=209.03ms  wall= 60.0s
+  deft         r=1  prefill= 6265.6ms  decode=53335.6ms  plan/step= 0.37ms  fwd/step=208.67ms  p50/step=209.22ms  wall= 59.9s
+  deft         r=2  prefill= 6263.0ms  decode=53347.5ms  plan/step= 0.39ms  fwd/step=208.69ms  p50/step=209.15ms  wall= 60.0s
+  bs_kernel    warmup  wall= 11.7s  decode_total= 4977.4ms
+  bs_kernel    r=0  prefill= 6288.8ms  decode= 4896.8ms  plan/step= 0.41ms  fwd/step=18.67ms  p50/step=19.20ms  wall= 11.5s
+  bs_kernel    r=1  prefill= 6300.5ms  decode= 4878.9ms  plan/step= 0.41ms  fwd/step=18.60ms  p50/step=19.10ms  wall= 11.6s
+  bs_kernel    r=2  prefill= 6299.0ms  decode= 4898.8ms  plan/step= 0.41ms  fwd/step=18.68ms  p50/step=19.20ms  wall= 11.6s
+  bsk_2l_dt    warmup  wall= 11.6s  decode_total= 4866.3ms
+  bsk_2l_dt    r=0  prefill= 6267.6ms  decode= 4866.2ms  plan/step= 0.38ms  fwd/step=18.59ms  p50/step=19.06ms  wall= 11.6s
+  bsk_2l_dt    r=1  prefill= 6267.2ms  decode= 4887.1ms  plan/step= 0.38ms  fwd/step=18.67ms  p50/step=19.15ms  wall= 11.5s
+  bsk_2l_dt    r=2  prefill= 6271.9ms  decode= 4911.5ms  plan/step= 0.43ms  fwd/step=18.69ms  p50/step=19.18ms  wall= 11.6s
+  bsk_2l_1p_single warmup  wall= 12.7s  decode_total= 6021.6ms
+  bsk_2l_1p_single r=0  prefill= 6275.4ms  decode= 6039.4ms  plan/step= 0.49ms  fwd/step=23.07ms  p50/step=24.98ms  wall= 12.8s
+  bsk_2l_1p_single r=1  prefill= 6271.2ms  decode= 6065.0ms  plan/step= 0.53ms  fwd/step=23.09ms  p50/step=24.98ms  wall= 12.8s
+  bsk_2l_1p_single r=2  prefill= 6283.3ms  decode= 6037.0ms  plan/step= 0.49ms  fwd/step=23.06ms  p50/step=24.98ms  wall= 12.7s
+  rank (decode_total): bsk_2l_dt=4866.2, bs_kernel=4878.9, bsk_2l_1p_single=6037.0, fasttree=12538.7, paged=26007.5, deft=53310.1
+
+
+wrote 18 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B3_multi_doc_qa_K64_B1_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_doc_qa             [K=64    ]   rank (decode_total): bsk_2l_dt=4866.2, bs_kernel=4878.9, bsk_2l_1p_single=6037.0, fasttree=12538.7, paged=26007.5, deft=53310.1
+[W523 12:57:45.421573820 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 12:57:45.032611252 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== B4: multi_few_shot  (K=32, B=4, mn=256, R=128) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 150284.51it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=4   K=32  L_shared~6141  L_priv~136   n_leaves=128
+
+--- multi_few_shot [K=32] ---
+  paged        warmup  wall=  8.1s  decode_total= 5740.9ms
+  paged        r=0  prefill= 1051.5ms  decode= 5696.7ms  plan/step= 1.85ms  fwd/step=20.33ms  p50/step=22.27ms  wall=  7.1s
+  paged        r=1  prefill= 1048.8ms  decode= 5677.3ms  plan/step= 1.77ms  fwd/step=20.36ms  p50/step=22.30ms  wall=  7.0s
+  paged        r=2  prefill= 1036.8ms  decode= 5670.7ms  plan/step= 1.77ms  fwd/step=20.34ms  p50/step=22.29ms  wall=  6.9s
+  fasttree     warmup  wall=  8.0s  decode_total= 6712.7ms
+  fasttree     r=0  prefill= 1041.3ms  decode= 6298.4ms  plan/step= 1.41ms  fwd/step=23.16ms  p50/step=24.84ms  wall=  7.6s
+  fasttree     r=1  prefill= 1047.8ms  decode= 6300.2ms  plan/step= 1.43ms  fwd/step=23.15ms  p50/step=24.85ms  wall=  7.8s
+  fasttree     r=2  prefill= 1040.4ms  decode= 6284.8ms  plan/step= 1.42ms  fwd/step=23.09ms  p50/step=24.85ms  wall=  7.6s
+  deft         warmup  wall= 10.1s  decode_total= 8677.9ms
+  deft         r=0  prefill= 1039.5ms  decode= 8648.2ms  plan/step= 0.42ms  fwd/step=33.37ms  p50/step=33.91ms  wall=  9.9s
+  deft         r=1  prefill= 1035.4ms  decode= 8645.2ms  plan/step= 0.42ms  fwd/step=33.36ms  p50/step=33.89ms  wall=  9.9s
+  deft         r=2  prefill= 1036.7ms  decode= 8656.6ms  plan/step= 0.43ms  fwd/step=33.38ms  p50/step=33.91ms  wall=  9.9s
+  bs_kernel    warmup  wall=  4.6s  decode_total= 3312.0ms
+  bs_kernel    r=0  prefill= 1028.6ms  decode= 3237.6ms  plan/step= 0.79ms  fwd/step=11.78ms  p50/step=12.69ms  wall=  4.5s
+  bs_kernel    r=1  prefill= 1030.6ms  decode= 3232.6ms  plan/step= 0.79ms  fwd/step=11.76ms  p50/step=12.67ms  wall=  4.5s
+  bs_kernel    r=2  prefill= 1044.8ms  decode= 3244.9ms  plan/step= 0.79ms  fwd/step=11.80ms  p50/step=12.72ms  wall=  4.5s
+  bsk_2l_dt    warmup  wall=  4.4s  decode_total= 3148.1ms
+  bsk_2l_dt    r=0  prefill= 1063.0ms  decode= 3145.0ms  plan/step= 0.59ms  fwd/step=11.61ms  p50/step=12.41ms  wall=  4.5s
+  bsk_2l_dt    r=1  prefill= 1042.9ms  decode= 3149.0ms  plan/step= 0.60ms  fwd/step=11.62ms  p50/step=12.44ms  wall=  4.4s
+  bsk_2l_dt    r=2  prefill= 1030.1ms  decode= 3230.0ms  plan/step= 0.75ms  fwd/step=11.67ms  p50/step=12.52ms  wall=  4.5s
+  bsk_2l_1p_single warmup  wall=  4.5s  decode_total= 3231.8ms
+  bsk_2l_1p_single r=0  prefill= 1033.0ms  decode= 3237.5ms  plan/step= 0.75ms  fwd/step=11.81ms  p50/step=12.64ms  wall=  4.6s
+  bsk_2l_1p_single r=1  prefill= 1037.2ms  decode= 3229.1ms  plan/step= 0.75ms  fwd/step=11.78ms  p50/step=12.63ms  wall=  4.5s
+  bsk_2l_1p_single r=2  prefill= 1030.4ms  decode= 3237.3ms  plan/step= 0.75ms  fwd/step=11.81ms  p50/step=12.65ms  wall=  4.5s
+  rank (decode_total): bsk_2l_dt=3145.0, bsk_2l_1p_single=3229.1, bs_kernel=3232.6, paged=5670.7, fasttree=6284.8, deft=8645.2
+
+
+wrote 18 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B4_multi_few_shot_K32_B4_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): bsk_2l_dt=3145.0, bsk_2l_1p_single=3229.1, bs_kernel=3232.6, paged=5670.7, fasttree=6284.8, deft=8645.2
+[W523 13:00:34.022217815 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 13:00:35.589217514 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== B5: multi_level_system  (K=64, B=4, mn=256, R=256) ===
+==========================================================
+usage: bench_sglang_e2e.py [-h]
+                           [--scenarios {multi_level_system,multi_few_shot,multi_chain_reasoning,multi_document} [{multi_level_system,multi_few_shot,multi_chain_reasoning,multi_document} ...]]
+                           [--methods {bs_kernel,fasttree,paged,mlca,deft,bsk_per_beam,bsk_2l_1p,bsk_3l_1p,bsk_2l_dt,bsk_3l_dt,bsk_2l_2p} [{bs_kernel,fasttree,paged,mlca,deft,bsk_per_beam,bsk_2l_1p,bsk_3l_1p,bsk_2l_dt,bsk_3l_dt,bsk_2l_2p} ...]]
+                           [--max-new MAX_NEW] [--repeat REPEAT] [--out OUT]
+                           [--warmup] [--k-override K_OVERRIDE]
+                           [--b-override B_OVERRIDE] [--paper-exact]
+                           [--no-stage2]
+bench_sglang_e2e.py: error: argument --methods: invalid choice: 'bsk_2l_1p_single' (choose from 'bs_kernel', 'fasttree', 'paged', 'mlca', 'deft', 'bsk_per_beam', 'bsk_2l_1p', 'bsk_3l_1p', 'bsk_2l_dt', 'bsk_3l_dt', 'bsk_2l_2p')
+[W523 13:00:42.107017827 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+E0523 13:00:42.147000 2387245 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 2) local_rank: 0 (pid: 2387382) of binary: /home/u4320956/beam_engine-v3/.venv/bin/python
+Traceback (most recent call last):
+  File "/home/u4320956/beam_engine-v3/.venv/bin/torchrun", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+benchmarks/bs_kernel/bench_sglang_e2e.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-05-23_13:00:42
+  host      : hgpn20
+  rank      : 0 (local_rank: 0)
+  exitcode  : 2 (pid: 2387382)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+[W523 13:00:42.414475609 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+  (cell B5 failed; continuing)
+
+=== done 2026-05-23T13:00:42+08:00 ===
+Results: benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16
+=== verify multi-level (TreeSpec.root) | Llama-3.1-8B-bf16 | 2026-05-23T13:02:37+08:00 ===
+model:    meta-llama/Llama-3.1-8B-Instruct  (tp=1, dtype=bf16, kv=bf16)
+purpose:  kernels see full TreeNode tree via --tree-root and decide themselves
+git head: bf9b2f5
+branch:   multilevel-treespec
+
+==========================================================
+=== B3: multi_doc_qa  (K=64, B=1, mn=256, R=64) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_doc_qa']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 145543.67it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_doc_qa             [K=64    ] B=1   K=64  L_shared~86627 L_priv~39    n_leaves=64
+
+--- multi_doc_qa [K=64] ---
+  paged        warmup  wall= 33.8s  decode_total=26088.1ms
+  paged        r=0  prefill= 6291.0ms  decode=26009.9ms  plan/step= 7.35ms  fwd/step=94.53ms  p50/step=105.83ms  wall= 32.7s
+  paged        r=1  prefill= 6292.8ms  decode=26003.7ms  plan/step= 7.34ms  fwd/step=94.52ms  p50/step=105.65ms  wall= 32.7s
+  paged        r=2  prefill= 6301.6ms  decode=26016.0ms  plan/step= 7.36ms  fwd/step=94.53ms  p50/step=105.83ms  wall= 32.7s
+  fasttree     warmup  wall= 19.7s  decode_total=12969.7ms
+  fasttree     r=0  prefill= 6284.5ms  decode=12566.4ms  plan/step= 1.42ms  fwd/step=47.74ms  p50/step=49.19ms  wall= 19.2s
+  fasttree     r=1  prefill= 6277.9ms  decode=12538.4ms  plan/step= 1.34ms  fwd/step=47.71ms  p50/step=49.20ms  wall= 19.3s
+  fasttree     r=2  prefill= 6276.6ms  decode=12551.0ms  plan/step= 1.37ms  fwd/step=47.72ms  p50/step=49.19ms  wall= 19.3s
+  deft         warmup  wall= 59.9s  decode_total=53314.9ms
+  deft         r=0  prefill= 6289.1ms  decode=53137.9ms  plan/step= 0.38ms  fwd/step=207.88ms  p50/step=208.41ms  wall= 59.9s
+  deft         r=1  prefill= 6249.8ms  decode=53282.9ms  plan/step= 0.37ms  fwd/step=208.46ms  p50/step=208.98ms  wall= 60.0s
+  deft         r=2  prefill= 6253.9ms  decode=53293.0ms  plan/step= 0.39ms  fwd/step=208.47ms  p50/step=208.93ms  wall= 60.0s
+  bs_kernel    warmup  wall= 11.8s  decode_total= 4955.7ms
+  bs_kernel    r=0  prefill= 6275.8ms  decode= 4876.7ms  plan/step= 0.41ms  fwd/step=18.59ms  p50/step=19.10ms  wall= 11.5s
+  bs_kernel    r=1  prefill= 6279.5ms  decode= 4909.8ms  plan/step= 0.44ms  fwd/step=18.68ms  p50/step=19.20ms  wall= 11.7s
+  bs_kernel    r=2  prefill= 6329.3ms  decode= 4897.7ms  plan/step= 0.42ms  fwd/step=18.67ms  p50/step=19.11ms  wall= 11.6s
+  bsk_2l_dt    warmup  wall= 11.6s  decode_total= 4888.6ms
+  bsk_2l_dt    r=0  prefill= 6288.1ms  decode= 4868.9ms  plan/step= 0.37ms  fwd/step=18.60ms  p50/step=19.05ms  wall= 11.6s
+  bsk_2l_dt    r=1  prefill= 6288.1ms  decode= 4864.4ms  plan/step= 0.38ms  fwd/step=18.58ms  p50/step=19.05ms  wall= 11.6s
+  bsk_2l_dt    r=2  prefill= 6292.7ms  decode= 4864.1ms  plan/step= 0.38ms  fwd/step=18.58ms  p50/step=19.05ms  wall= 11.6s
+  bsk_2l_1p_single warmup  wall= 12.7s  decode_total= 6015.1ms
+  bsk_2l_1p_single r=0  prefill= 6291.4ms  decode= 6098.6ms  plan/step= 0.60ms  fwd/step=23.11ms  p50/step=25.14ms  wall= 12.9s
+  bsk_2l_1p_single r=1  prefill= 6304.9ms  decode= 6039.1ms  plan/step= 0.49ms  fwd/step=23.07ms  p50/step=24.98ms  wall= 12.7s
+  bsk_2l_1p_single r=2  prefill= 6287.7ms  decode= 6044.3ms  plan/step= 0.49ms  fwd/step=23.09ms  p50/step=24.99ms  wall= 12.8s
+  rank (decode_total): bsk_2l_dt=4864.1, bs_kernel=4876.7, bsk_2l_1p_single=6039.1, fasttree=12538.4, paged=26003.7, deft=53137.9
+
+
+wrote 18 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B3_multi_doc_qa_K64_B1_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_doc_qa             [K=64    ]   rank (decode_total): bsk_2l_dt=4864.1, bs_kernel=4876.7, bsk_2l_1p_single=6039.1, fasttree=12538.4, paged=26003.7, deft=53137.9
+[W523 13:12:45.995197378 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 13:12:46.632641551 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== B4: multi_few_shot  (K=32, B=4, mn=256, R=128) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 146004.25it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=4   K=32  L_shared~6141  L_priv~136   n_leaves=128
+
+--- multi_few_shot [K=32] ---
+  paged        warmup  wall=  8.1s  decode_total= 5762.5ms
+  paged        r=0  prefill= 1036.6ms  decode= 5704.1ms  plan/step= 1.76ms  fwd/step=20.48ms  p50/step=22.28ms  wall=  7.0s
+  paged        r=1  prefill= 1043.8ms  decode= 5661.9ms  plan/step= 1.77ms  fwd/step=20.30ms  p50/step=22.28ms  wall=  6.9s
+  paged        r=2  prefill= 1037.1ms  decode= 5661.9ms  plan/step= 1.77ms  fwd/step=20.30ms  p50/step=22.29ms  wall=  7.0s
+  fasttree     warmup  wall=  8.0s  decode_total= 6702.4ms
+  fasttree     r=0  prefill= 1032.3ms  decode= 6261.9ms  plan/step= 1.41ms  fwd/step=23.02ms  p50/step=24.76ms  wall=  7.6s
+  fasttree     r=1  prefill= 1027.8ms  decode= 6263.3ms  plan/step= 1.41ms  fwd/step=23.02ms  p50/step=24.76ms  wall=  7.6s
+  fasttree     r=2  prefill= 1046.4ms  decode= 6277.6ms  plan/step= 1.41ms  fwd/step=23.08ms  p50/step=24.83ms  wall=  7.6s
+  deft         warmup  wall=  9.9s  decode_total= 8658.2ms
+  deft         r=0  prefill= 1045.6ms  decode= 8689.3ms  plan/step= 0.45ms  fwd/step=33.48ms  p50/step=33.97ms  wall= 10.0s
+  deft         r=1  prefill= 1041.7ms  decode= 8645.6ms  plan/step= 0.42ms  fwd/step=33.35ms  p50/step=33.95ms  wall= 10.0s
+  deft         r=2  prefill= 1052.9ms  decode= 8654.0ms  plan/step= 0.42ms  fwd/step=33.39ms  p50/step=33.97ms  wall= 10.0s
+  bs_kernel    warmup  wall=  4.6s  decode_total= 3303.6ms
+  bs_kernel    r=0  prefill= 1024.3ms  decode= 3240.1ms  plan/step= 0.79ms  fwd/step=11.78ms  p50/step=12.69ms  wall=  4.5s
+  bs_kernel    r=1  prefill= 1046.2ms  decode= 3236.7ms  plan/step= 0.79ms  fwd/step=11.77ms  p50/step=12.67ms  wall=  4.6s
+  bs_kernel    r=2  prefill= 1041.7ms  decode= 3300.6ms  plan/step= 0.92ms  fwd/step=11.80ms  p50/step=12.77ms  wall=  4.6s
+  bsk_2l_dt    warmup  wall=  4.4s  decode_total= 3145.8ms
+  bsk_2l_dt    r=0  prefill= 1038.1ms  decode= 3153.3ms  plan/step= 0.60ms  fwd/step=11.64ms  p50/step=12.45ms  wall=  4.4s
+  bsk_2l_dt    r=1  prefill= 1060.4ms  decode= 3149.9ms  plan/step= 0.60ms  fwd/step=11.62ms  p50/step=12.42ms  wall=  4.5s
+  bsk_2l_dt    r=2  prefill= 1033.7ms  decode= 3150.0ms  plan/step= 0.59ms  fwd/step=11.63ms  p50/step=12.43ms  wall=  4.4s
+  bsk_2l_1p_single warmup  wall=  4.5s  decode_total= 3228.4ms
+  bsk_2l_1p_single r=0  prefill= 1051.9ms  decode= 3223.2ms  plan/step= 0.74ms  fwd/step=11.76ms  p50/step=12.60ms  wall=  4.6s
+  bsk_2l_1p_single r=1  prefill= 1028.6ms  decode= 3230.2ms  plan/step= 0.76ms  fwd/step=11.78ms  p50/step=12.64ms  wall=  4.5s
+  bsk_2l_1p_single r=2  prefill= 1032.2ms  decode= 3226.4ms  plan/step= 0.75ms  fwd/step=11.77ms  p50/step=12.63ms  wall=  4.5s
+  rank (decode_total): bsk_2l_dt=3149.9, bsk_2l_1p_single=3223.2, bs_kernel=3236.7, paged=5661.9, fasttree=6261.9, deft=8645.6
+
+
+wrote 18 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B4_multi_few_shot_K32_B4_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): bsk_2l_dt=3149.9, bsk_2l_1p_single=3223.2, bs_kernel=3236.7, paged=5661.9, fasttree=6261.9, deft=8645.6
+[W523 13:15:35.826007108 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 13:15:36.434042142 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== B5: multi_level_system  (K=64, B=4, mn=256, R=256) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_level_system']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 142399.21it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=4   K=64  L_shared~2516  L_priv~80    n_leaves=256
+
+--- multi_level_system [K=64] ---
+  paged        warmup  wall=  7.9s  decode_total= 5739.5ms
+  paged        r=0  prefill=  771.3ms  decode= 5678.3ms  plan/step= 2.05ms  fwd/step=20.07ms  p50/step=22.29ms  wall=  6.7s
+  paged        r=1  prefill=  955.9ms  decode= 5675.9ms  plan/step= 2.05ms  fwd/step=20.05ms  p50/step=22.25ms  wall=  7.0s
+  paged        r=2  prefill=  764.8ms  decode= 5727.1ms  plan/step= 2.17ms  fwd/step=20.12ms  p50/step=22.32ms  wall=  6.8s
+  fasttree     warmup  wall=  7.4s  decode_total= 6389.9ms
+  fasttree     r=0  prefill=  756.9ms  decode= 5942.8ms  plan/step= 2.45ms  fwd/step=20.70ms  p50/step=23.04ms  wall=  7.0s
+  fasttree     r=1  prefill=  754.9ms  decode= 5943.4ms  plan/step= 2.47ms  fwd/step=20.69ms  p50/step=23.06ms  wall=  7.0s
+  fasttree     r=2  prefill=  750.6ms  decode= 5947.3ms  plan/step= 2.46ms  fwd/step=20.71ms  p50/step=23.05ms  wall=  6.9s
+  deft         warmup  wall=  8.9s  decode_total= 7755.9ms
+  deft         r=0  prefill=  764.1ms  decode= 7721.8ms  plan/step= 0.56ms  fwd/step=29.54ms  p50/step=30.45ms  wall=  8.8s
+  deft         r=1  prefill=  759.7ms  decode= 7704.1ms  plan/step= 0.54ms  fwd/step=29.52ms  p50/step=30.48ms  wall=  8.8s
+  deft         r=2  prefill=  764.0ms  decode= 7724.5ms  plan/step= 0.54ms  fwd/step=29.60ms  p50/step=30.59ms  wall=  8.8s
+  bs_kernel    warmup  wall=  4.8s  decode_total= 3768.6ms
+  bs_kernel    r=0  prefill=  763.4ms  decode= 3713.4ms  plan/step= 0.87ms  fwd/step=13.54ms  p50/step=14.34ms  wall=  4.8s
+  bs_kernel    r=1  prefill=  757.1ms  decode= 3714.9ms  plan/step= 0.87ms  fwd/step=13.54ms  p50/step=14.34ms  wall=  4.8s
+  bs_kernel    r=2  prefill=  769.0ms  decode= 3725.0ms  plan/step= 0.90ms  fwd/step=13.53ms  p50/step=14.32ms  wall=  4.8s
+  bsk_2l_dt    warmup  wall=  4.7s  decode_total= 3685.5ms
+  bsk_2l_dt    r=0  prefill=  807.1ms  decode= 3681.1ms  plan/step= 0.79ms  fwd/step=13.49ms  p50/step=14.28ms  wall=  4.8s
+  bsk_2l_dt    r=1  prefill=  760.8ms  decode= 3687.8ms  plan/step= 0.78ms  fwd/step=13.52ms  p50/step=14.29ms  wall=  4.8s
+  bsk_2l_dt    r=2  prefill=  760.2ms  decode= 3680.7ms  plan/step= 0.79ms  fwd/step=13.49ms  p50/step=14.28ms  wall=  4.7s
+  bsk_2l_1p_single warmup  wall=  4.9s  decode_total= 3937.9ms
+  bsk_2l_1p_single r=0  prefill=  789.1ms  decode= 3928.2ms  plan/step= 0.97ms  fwd/step=14.28ms  p50/step=15.56ms  wall=  5.0s
+  bsk_2l_1p_single r=1  prefill=  759.7ms  decode= 3937.7ms  plan/step= 0.97ms  fwd/step=14.32ms  p50/step=15.63ms  wall=  5.0s
+  bsk_2l_1p_single r=2  prefill=  768.2ms  decode= 3949.2ms  plan/step= 0.98ms  fwd/step=14.32ms  p50/step=15.60ms  wall=  5.0s
+  rank (decode_total): bsk_2l_dt=3680.7, bs_kernel=3713.4, bsk_2l_1p_single=3928.2, paged=5675.9, fasttree=5942.8, deft=7704.1
+
+
+wrote 18 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B5_multi_level_system_K64_B4_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): bsk_2l_dt=3680.7, bs_kernel=3713.4, bsk_2l_1p_single=3928.2, paged=5675.9, fasttree=5942.8, deft=7704.1
+[W523 13:18:21.195833137 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 13:18:21.787584781 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== done 2026-05-23T13:18:21+08:00 ===
+Results: benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16
+=== verify multi-level (TreeSpec.root) | Llama-3.1-8B-bf16 | 2026-05-23T14:09:08+08:00 ===
+model:    meta-llama/Llama-3.1-8B-Instruct  (tp=1, dtype=bf16, kv=bf16)
+purpose:  kernels see full TreeNode tree via --tree-root and decide themselves
+git head: bf9b2f5
+branch:   multilevel-treespec
+
+==========================================================
+=== B3: multi_doc_qa  (K=64, B=1, mn=256, R=64) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_doc_qa']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 143730.04it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_doc_qa             [K=64    ] B=1   K=64  L_shared~86627 L_priv~39    n_leaves=64
+
+--- multi_doc_qa [K=64] ---
+  paged        warmup  wall= 33.5s  decode_total=25997.7ms
+  paged        r=0  prefill= 6374.0ms  decode=25912.2ms  plan/step= 6.51ms  fwd/step=94.98ms  p50/step=104.93ms  wall= 32.7s
+  paged        r=1  prefill= 6335.6ms  decode=25946.4ms  plan/step= 6.52ms  fwd/step=95.11ms  p50/step=104.89ms  wall= 32.6s
+  paged        r=2  prefill= 6376.4ms  decode=25912.8ms  plan/step= 6.50ms  fwd/step=94.99ms  p50/step=105.18ms  wall= 32.6s
+  fasttree     warmup  wall= 19.8s  decode_total=13087.2ms
+  fasttree     r=0  prefill= 6419.4ms  decode=12655.3ms  plan/step= 1.70ms  fwd/step=47.81ms  p50/step=49.64ms  wall= 19.4s
+  fasttree     r=1  prefill= 6348.1ms  decode=12661.1ms  plan/step= 1.71ms  fwd/step=47.83ms  p50/step=49.70ms  wall= 19.3s
+  fasttree     r=2  prefill= 6374.9ms  decode=12661.3ms  plan/step= 1.71ms  fwd/step=47.82ms  p50/step=49.64ms  wall= 19.3s
+  deft         warmup  wall= 59.6s  decode_total=52875.6ms
+  deft         r=0  prefill= 6361.1ms  decode=52871.2ms  plan/step= 0.54ms  fwd/step=206.64ms  p50/step=207.33ms  wall= 59.5s
+  deft         r=1  prefill= 6354.8ms  decode=52883.8ms  plan/step= 0.54ms  fwd/step=206.70ms  p50/step=207.37ms  wall= 59.6s
+  deft         r=2  prefill= 6351.4ms  decode=52864.3ms  plan/step= 0.54ms  fwd/step=206.62ms  p50/step=207.30ms  wall= 59.5s
+  bs_kernel    warmup  wall= 11.7s  decode_total= 4998.7ms
+  bs_kernel    r=0  prefill= 6372.4ms  decode= 4895.2ms  plan/step= 0.41ms  fwd/step=18.66ms  p50/step=19.17ms  wall= 11.6s
+  bs_kernel    r=1  prefill= 6364.1ms  decode= 4894.4ms  plan/step= 0.41ms  fwd/step=18.67ms  p50/step=19.18ms  wall= 11.6s
+  bs_kernel    r=2  prefill= 6338.0ms  decode= 4894.5ms  plan/step= 0.41ms  fwd/step=18.67ms  p50/step=19.17ms  wall= 11.5s
+  bsk_2l_dt    warmup  wall= 11.5s  decode_total= 4885.6ms
+  bsk_2l_dt    r=0  prefill= 6381.4ms  decode= 4888.6ms  plan/step= 0.38ms  fwd/step=18.67ms  p50/step=19.16ms  wall= 11.6s
+  bsk_2l_dt    r=1  prefill= 6380.6ms  decode= 4886.2ms  plan/step= 0.38ms  fwd/step=18.67ms  p50/step=19.13ms  wall= 11.6s
+  bsk_2l_dt    r=2  prefill= 6382.9ms  decode= 4887.3ms  plan/step= 0.37ms  fwd/step=18.67ms  p50/step=19.14ms  wall= 11.6s
+  bsk_2l_1p_single warmup  wall= 12.8s  decode_total= 6044.0ms
+  bsk_2l_1p_single r=0  prefill= 6357.0ms  decode= 6047.5ms  plan/step= 0.50ms  fwd/step=23.10ms  p50/step=24.97ms  wall= 12.7s
+  bsk_2l_1p_single r=1  prefill= 6359.2ms  decode= 6051.5ms  plan/step= 0.51ms  fwd/step=23.11ms  p50/step=24.99ms  wall= 12.7s
+  bsk_2l_1p_single r=2  prefill= 6354.8ms  decode= 6050.7ms  plan/step= 0.50ms  fwd/step=23.11ms  p50/step=24.98ms  wall= 12.7s
+  rank (decode_total): bsk_2l_dt=4886.2, bs_kernel=4894.4, bsk_2l_1p_single=6047.5, fasttree=12655.3, paged=25912.2, deft=52864.3
+
+
+wrote 18 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B3_multi_doc_qa_K64_B1_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_doc_qa             [K=64    ]   rank (decode_total): bsk_2l_dt=4886.2, bs_kernel=4894.4, bsk_2l_1p_single=6047.5, fasttree=12655.3, paged=25912.2, deft=52864.3
+[W523 14:19:15.128814811 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 14:19:15.705538208 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== B4: multi_few_shot  (K=32, B=4, mn=256, R=128) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_few_shot']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 146467.76it/s]
+Model loaded.
+
+k_overrides: [32]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_few_shot           [K=32    ] B=4   K=32  L_shared~6141  L_priv~136   n_leaves=128
+
+--- multi_few_shot [K=32] ---
+  paged        warmup  wall=  8.0s  decode_total= 5714.8ms
+  paged        r=0  prefill= 1051.6ms  decode= 5618.4ms  plan/step= 1.64ms  fwd/step=20.26ms  p50/step=22.08ms  wall=  6.9s
+  paged        r=1  prefill= 1051.4ms  decode= 5623.5ms  plan/step= 1.65ms  fwd/step=20.27ms  p50/step=22.11ms  wall=  6.9s
+  paged        r=2  prefill= 1051.6ms  decode= 5619.5ms  plan/step= 1.65ms  fwd/step=20.25ms  p50/step=22.10ms  wall=  6.9s
+  fasttree     warmup  wall= 10.4s  decode_total= 9106.3ms
+  fasttree     r=0  prefill= 1044.1ms  decode= 6050.0ms  plan/step= 1.38ms  fwd/step=22.22ms  p50/step=23.93ms  wall=  7.3s
+  fasttree     r=1  prefill= 1054.9ms  decode= 6047.9ms  plan/step= 1.38ms  fwd/step=22.20ms  p50/step=23.90ms  wall=  7.3s
+  fasttree     r=2  prefill= 1048.4ms  decode= 6051.0ms  plan/step= 1.39ms  fwd/step=22.21ms  p50/step=23.92ms  wall=  7.3s
+  deft         warmup  wall=  9.9s  decode_total= 8673.0ms
+  deft         r=0  prefill= 1053.9ms  decode= 8666.5ms  plan/step= 0.46ms  fwd/step=33.38ms  p50/step=34.01ms  wall= 10.0s
+  deft         r=1  prefill= 1055.7ms  decode= 8661.3ms  plan/step= 0.46ms  fwd/step=33.37ms  p50/step=33.99ms  wall=  9.9s
+  deft         r=2  prefill= 1053.8ms  decode= 8668.5ms  plan/step= 0.46ms  fwd/step=33.40ms  p50/step=33.99ms  wall=  9.9s
+  bs_kernel    warmup  wall=  4.6s  decode_total= 3317.1ms
+  bs_kernel    r=0  prefill= 1047.0ms  decode= 3237.6ms  plan/step= 0.77ms  fwd/step=11.79ms  p50/step=12.68ms  wall=  4.5s
+  bs_kernel    r=1  prefill= 1051.8ms  decode= 3237.6ms  plan/step= 0.77ms  fwd/step=11.80ms  p50/step=12.68ms  wall=  4.5s
+  bs_kernel    r=2  prefill= 1046.0ms  decode= 3239.5ms  plan/step= 0.77ms  fwd/step=11.80ms  p50/step=12.69ms  wall=  4.5s
+  bsk_2l_dt    warmup  wall=  4.4s  decode_total= 3143.1ms
+  bsk_2l_dt    r=0  prefill= 1044.0ms  decode= 3141.8ms  plan/step= 0.58ms  fwd/step=11.61ms  p50/step=12.39ms  wall=  4.4s
+  bsk_2l_dt    r=1  prefill= 1044.5ms  decode= 3143.4ms  plan/step= 0.57ms  fwd/step=11.62ms  p50/step=12.39ms  wall=  4.4s
+  bsk_2l_dt    r=2  prefill= 1051.3ms  decode= 3144.7ms  plan/step= 0.58ms  fwd/step=11.62ms  p50/step=12.43ms  wall=  4.4s
+  bsk_2l_1p_single warmup  wall=  4.5s  decode_total= 3233.3ms
+  bsk_2l_1p_single r=0  prefill= 1054.5ms  decode= 3231.3ms  plan/step= 0.73ms  fwd/step=11.81ms  p50/step=12.64ms  wall=  4.5s
+  bsk_2l_1p_single r=1  prefill= 1059.5ms  decode= 3231.9ms  plan/step= 0.73ms  fwd/step=11.81ms  p50/step=12.64ms  wall=  4.5s
+  bsk_2l_1p_single r=2  prefill= 1042.2ms  decode= 3231.0ms  plan/step= 0.74ms  fwd/step=11.80ms  p50/step=12.64ms  wall=  4.5s
+  rank (decode_total): bsk_2l_dt=3141.8, bsk_2l_1p_single=3231.0, bs_kernel=3237.6, paged=5618.4, fasttree=6047.9, deft=8661.3
+
+
+wrote 18 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B4_multi_few_shot_K32_B4_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_few_shot           [K=32    ]   rank (decode_total): bsk_2l_dt=3141.8, bsk_2l_1p_single=3231.0, bs_kernel=3237.6, paged=5618.4, fasttree=6047.9, deft=8661.3
+[W523 14:22:05.309943930 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 14:22:06.920302565 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+==========================================================
+=== B5: multi_level_system  (K=64, B=4, mn=256, R=256) ===
+==========================================================
+model: meta-llama/Llama-3.1-8B-Instruct  (tp_size=1)
+scenarios: ['multi_level_system']
+methods:   ['paged', 'fasttree', 'deft', 'bs_kernel', 'bsk_2l_dt', 'bsk_2l_1p_single']
+max_new:   256, repeat: 3
+
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 137313.52it/s]
+Model loaded.
+
+k_overrides: [64]
+Building TreeSpecs (this tokenizes the inputs)...
+  multi_level_system       [K=64    ] B=4   K=64  L_shared~2516  L_priv~80    n_leaves=256
+
+--- multi_level_system [K=64] ---
+  paged        warmup  wall=  7.8s  decode_total= 5724.8ms
+  paged        r=0  prefill=  762.3ms  decode= 5683.3ms  plan/step= 1.92ms  fwd/step=20.21ms  p50/step=22.30ms  wall=  6.7s
+  paged        r=1  prefill=  763.0ms  decode= 5686.4ms  plan/step= 1.92ms  fwd/step=20.22ms  p50/step=22.35ms  wall=  6.7s
+  paged        r=2  prefill=  763.9ms  decode= 5692.1ms  plan/step= 1.92ms  fwd/step=20.25ms  p50/step=22.38ms  wall=  6.7s
+  fasttree     warmup  wall=  7.4s  decode_total= 6381.2ms
+  fasttree     r=0  prefill=  766.9ms  decode= 5958.8ms  plan/step= 2.44ms  fwd/step=20.78ms  p50/step=23.10ms  wall=  7.0s
+  fasttree     r=1  prefill=  764.9ms  decode= 5971.5ms  plan/step= 2.48ms  fwd/step=20.78ms  p50/step=23.13ms  wall=  7.0s
+  fasttree     r=2  prefill=  769.8ms  decode= 5957.2ms  plan/step= 2.45ms  fwd/step=20.76ms  p50/step=23.10ms  wall=  7.0s
+  deft         warmup  wall=  8.8s  decode_total= 7769.4ms
+  deft         r=0  prefill=  769.3ms  decode= 7735.8ms  plan/step= 0.56ms  fwd/step=29.62ms  p50/step=30.64ms  wall=  8.7s
+  deft         r=1  prefill=  767.4ms  decode= 7752.4ms  plan/step= 0.56ms  fwd/step=29.69ms  p50/step=30.71ms  wall=  8.7s
+  deft         r=2  prefill=  762.1ms  decode= 7747.3ms  plan/step= 0.56ms  fwd/step=29.66ms  p50/step=30.68ms  wall=  8.7s
+  bs_kernel    warmup  wall=  4.8s  decode_total= 3807.9ms
+  bs_kernel    r=0  prefill=  765.0ms  decode= 3731.3ms  plan/step= 0.86ms  fwd/step=13.61ms  p50/step=14.39ms  wall=  4.7s
+  bs_kernel    r=1  prefill=  765.6ms  decode= 3736.6ms  plan/step= 0.85ms  fwd/step=13.64ms  p50/step=14.44ms  wall=  4.7s
+  bs_kernel    r=2  prefill=  769.6ms  decode= 3735.3ms  plan/step= 0.85ms  fwd/step=13.64ms  p50/step=14.40ms  wall=  4.7s
+  bsk_2l_dt    warmup  wall=  4.7s  decode_total= 3710.1ms
+  bsk_2l_dt    r=0  prefill=  765.0ms  decode= 3706.5ms  plan/step= 0.78ms  fwd/step=13.60ms  p50/step=14.36ms  wall=  4.7s
+  bsk_2l_dt    r=1  prefill=  770.9ms  decode= 3699.7ms  plan/step= 0.77ms  fwd/step=13.58ms  p50/step=14.34ms  wall=  4.7s
+  bsk_2l_dt    r=2  prefill=  770.0ms  decode= 3706.2ms  plan/step= 0.77ms  fwd/step=13.60ms  p50/step=14.42ms  wall=  4.7s
+  bsk_2l_1p_single warmup  wall=  4.9s  decode_total= 3846.0ms
+  bsk_2l_1p_single r=0  prefill=  767.2ms  decode= 3831.6ms  plan/step= 0.95ms  fwd/step=13.91ms  p50/step=15.00ms  wall=  4.8s
+  bsk_2l_1p_single r=1  prefill=  763.2ms  decode= 3829.6ms  plan/step= 0.95ms  fwd/step=13.91ms  p50/step=14.98ms  wall=  4.8s
+  bsk_2l_1p_single r=2  prefill=  770.4ms  decode= 3846.6ms  plan/step= 0.96ms  fwd/step=13.96ms  p50/step=15.05ms  wall=  4.9s
+  rank (decode_total): bsk_2l_dt=3699.7, bs_kernel=3731.3, bsk_2l_1p_single=3829.6, paged=5683.3, fasttree=5957.2, deft=7735.8
+
+
+wrote 18 rows to benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16/B5_multi_level_system_K64_B4_mn256.csv
+
+=== summary (best decode_total per method, ms) ===
+multi_level_system       [K=64    ]   rank (decode_total): bsk_2l_dt=3699.7, bs_kernel=3731.3, bsk_2l_1p_single=3829.6, paged=5683.3, fasttree=5957.2, deft=7735.8
+[W523 14:24:50.793402087 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W523 14:24:50.375480359 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== done 2026-05-23T14:24:50+08:00 ===
+Results: benchmarks/bs_kernel/results/paper-exp/verify_multilevel_treeroot/Llama-3.1-8B-bf16

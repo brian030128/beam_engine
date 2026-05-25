@@ -1,0 +1,55 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 44192.86it/s]
+Model loaded.
+
+============================================================
+Case: K=1 L_p=128 max_new=16
+============================================================
+  picks: {'per_beam': 15}
+  K=1 always picks PER_BEAM: PASS
+  matches tree.py (K=1 L_p=128 max_new=16): PASS
+  best-beam score within 1e-2 (K=1 L_p=128 max_new=16): PASS
+
+============================================================
+Case: K=4 L_p=128 max_new=16
+============================================================
+  picks: {'per_beam': 15}
+  matches tree.py (K=4 L_p=128 max_new=16): PASS
+  best-beam score within 1e-2 (K=4 L_p=128 max_new=16): PASS
+
+============================================================
+Case: K=4 L_p=128 max_new=64
+============================================================
+  picks: {'per_beam': 63}
+  matches tree.py (K=4 L_p=128 max_new=64): PASS
+  best-beam score within 1e-2 (K=4 L_p=128 max_new=64): PASS
+
+============================================================
+Case: K=4 L_p=4096 max_new=16
+============================================================
+  picks: {'per_beam': 15}
+  L_p=4096 picks SHARED at least once: FAIL
+  matches tree.py (K=4 L_p=4096 max_new=16): PASS
+  best-beam score within 1e-2 (K=4 L_p=4096 max_new=16): PASS
+
+============================================================
+Case: K=16 L_p=128 max_new=16
+============================================================
+  picks: {'per_beam': 15}
+  matches tree.py (K=16 L_p=128 max_new=16): PASS
+  best-beam score within 1e-2 (K=16 L_p=128 max_new=16): PASS
+
+============================================================
+Case: K=16 L_p=4096 max_new=16
+============================================================
+  picks: {'shared_2l_1pool': 15}
+  L_p=4096 picks SHARED at least once: PASS
+  matches tree.py (K=16 L_p=4096 max_new=16): PASS
+  best-beam score within 1e-2 (K=16 L_p=4096 max_new=16): PASS
+
+============================================================
+Overall: SOME FAILED
+============================================================

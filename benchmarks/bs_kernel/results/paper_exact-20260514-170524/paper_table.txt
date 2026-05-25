@@ -1,0 +1,23 @@
+
+========== FastTree §4.1 paper-exact  ·  128 leaves / scenario ==========
+model          scenario                 method     decode_total  plan_total   fwd_total  plan%   fwd%  p50/step
+Llama-3.1-8B   multi_level_system       fasttree         5149.7       393.2      4723.2   7.6%  91.7%     18.28
+Llama-3.1-8B   multi_level_system       bs_kernel        2974.8       278.9      2662.9   9.4%  89.5%     10.84
+Llama-3.1-8B   multi_level_system       paged            3730.1       284.0      3412.8   7.6%  91.5%     14.65
+Llama-3.1-8B   multi_few_shot           fasttree         3857.8       466.4      3358.1  12.1%  87.0%     15.19
+Llama-3.1-8B   multi_few_shot           bs_kernel        4076.9       298.4      3742.7   7.3%  91.8%     15.92
+Llama-3.1-8B   multi_few_shot           paged            5535.4       408.1      5092.8   7.4%  92.0%     21.65
+Llama-3.1-8B   multi_chain_reasoning    fasttree         8307.8      1016.3      7223.5  12.2%  86.9%     15.71
+Llama-3.1-8B   multi_chain_reasoning    bs_kernel        7695.5       932.8      6691.5  12.1%  87.0%     14.77
+Llama-3.1-8B   multi_chain_reasoning    paged            7232.0       425.9      6736.1   5.9%  93.1%     14.10
+Llama-3.2-1B   multi_level_system       fasttree         2152.4       383.4      1737.0  17.8%  80.7%      6.52
+Llama-3.2-1B   multi_level_system       bs_kernel        1274.3       223.7      1018.5  17.6%  79.9%      4.64
+Llama-3.2-1B   multi_level_system       paged            1412.5       317.5      1062.4  22.5%  75.2%      5.34
+Llama-3.2-1B   multi_few_shot           fasttree         1675.4       455.2      1187.6  27.2%  70.9%      6.28
+Llama-3.2-1B   multi_few_shot           bs_kernel        1466.1       276.8      1156.3  18.9%  78.9%      5.36
+Llama-3.2-1B   multi_few_shot           paged            2069.2       400.8      1634.5  19.4%  79.0%      8.10
+Llama-3.2-1B   multi_chain_reasoning    fasttree         3404.2       993.4      2344.2  29.2%  68.9%      6.34
+Llama-3.2-1B   multi_chain_reasoning    bs_kernel        3061.8       922.6      2070.2  30.1%  67.6%      6.07
+Llama-3.2-1B   multi_chain_reasoning    paged            2543.0       416.4      2060.4  16.4%  81.0%      5.02
+
+full CSVs: benchmarks/bs_kernel/results/paper_exact-20260514-170524

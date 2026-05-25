@@ -1,0 +1,2 @@
+method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
+mlca,64,8192,32,256,2293.5528,28423.8648,111.4661,3.4833

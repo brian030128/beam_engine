@@ -1,0 +1,18 @@
+=== mlca long-decode SM90 cache 2026-05-17T20:43:02+08:00 ===
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['mlca']
+max_new: 2048
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 26715.31it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  mlca           warmup K=32  L_p=8192   B=16 discard          decode_total=106580.7ms  (108.6s wall)
+  mlca                  K=32  L_p=8192   B=16 prefill=  625.2ms  decode_total=106580.3ms  per_pt_token=  3.25ms  (107.6s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp4_long_decode/mlca_smcache.csv
+[W517 20:46:51.776380649 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+Done.

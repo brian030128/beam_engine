@@ -1,0 +1,29 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+K=16 L_p=30000 B=8 max_new=256
+methods: ['fasttree', 'bs_kernel']
+
+Loading model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 29040.68it/s]
+Model loaded.
+
+
+[fasttree plan-trace] 255 steps
+  tree nodes per step: mean=194.7 min=137 max=225
+  phase                mean     median        p90        p99        total
+  gather_ms           0.006      0.006      0.006      0.008         1.48
+  radix_ms            0.432      0.433      0.547      0.621       110.19
+  partial_ms          0.022      0.022      0.023      0.026         5.56
+  slots_ms            1.066      1.080      1.144      1.173       271.79
+  meta_ms             2.313      2.342      2.521      2.567       589.86
+  write_ms            0.076      0.076      0.080      0.084        19.31
+=== method=fasttree  (255 decode steps, 6.3s wall, per_pt_token=1.632 ms) ===
+  total_decode = 3329.6 ms  (13.06 ms/step)
+  phase       mean(ms)    median(ms)  total(ms)     %       
+  cow         0.162       0.045       41.3          1.2     
+  plan        4.126       4.181       1052.2        31.6    
+  forward     8.002       6.069       2040.6        61.3    
+  topk        0.634       0.507       161.6         4.9     
+  fork        0.120       0.039       30.6          0.9     
+

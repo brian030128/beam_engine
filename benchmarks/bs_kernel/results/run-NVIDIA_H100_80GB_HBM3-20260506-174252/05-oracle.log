@@ -1,0 +1,40 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+Loading tokenizer + model...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 15292.46it/s]
+grid: 3 workloads × 4 runs each
+
+=== K=16 L_p=8192 max_new=16 ===
+  forced per_beam               median decode =  12.79 ms
+  forced shared_2l_1pool        median decode =  11.79 ms
+  forced shared_2l_2pool        median decode =  11.62 ms
+  model picks shared_2l_1pool  (t_model=11.79ms)
+  oracle      shared_2l_2pool        (t_oracle=11.62ms)
+  regret      +1.5%
+
+=== K=32 L_p=8192 max_new=16 ===
+  forced per_beam               median decode =  16.64 ms
+  forced shared_2l_1pool        median decode =  13.74 ms
+  forced shared_2l_2pool        median decode =  13.76 ms
+  model picks shared_2l_1pool  (t_model=13.74ms)
+  oracle      shared_2l_1pool        (t_oracle=13.74ms)
+  regret      +0.0%
+
+=== K=64 L_p=8192 max_new=16 ===
+  forced per_beam               median decode =  26.48 ms
+  forced shared_2l_1pool        median decode =  19.52 ms
+  forced shared_2l_2pool        median decode =  19.63 ms
+  model picks shared_2l_1pool  (t_model=19.52ms)
+  oracle      shared_2l_1pool        (t_oracle=19.52ms)
+  regret      +0.0%
+
+============================================================
+Regret distribution:
+  mean  = +0.49%
+  p50   = +0.00%
+  p90   = +1.46%
+  p99   = +1.46%
+  max   = +1.46%
+
+wrote 3 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-174252/05-oracle-vs-model.csv

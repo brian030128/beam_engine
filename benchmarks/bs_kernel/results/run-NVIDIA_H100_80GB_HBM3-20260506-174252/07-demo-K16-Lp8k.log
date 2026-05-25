@@ -1,0 +1,49 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+=== Beam-search end-to-end demo ===
+K=16  L_p=8192  max_new=32
+model=meta-llama/Llama-3.1-8B
+
+Loading model and tokenizer...
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 148351.59it/s]
+prompt length = 8192 tokens
+prompt prefix = 'Once upon a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across '...
+
+--- running paged ---
+  total_wall = 1.67s  prefill = 1143ms  decode_p50 = 12.5ms
+--- running tree ---
+  total_wall = 0.76s  prefill = 230ms  decode_p50 = 15.7ms
+--- running fasttree ---
+  total_wall = 1.16s  prefill = 229ms  decode_p50 = 16.2ms
+--- running adaptive_pool ---
+  total_wall = 0.63s  prefill = 232ms  decode_p50 = 11.6ms
+--- running bs_kernel ---
+  total_wall = 0.59s  prefill = 234ms  decode_p50 = 11.2ms
+
+====================================================================================================
+method             total_s   prefill_ms    p50_ms    p99_ms   mean_ms  speedup_decode
+----------------------------------------------------------------------------------------------------
+paged                 1.67         1143      12.5      15.2      15.4           1.00×
+tree                  0.76          230      15.7      15.9      17.2           0.79×
+fasttree              1.16          229      16.2      19.6      29.9           0.77×
+adaptive_pool         0.63          232      11.6      14.1      12.8           1.08×
+bs_kernel             0.59          234      11.2      12.9      11.3           1.12×
+
+====================================================================================================
+Best beam from each method (token continuation, score=cum_log_prob):
+
+  [paged] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'
+
+  [tree] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'
+
+  [fasttree] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'
+
+  [adaptive_pool] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'
+
+  [bs_kernel] score=-0.004
+    ' a time, in a kingdom far away, there lived a curious scholar named Elara who studied the stars and the ways of the natural world. She traveled across'

@@ -1,0 +1,25 @@
+<frozen runpy>:128: RuntimeWarning: 'beam_engine.methods.bs_kernel.calibrate' found in sys.modules after import of package 'beam_engine.methods.bs_kernel', but prior to execution of 'beam_engine.methods.bs_kernel.calibrate'; this may result in unpredictable behaviour
+[calibrate] probing NVIDIA H100 80GB HBM3
+[calibrate] probing dtype=fp16
+  raw decode_launch=33.10 → anchored to launch_us=7.35
+[calibrate] probing dtype=bf16
+[calibrate] probing dtype=fp8_e4m3
+[calibrate] B_hbm(attn)=3.15 TB/s  (copy ref=1.30 TB/s)
+[calibrate] wrote /home/u4320956/.cache/beam_engine/coeffs-NVIDIA_H100_80GB_HBM3.json
+  B_hbm                =  3145633.4 bytes/µs   (3.15 TB/s)
+  merge_launch_us      =     5.0797
+  merge_bw_us_per_row  =   0.003280
+  decode_launch_us     =       7.35
+  per_tile[     bf16][ 16] =      23.53 µs
+  per_tile[     bf16][ 64] =      23.55 µs
+  per_tile[     bf16][128] =      24.21 µs
+  per_tile[     fp16][ 16] =      24.79 µs
+  per_tile[     fp16][ 64] =      23.97 µs
+  per_tile[     fp16][128] =      24.52 µs
+  per_tile[ fp8_e4m3][ 16] =      22.34 µs
+  per_tile[ fp8_e4m3][ 64] =      23.02 µs
+  per_tile[ fp8_e4m3][128] =      31.05 µs
+  decode_us_per_beam[     bf16] =   0.001395
+  decode_us_per_beam[     fp16] =   0.001396
+  decode_us_per_beam[ fp8_e4m3] =   0.001288
+[W525 17:55:17.498338625 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

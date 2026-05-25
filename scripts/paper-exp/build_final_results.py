@@ -47,12 +47,31 @@ def core(tag):
     return {"paged","bs_kernel","1p","dt"} if "FP8" in tag \
         else {"paged","fasttree","deft","mlca","bs_kernel","1p","dt"}
 
-def read(f, col):
+def read_raw(f, col):
+    """method -> list of every measured value (across data draws × repeats)."""
     d = defaultdict(list)
     for r in csv.DictReader(open(f)):
         try: d[norm(r["method"])].append(float(r[col]))
         except (KeyError, ValueError): pass
-    return {k: s.median(v) for k, v in d.items() if v}
+    return d
+
+def read(f, col):
+    return {k: s.median(v) for k, v in read_raw(f, col).items() if v}
+
+def n_draws(f):
+    """Number of distinct data_seed values present (1 for legacy CSVs that
+    predate the data_seed column)."""
+    seeds = set()
+    for r in csv.DictReader(open(f)):
+        seeds.add(r.get("data_seed", "0"))
+    return max(1, len(seeds))
+
+def iqr_str(vals):
+    """'p25–p75' across draws (blank if <2 samples)."""
+    if not vals or len(vals) < 2: return ""
+    xs = sorted(vals)
+    q = lambda p: xs[min(len(xs)-1, max(0, int(round(p*(len(xs)-1)))))]
+    return f"{q(0.25):.0f}–{q(0.75):.0f}"
 
 def pick(tag, pat):
     """largest-B file whose core methods are all present (settled cell)."""
@@ -89,9 +108,13 @@ def fmt(m, val, win, drop, decmap=None):
     return v
 
 out = ["# Final paper — end-to-end results (F1–F4)", "",
-       "Median over 3 warm repeats; lower = better. `1p`/`dt` = forced "
-       "SHARED_2L_1POOL / SHARED_2L_DEC_TAIL; `bs_kernel` = cost-model picker. "
-       "**bold** = row winner. F4 uses single-launch 1p + single-launch picker.", ""]
+       "Median over all measured iterations (data draws × warm repeats; warmup "
+       "discarded); lower = better. Each draw resamples the underlying "
+       "GSM8K/HotpotQA text at the SAME token-length shape (see the "
+       "Draws & spread tables for the per-cell draw count and inter-draw IQR). "
+       "`1p`/`dt` = forced SHARED_2L_1POOL / SHARED_2L_DEC_TAIL; `bs_kernel` = "
+       "cost-model picker. **bold** = row winner. F4 uses single-launch 1p + "
+       "single-launch picker.", ""]
 
 for tag, title in MODELS:
     drop = DROP_70B if "FP8" in tag else set()
@@ -138,12 +161,29 @@ for tag, title in MODELS:
                    " | ".join(fmt(m, p, None, drop, dec) for m in COLS) + " |")
     out.append("")
 
-out += ["## Notes", "",
-    "- **Scenarios.** F1 multi_doc_qa (~80K shared prefix, B=1, K=128); F2 multi_few_shot (~4K prefix, large B, K=128); F3 beam search (multi-level dynamic tree, L_p=16K, K=64); F4 self_consistency / best-of-N (static 2-level: shared prefix → K independent tails, B=1, K=16, per-model L_p = 1B 32K / 8B 16K / 70B 64K — the prefix length that puts attention in the 1POOL-win regime for that model's forward/attention balance; bigger/more-forward-bound models need a longer prefix. At those L_p the picker selects 1POOL and 1p/bs_kernel beat paged on all three, 10–22%).",
-    "- **Max-fit batch size.** F2/F3 batch sizes are the largest where all methods fit one node; they differ by model (footnoted in the config column).",
-    "- **70B is bf16 (unquantized), TP=4.** Llama-3-70B-Instruct at bf16 weights + bf16 KV on 4×H100, so all methods run (no fp8-KV limitation). bs_kernel/dt win every 70B cell — F1 2.7× over mlca, F2 1.4× over paged, F3 1.34× over mlca; the picker matches the best forced strategy on all three after the split-K kernel + cost-model fixes. (An earlier fp8/TP=2 run, where mlca won, is kept on disk but not shown here.)",
-    "- **Plan time.** Sum of per-step index/metadata build over all decode steps. For `bs_kernel` the parens show the cost-model dispatch decision sub-cost (small). `paged` now uses the same LCA-prefix-skip for its index build (shared prefill prefix converted once per prompt, not per beam), cutting its plan time ~8-9× on the long-prefix F1 cells. After that fix the methods' plan costs are close: bs_kernel is lowest on F1, but on the forking F3 beam_search paged plans faster (bs_kernel pays for GPU plan-state updates under heavy forking).",
-    ""]
+    # ---- draws & spread table (answers the data-statistics checklist) ----
+    out += ["### Draws & spread (decode_total_ms across data draws)", "",
+            "`draws` = distinct data resamples (each at the fixed shape); "
+            "IQR = p25–p75 of decode_total_ms over the measured iterations.", "",
+            "| cell | config | draws | paged med (IQR) | bs_kernel med (IQR) | winner IQR |",
+            "|---|---|---:|---:|---:|---:|"]
+    for name, cfg, f in cells:
+        if not f or not os.path.exists(f):
+            out.append(f"| {name} | {cfg} | — | — | — | — |"); continue
+        raw = read_raw(f, "decode_total_ms")
+        med = {k: s.median(v) for k, v in raw.items() if v}
+        valid = {k: v for k, v in med.items() if k not in drop}
+        win = min(valid, key=valid.get) if valid else None
+        def cell_str(m):
+            if m not in med: return "—"
+            iq = iqr_str(raw.get(m, []))
+            return f"{med[m]:.0f}" + (f" ({iq})" if iq else "")
+        out.append(
+            f"| {name} | {cfg} | {n_draws(f)} | {cell_str('paged')} | "
+            f"{cell_str('bs_kernel')} | "
+            f"{iqr_str(raw.get(win, [])) if win else '—'} |"
+        )
+    out.append("")
 
 open("final_paper_results.md", "w").write("\n".join(out))
 print("wrote final_paper_results.md")

@@ -1,0 +1,218 @@
+=== exp2 divergence-level ablation (1B diagnostic) 2026-05-24T20:07:43+08:00 ===
+cell:  L_p=8192, K=32, B=8, max_new=2048, window=[1500,2000)
+model: meta-llama/Llama-3.2-1B-Instruct  (tp=1, FA2)
+gate:  MIN_LEVEL_TOKENS=32 MIN_LEVEL_CHILDREN=2
+git:   d23cefe (multilevel-treespec)
+GPU:   NVIDIA H100 80GB HBM3
+
+=== running method: bs_kernel ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel']
+max_new: 2048
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 112923.57it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel      warmup K=32  L_p=8192   B=8  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 2047, SHARED: 0, XPROMPT: 0)
+
+  -- DEC_TAIL path (2047 steps) --
+  strategy mix: {'SHARED_2L_DEC_TAIL': 2047}
+  prefix re-plans: 39/2047 (1.9%)   decode full re-plans: 1/2047 (0.0%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   2.145      2.115      2.934      3.475      4391.72
+  pick_ms                     0.265      0.227      0.331      0.348       543.24
+  prefix_plan_ms              0.468      0.280      0.421      1.171       957.22
+  decode_build_ms             0.575      0.577      0.808      0.883      1176.32
+  decode_plan_ms              0.043      0.013      0.014      0.020        87.68
+discard          decode_total= 6129.9ms  ( 25.2s wall)
+  bs_kernel             K=32  L_p=8192   B=8  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 2047, SHARED: 0, XPROMPT: 0)
+
+  -- DEC_TAIL path (2047 steps) --
+  strategy mix: {'SHARED_2L_DEC_TAIL': 2047}
+  prefix re-plans: 39/2047 (1.9%)   decode full re-plans: 1/2047 (0.0%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   2.268      2.118      2.938      3.511      4642.36
+  pick_ms                     0.266      0.228      0.332      0.349       544.57
+  prefix_plan_ms              0.283      0.280      0.420      1.103       579.13
+  decode_build_ms             0.575      0.579      0.810      0.877      1177.40
+  decode_plan_ms              0.014      0.013      0.014      0.019        27.93
+prefill=  303.8ms  decode_total= 6010.9ms  per_pt_token=  1.50ms  ( 23.9s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp2_divlevels_1b/bs_kernel.csv
+[W524 20:08:44.908111782 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: bs_kernel_2l1p ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2l1p']
+max_new: 2048
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 110792.94it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_2l1p warmup K=32  L_p=8192   B=8  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047, XPROMPT: 0)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2022/2047 (98.8%)   plan_info cache hits: 1898/2047 (92.7%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   2.047      1.966      2.787      3.312      4189.32
+  pick_ms                     0.145      0.145      0.154      0.161       296.68
+  shared_pack_ms              1.227      1.138      1.696      2.017      2511.27
+  shared_plan_ms              0.142      0.073      0.080      0.894       290.95
+  shared_write_ms             0.112      0.113      0.121      0.126       229.20
+discard          decode_total= 8928.5ms  ( 33.7s wall)
+  bs_kernel_2l1p        K=32  L_p=8192   B=8  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047, XPROMPT: 0)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2022/2047 (98.8%)   plan_info cache hits: 1898/2047 (92.7%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.985      1.967      2.768      3.350      4063.92
+  pick_ms                     0.145      0.145      0.153      0.160       296.85
+  shared_pack_ms              1.236      1.152      1.695      1.989      2529.16
+  shared_plan_ms              0.131      0.073      0.080      0.893       268.01
+  shared_write_ms             0.112      0.114      0.120      0.126       229.74
+prefill=  307.1ms  decode_total= 8807.1ms  per_pt_token=  2.20ms  ( 32.5s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp2_divlevels_1b/bs_kernel_2l1p.csv
+[W524 20:10:02.192254922 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: bs_kernel_3l1p ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_3l1p']
+max_new: 2048
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 111212.61it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_3l1p warmup K=32  L_p=8192   B=8  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047, XPROMPT: 0)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2022/2047 (98.8%)   plan_info cache hits: 1898/2047 (92.7%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   2.052      1.974      2.794      3.312      4199.90
+  pick_ms                     0.168      0.168      0.178      0.185       344.04
+  shared_pack_ms              1.224      1.134      1.691      2.017      2505.18
+  shared_plan_ms              0.142      0.074      0.080      0.884       291.33
+  shared_write_ms             0.111      0.112      0.119      0.125       227.52
+discard          decode_total= 8921.6ms  ( 33.7s wall)
+  bs_kernel_3l1p        K=32  L_p=8192   B=8  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047, XPROMPT: 0)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2022/2047 (98.8%)   plan_info cache hits: 1898/2047 (92.7%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   1.984      1.963      2.774      3.338      4060.91
+  pick_ms                     0.168      0.168      0.177      0.183       343.25
+  shared_pack_ms              1.232      1.162      1.668      1.978      2521.73
+  shared_plan_ms              0.131      0.074      0.081      0.889       269.16
+  shared_write_ms             0.112      0.113      0.120      0.126       228.45
+prefill=  305.1ms  decode_total= 8792.0ms  per_pt_token=  2.20ms  ( 32.4s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp2_divlevels_1b/bs_kernel_3l1p.csv
+[W524 20:11:20.404873035 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: bs_kernel_4l1p ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_4l1p']
+max_new: 2048
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 112923.57it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_4l1p warmup K=32  L_p=8192   B=8  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047, XPROMPT: 0)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2022/2047 (98.8%)   plan_info cache hits: 1898/2047 (92.7%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   2.330      2.298      3.107      3.979      4768.99
+  pick_ms                     0.173      0.174      0.183      0.190       354.55
+  shared_pack_ms              1.203      1.105      1.690      1.976      2462.25
+  shared_plan_ms              0.140      0.071      0.078      0.880       286.21
+  shared_write_ms             0.109      0.110      0.116      0.122       222.42
+discard          decode_total= 9082.2ms  ( 34.2s wall)
+  bs_kernel_4l1p        K=32  L_p=8192   B=8  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047, XPROMPT: 0)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2022/2047 (98.8%)   plan_info cache hits: 1898/2047 (92.7%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   2.334      2.307      3.095      4.054      4776.69
+  pick_ms                     0.174      0.175      0.184      0.192       355.44
+  shared_pack_ms              1.155      1.141      1.672      1.956      2365.04
+  shared_plan_ms              0.129      0.072      0.079      0.885       265.06
+  shared_write_ms             0.110      0.111      0.117      0.123       224.15
+prefill=  306.6ms  decode_total= 8968.0ms  per_pt_token=  2.24ms  ( 33.0s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp2_divlevels_1b/bs_kernel_4l1p.csv
+[W524 20:12:39.738410985 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: bs_kernel_5l1p ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_5l1p']
+max_new: 2048
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 114688.00it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_5l1p warmup K=32  L_p=8192   B=8  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047, XPROMPT: 0)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2022/2047 (98.8%)   plan_info cache hits: 1898/2047 (92.7%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   2.664      2.581      3.509      4.524      5452.52
+  pick_ms                     0.182      0.184      0.195      0.204       372.95
+  shared_pack_ms              1.150      1.098      1.701      2.046      2353.11
+  shared_plan_ms              0.143      0.073      0.080      0.882       291.86
+  shared_write_ms             0.111      0.112      0.119      0.125       226.25
+discard          decode_total= 9236.3ms  ( 34.8s wall)
+  bs_kernel_5l1p        K=32  L_p=8192   B=8  
+[bs_kernel plan-trace] 2047 steps (PER_BEAM: 0, DEC_TAIL: 0, SHARED: 2047, XPROMPT: 0)
+
+  -- SHARED path (2047 steps) --
+  strategy mix: {'SHARED_2L_1POOL': 2047}
+  level-0 pack cache hits: 2022/2047 (98.8%)   plan_info cache hits: 1898/2047 (92.7%)
+  phase                        mean     median        p90        p99        total
+  decomp_ms                   2.673      2.569      3.498      4.523      5471.00
+  pick_ms                     0.182      0.184      0.195      0.204       373.12
+  shared_pack_ms              1.098      1.115      1.697      2.002      2247.87
+  shared_plan_ms              0.131      0.073      0.080      0.883       267.76
+  shared_write_ms             0.111      0.112      0.119      0.124       227.94
+prefill=  301.4ms  decode_total= 9115.3ms  per_pt_token=  2.28ms  ( 33.6s wall)
+
+wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp2_divlevels_1b/bs_kernel_5l1p.csv
+[W524 20:14:00.168134313 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+
+=== running method: bs_kernel_2ldt ===
+grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
+methods: ['bs_kernel_2ldt']
+max_new: 2048
+tp_size: 1, device: cuda
+Loading tokenizer + model...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 118866.91it/s]
+Model loaded.
+
+loaded 200 prompts from data/gov_report.jsonl
+  bs_kernel_2ldt warmup K=32  L_p=8192   B=8  

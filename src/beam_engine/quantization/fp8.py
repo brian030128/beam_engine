@@ -53,9 +53,19 @@ class Fp8Config:
 
 def detect_quant_config(model_dir: str) -> Optional[Fp8Config]:
     """Return an ``Fp8Config`` if the checkpoint's ``config.json`` declares
-    fp8 quantization; otherwise ``None``. Reads only ``config.json``
-    (already downloaded by ``snapshot_download``'s ``*.json`` glob), so
-    this is cheap and side-effect-free.
+    per-tensor static fp8 quantization; otherwise ``None``. Reads only
+    ``config.json``, so this is cheap and side-effect-free.
+
+    Two upstream schemas land here:
+    - **AutoFP8** (``quant_method: fp8``, e.g. RedHatAI's 70B-FP8) —
+      per-tensor static scales, optional ``activation_scheme: static``.
+      Block-quantized variants (``weight_block_size`` set, e.g.
+      Qwen/Qwen3-4B-FP8) are rejected; they need a different GEMM path.
+    - **compressed-tensors / naive-quantized** (``quant_method:
+      compressed-tensors`` + ``format: naive-quantized``, e.g.
+      RedHatAI's Llama-3.1-8B-Instruct-FP8) — same per-tensor static fp8
+      under a different field schema. Validated by checking each
+      ``config_groups.*.weights`` and ``input_activations`` block.
     """
     cfg_path = os.path.join(model_dir, "config.json")
     if not os.path.exists(cfg_path):
@@ -66,16 +76,54 @@ def detect_quant_config(model_dir: str) -> Optional[Fp8Config]:
     if not qcfg:
         return None
     method = qcfg.get("quant_method", "").lower()
-    if method != "fp8":
-        # Other quant methods (gptq/awq/compressed-tensors-int8/…) flow
-        # to the unquantized path; callers will see a load error from
-        # the standard loader and we can extend here when needed.
-        return None
-    return Fp8Config(
-        quant_method="fp8",
-        activation_scheme=qcfg.get("activation_scheme", "static"),
-        ignored_layers=tuple(qcfg.get("ignored_layers", ())),
-    )
+
+    if method == "fp8":
+        # Block-quantized fp8 (Qwen3-FP8, DeepSeek-V3 style) ships a
+        # ``weight_block_size`` and uses ``weight_scale_inv`` per-block
+        # rather than per-tensor ``weight_scale``. The fp8 GEMM path
+        # here only handles per-tensor scales — refuse to claim this
+        # checkpoint and let the caller see a load error.
+        if qcfg.get("weight_block_size"):
+            return None
+        return Fp8Config(
+            quant_method="fp8",
+            activation_scheme=qcfg.get("activation_scheme", "static"),
+            ignored_layers=tuple(qcfg.get("ignored_layers", ())),
+        )
+
+    if method == "compressed-tensors":
+        # naive-quantized = the legacy AutoFP8 layout (Llama-3.1-8B-FP8).
+        # float-quantized = newer label for the same per-tensor static
+        # fp8 layout (Llama-3.2-1B-FP8). Both share the same on-disk
+        # shape (weight + weight_scale + input_scale per linear) so the
+        # same remap+load path applies.
+        if qcfg.get("format") not in ("naive-quantized", "float-quantized"):
+            return None
+        groups = qcfg.get("config_groups") or {}
+        if not groups:
+            return None
+        for g in groups.values():
+            w = g.get("weights") or {}
+            if w.get("num_bits") != 8 or w.get("type") != "float":
+                return None
+            if w.get("strategy") != "tensor":
+                return None
+            a = g.get("input_activations") or {}
+            if a:
+                if a.get("num_bits") != 8 or a.get("type") != "float":
+                    return None
+                if a.get("strategy") != "tensor" or a.get("dynamic"):
+                    return None
+        return Fp8Config(
+            quant_method="fp8",
+            activation_scheme="static",
+            ignored_layers=tuple(qcfg.get("ignore", ())),
+        )
+
+    # Other quant methods (gptq/awq/compressed-tensors-int8/…) flow to
+    # the unquantized path; callers will see a load error from the
+    # standard loader and we can extend here when needed.
+    return None
 
 
 def is_layer_ignored(param_path: str, ignored_layers: Sequence[str]) -> bool:

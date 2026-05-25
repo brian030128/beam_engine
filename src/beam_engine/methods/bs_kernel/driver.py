@@ -567,6 +567,20 @@ class BsKernelBackend:
     fused_merge: bool = False
     available_strategies: set[Strategy] | None = None
 
+    # Step-scheduled strategy override (ablation). A list of
+    # ``(start_step, Strategy)`` thresholds; on decode step ``s`` the active
+    # forced strategy is the one with the greatest ``start_step <= s`` (the
+    # last applicable threshold persists to end-of-run). When set, it
+    # overrides ``available_strategies`` on a per-step basis — used to A/B a
+    # hand-scheduled 1POOL→DEC_TAIL crossover against the cost-model picker.
+    # ``None`` = no schedule (``available_strategies`` / the picker unchanged).
+    strategy_schedule: list[tuple[int, Strategy]] | None = None
+    # Decode-step counter, incremented once per ``plan_decode_step`` call.
+    # Drives ``strategy_schedule``. Starts at 0 on a fresh backend (one is
+    # built per ``beam_search`` / benchmark repeat), so the schedule is
+    # measured from the first decode step of each run.
+    _decode_step: int = field(default=0, init=False, repr=False)
+
     # DEC_TAIL plan cache: skip prefix_prefill.plan() when the LCA is
     # unchanged for every prompt across consecutive steps. The LCA is
     # monotone non-decreasing within a beam_search call, so re-plans
@@ -669,6 +683,14 @@ class BsKernelBackend:
     # cache-hit flags for one step.
     _plan_trace: list = field(default_factory=list, init=False, repr=False)
 
+    # Lightweight per-step picked-strategy log (always on, no cuda.synchronize):
+    # one ``Strategy.value`` string appended per ``plan_decode_step``. Lets a
+    # bench dump the exact strategy the picker chose at each decode step — and
+    # thus the 1POOL→DEC_TAIL flip point — without the per-step sync the
+    # BS_KERNEL_TRACE_PLAN path adds (which would bias bs_kernel's timing).
+    # Reset per beam_search (fresh backend).
+    _picked_strategy_log: list = field(default_factory=list, init=False, repr=False)
+
     def init_wrappers(
         self,
         *,
@@ -770,6 +792,16 @@ class BsKernelBackend:
         # workloads. Unset → default 2L path unchanged. See _force_prefix_split.
         _fps_env = os.environ.get("BS_KERNEL_FORCE_PREFIX_SPLIT_PAGES", "").strip()
         force_prefix_split: int | None = int(_fps_env) if _fps_env else None
+        # Dispatch-space depth-ablation knobs: a beam-tree divergence only
+        # becomes its own shared cascade level when the diverging group has
+        # > MIN_LEVEL_CHILDREN beams AND shares > MIN_LEVEL_TOKENS tokens.
+        # Defaults (children=1, tokens=0) keep the legacy split-on-any-fork
+        # behavior; the ablation sets children=8, tokens=128. See
+        # ``_adaptive_levels``.
+        min_level_children = int(
+            os.environ.get("BS_KERNEL_MIN_LEVEL_CHILDREN", "1"))
+        min_level_tokens = int(
+            os.environ.get("BS_KERNEL_MIN_LEVEL_TOKENS", "0"))
         if trace_on:
             torch.cuda.synchronize()
             _t_start = time.perf_counter()
@@ -817,6 +849,9 @@ class BsKernelBackend:
                     pages_prefix, pages_tails, lpl_per_beam, K,
                     max_levels=max_depth,
                     start_lca=last_lca_per_prompt[b],
+                    min_level_children=min_level_children,
+                    min_level_tokens=min_level_tokens,
+                    tokens_per_page=ps,
                 )
                 if force_prefix_split is not None:
                     levels = _force_prefix_split(levels, force_prefix_split)
@@ -870,13 +905,31 @@ class BsKernelBackend:
             if xp_sb is not None:
                 cross_prompt_lca = xp_sb[2]
 
+        # ---- Step-scheduled strategy override (ablation). ----
+        # When a ``strategy_schedule`` is set, force the strategy for this
+        # decode step instead of consulting the picker's full candidate set:
+        # pick the strategy whose ``start_step`` is the greatest one <= the
+        # current decode step. Robust to threshold ordering.
+        avail_strategies = self.available_strategies
+        if self.strategy_schedule:
+            step = self._decode_step
+            best_thr = -1
+            active = self.strategy_schedule[0][1]
+            for thr, strat in self.strategy_schedule:
+                if thr <= step and thr > best_thr:
+                    best_thr = thr
+                    active = strat
+            avail_strategies = {active}
+        self._decode_step += 1
+
         # ---- Cost-model pick across the whole batch. ----
         pick = pick_strategy_batch(
             workloads, self.coefficients,
             fused_merge=self.fused_merge,
-            available_strategies=self.available_strategies,
+            available_strategies=avail_strategies,
             cross_prompt_lca=cross_prompt_lca,
         )
+        self._picked_strategy_log.append(pick.strategy.value)
         if trace_on:
             _t_pick = time.perf_counter()
 

@@ -1,0 +1,92 @@
+family,shape,kernel,ms,n_leaves,n_levels,total_pages,picker,oracle,bs_vs_paged,regret,picker_optimal,motivation
+flat_beam,flat_lp8k_k16,paged,0.07679999992251396,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7790955884548452,1.0011131810047864,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,mlca,0.15252800285816193,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7790955884548452,1.0011131810047864,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,fasttree,0.0628959983587265,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7790955884548452,1.0011131810047864,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,bs_kernel,0.043168000876903534,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7790955884548452,1.0011131810047864,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,bs_2l1p,0.04312000051140785,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7790955884548452,1.0011131810047864,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,bs_2dt,0.062384000048041344,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7790955884548452,1.0011131810047864,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp8k_k16,bs_3dt,nan,16,2,592,SHARED_2L_1POOL,bs_2l1p,1.7790955884548452,1.0011131810047864,yes,"medium prefix, K=16 beams"
+flat_beam,flat_lp32k_k16,paged,0.2818400114774704,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.4250438577687725,0.9773850295825889,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,mlca,0.4943999946117401,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.4250438577687725,0.9773850295825889,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,fasttree,0.16838399320840836,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.4250438577687725,0.9773850295825889,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,bs_kernel,0.0822880007326603,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.4250438577687725,0.9773850295825889,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,bs_2l1p,0.08926400169730186,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.4250438577687725,0.9773850295825889,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,bs_2dt,0.08419200032949448,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.4250438577687725,0.9773850295825889,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp32k_k16,bs_3dt,nan,16,2,2128,SHARED_2L_DEC_TAIL,bs_2dt,3.4250438577687725,0.9773850295825889,yes,"long prefix (L2-thrash regime), K=16"
+flat_beam,flat_lp8k_k4,paged,0.03488000109791756,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.152219927005377,0.998944025742661,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,mlca,0.1409440040588379,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.152219927005377,0.998944025742661,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,fasttree,0.05926399864256382,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.152219927005377,0.998944025742661,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,bs_kernel,0.030271999537944794,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.152219927005377,0.998944025742661,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,bs_2l1p,0.03030399978160858,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.152219927005377,0.998944025742661,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,bs_2dt,0.06430399790406227,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.152219927005377,0.998944025742661,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k4,bs_3dt,nan,4,2,532,SHARED_2L_1POOL,bs_2l1p,1.152219927005377,0.998944025742661,yes,"medium prefix, narrow K=4 fan-out"
+flat_beam,flat_lp8k_k64,paged,0.252591997385025,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.636719618430211,1.0154386052817972,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,mlca,0.18823999911546707,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.636719618430211,1.0154386052817972,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,fasttree,0.21636799722909927,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.636719618430211,1.0154386052817972,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,bs_kernel,0.06945599988102913,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.636719618430211,1.0154386052817972,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,bs_2l1p,0.26870399713516235,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.636719618430211,1.0154386052817972,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,bs_2dt,0.06839999929070473,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.636719618430211,1.0154386052817972,yes,"medium prefix, wide K=64 fan-out"
+flat_beam,flat_lp8k_k64,bs_3dt,nan,64,2,832,SHARED_2L_DEC_TAIL,bs_2dt,3.636719618430211,1.0154386052817972,yes,"medium prefix, wide K=64 fan-out"
+batched_beam,bbeam_b20_lp8k_k16,paged,1.3461440205574036,320,2,11840,SHARED_2L_1POOL,bs_2dt,3.6239661671893253,1.0388402108319634,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,mlca,0.9052480161190033,320,2,11840,SHARED_2L_1POOL,bs_2dt,3.6239661671893253,1.0388402108319634,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,fasttree,0.421424001455307,320,2,11840,SHARED_2L_1POOL,bs_2dt,3.6239661671893253,1.0388402108319634,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,bs_kernel,0.37145601212978363,320,2,11840,SHARED_2L_1POOL,bs_2dt,3.6239661671893253,1.0388402108319634,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,bs_2l1p,0.37032000720500946,320,2,11840,SHARED_2L_1POOL,bs_2dt,3.6239661671893253,1.0388402108319634,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,bs_2dt,0.35756799578666687,320,2,11840,SHARED_2L_1POOL,bs_2dt,3.6239661671893253,1.0388402108319634,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b20_lp8k_k16,bs_3dt,nan,320,2,11840,SHARED_2L_1POOL,bs_2dt,3.6239661671893253,1.0388402108319634,yes,"B=20 prompts × K=16, L_p=8k (1POOL≈DEC_TAIL knee)"
+batched_beam,bbeam_b8_lp16k_k32,paged,2.1419520378112793,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.365722144180722,0.9992852759680675,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,mlca,0.7097920179367065,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.365722144180722,0.9992852759680675,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,fasttree,1.809872031211853,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.365722144180722,0.9992852759680675,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,bs_kernel,0.290800005197525,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.365722144180722,0.9992852759680675,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,bs_2l1p,0.5565280020236969,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.365722144180722,0.9992852759680675,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,bs_2dt,0.29100799560546875,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.365722144180722,0.9992852759680675,yes,"B=8 prompts × K=32, long prefix"
+batched_beam,bbeam_b8_lp16k_k32,bs_3dt,nan,256,2,9472,SHARED_2L_DEC_TAIL,bs_2dt,7.365722144180722,0.9992852759680675,yes,"B=8 prompts × K=32, long prefix"
+diverse_groups,dbs_g4_k4,paged,0.07976000010967255,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6566965271248466,1.0016644600460607,yes,1 prefix → 4 diversity groups → 4 beams each
+diverse_groups,dbs_g4_k4,mlca,0.17348799854516983,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6566965271248466,1.0016644600460607,yes,1 prefix → 4 diversity groups → 4 beams each
+diverse_groups,dbs_g4_k4,fasttree,0.057920001447200775,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6566965271248466,1.0016644600460607,yes,1 prefix → 4 diversity groups → 4 beams each
+diverse_groups,dbs_g4_k4,bs_kernel,0.04814400151371956,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6566965271248466,1.0016644600460607,yes,1 prefix → 4 diversity groups → 4 beams each
+diverse_groups,dbs_g4_k4,bs_2l1p,0.04806400090456009,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6566965271248466,1.0016644600460607,yes,1 prefix → 4 diversity groups → 4 beams each
+diverse_groups,dbs_g4_k4,bs_2dt,0.06483200192451477,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6566965271248466,1.0016644600460607,yes,1 prefix → 4 diversity groups → 4 beams each
+diverse_groups,dbs_g4_k4,bs_3dt,0.06881600245833397,16,3,656,SHARED_2L_1POOL,bs_2l1p,1.6566965271248466,1.0016644600460607,yes,1 prefix → 4 diversity groups → 4 beams each
+diverse_groups,dbs_g8_k8,paged,0.26371200382709503,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3809232177052544,0.9940864151108224,yes,1 prefix → 8 diversity groups → 8 beams each
+diverse_groups,dbs_g8_k8,mlca,0.21377599984407425,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3809232177052544,0.9940864151108224,yes,1 prefix → 8 diversity groups → 8 beams each
+diverse_groups,dbs_g8_k8,fasttree,0.22340799868106842,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3809232177052544,0.9940864151108224,yes,1 prefix → 8 diversity groups → 8 beams each
+diverse_groups,dbs_g8_k8,bs_kernel,0.07799999788403511,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3809232177052544,0.9940864151108224,yes,1 prefix → 8 diversity groups → 8 beams each
+diverse_groups,dbs_g8_k8,bs_2l1p,0.27990399301052094,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3809232177052544,0.9940864151108224,yes,1 prefix → 8 diversity groups → 8 beams each
+diverse_groups,dbs_g8_k8,bs_2dt,0.07846400141716003,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3809232177052544,0.9940864151108224,yes,1 prefix → 8 diversity groups → 8 beams each
+diverse_groups,dbs_g8_k8,bs_3dt,0.09372799843549728,64,3,960,SHARED_2L_DEC_TAIL,bs_2dt,3.3809232177052544,0.9940864151108224,yes,1 prefix → 8 diversity groups → 8 beams each
+multi_chain,chain_b32_c4,paged,0.31199999153614044,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2522476036998722,0.9998073672129848,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,mlca,0.7309920191764832,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2522476036998722,0.9998073672129848,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,fasttree,0.2947999984025955,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2522476036998722,0.9998073672129848,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,bs_kernel,0.24915199726819992,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2522476036998722,0.9998073672129848,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,bs_2l1p,0.2492000013589859,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2522476036998722,0.9998073672129848,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,bs_2dt,0.25201600790023804,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2522476036998722,0.9998073672129848,yes,32 questions × 4 chains (multi_chain_reasoning)
+multi_chain,chain_b32_c4,bs_3dt,nan,128,2,10240,SHARED_2L_1POOL,bs_2l1p,1.2522476036998722,0.9998073672129848,yes,32 questions × 4 chains (multi_chain_reasoning)
+long_decode,ld_lp8k_tail2k,paged,0.10156799852848053,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1319543625355888,0.9948553804509248,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,mlca,0.2762239873409271,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1319543625355888,0.9948553804509248,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,fasttree,0.13553600013256073,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1319543625355888,0.9948553804509248,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,bs_kernel,0.08972799777984619,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1319543625355888,0.9948553804509248,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,bs_2l1p,0.09019200131297112,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1319543625355888,0.9948553804509248,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,bs_2dt,0.09785600006580353,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1319543625355888,0.9948553804509248,yes,"L_p=8k, 2k-token tails, K=16"
+long_decode,ld_lp8k_tail2k,bs_3dt,nan,16,2,2560,SHARED_2L_1POOL,bs_2l1p,1.1319543625355888,0.9948553804509248,yes,"L_p=8k, 2k-token tails, K=16"
+adversarial,adv_tiny_prefix,paged,0.02995199989527464,16,2,96,PER_BEAM,paged,0.9785676838249948,1.0219017207795287,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,mlca,0.0631519965827465,16,2,96,PER_BEAM,paged,0.9785676838249948,1.0219017207795287,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,fasttree,0.05716799944639206,16,2,96,PER_BEAM,paged,0.9785676838249948,1.0219017207795287,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,bs_kernel,0.030608000233769417,16,2,96,PER_BEAM,paged,0.9785676838249948,1.0219017207795287,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,bs_2l1p,0.03387200087308884,16,2,96,PER_BEAM,paged,0.9785676838249948,1.0219017207795287,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,bs_2dt,0.05716799944639206,16,2,96,PER_BEAM,paged,0.9785676838249948,1.0219017207795287,yes,L_p=256 ≪ tail×K
+adversarial,adv_tiny_prefix,bs_3dt,nan,16,2,96,PER_BEAM,paged,0.9785676838249948,1.0219017207795287,yes,L_p=256 ≪ tail×K
+wide_fanout,wide_k128,paged,0.5092000067234039,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.698110559017654,0.9825935618509516,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,mlca,0.24318400025367737,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.698110559017654,0.9825935618509516,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,fasttree,0.40559999644756317,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.698110559017654,0.9825935618509516,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,bs_kernel,0.10838399827480316,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.698110559017654,0.9825935618509516,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,bs_2l1p,0.29177598655223846,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.698110559017654,0.9825935618509516,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,bs_2dt,0.11030399799346924,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.698110559017654,0.9825935618509516,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k128,bs_3dt,nan,128,2,1152,SHARED_2L_DEC_TAIL,bs_2dt,4.698110559017654,0.9825935618509516,yes,"L_p=8k, K=128 fan-out"
+wide_fanout,wide_k256,paged,1.02155202627182,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.542755621731194,0.9983532347900228,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,mlca,0.33847999572753906,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.542755621731194,0.9983532347900228,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,fasttree,0.545520007610321,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.542755621731194,0.9983532347900228,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,bs_kernel,0.18430399894714355,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.542755621731194,0.9983532347900228,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,bs_2l1p,0.315871998667717,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.542755621731194,0.9983532347900228,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,bs_2dt,0.18460800498723984,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.542755621731194,0.9983532347900228,yes,"L_p=8k, K=256 fan-out"
+wide_fanout,wide_k256,bs_3dt,nan,256,2,1792,SHARED_2L_DEC_TAIL,bs_2dt,5.542755621731194,0.9983532347900228,yes,"L_p=8k, K=256 fan-out"

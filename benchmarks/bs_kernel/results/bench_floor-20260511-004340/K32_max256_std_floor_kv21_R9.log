@@ -1,0 +1,85 @@
+/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
+We recommend installing via `pip install torch-c-dlpack-ext`
+  warnings.warn(
+Loading 'meta-llama/Llama-3.2-1B'...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 20661.60it/s]
+Cell: B=32 K=32 L_p=8192 max_new=256 dbs=False cap_depths=[2] merge_us_factors=[1.0, 0.0]
+
+GQA group G = 4
+Building 32 pairwise-distinct prompts of length 8192...
+
+Warmup pass...
+
+--- Iteration 1/5 ---
+  Running bs_kernel_default_kv21_R9...
+  Running bs_kernel_cap2_kv21_R9...
+  Running bs_kernel_default_f0_kv21_R9...
+
+--- Iteration 2/5 ---
+  Running bs_kernel_default_kv21_R9...
+  Running bs_kernel_cap2_kv21_R9...
+  Running bs_kernel_default_f0_kv21_R9...
+
+--- Iteration 3/5 ---
+  Running bs_kernel_default_kv21_R9...
+  Running bs_kernel_cap2_kv21_R9...
+  Running bs_kernel_default_f0_kv21_R9...
+
+--- Iteration 4/5 ---
+  Running bs_kernel_default_kv21_R9...
+  Running bs_kernel_cap2_kv21_R9...
+  Running bs_kernel_default_f0_kv21_R9...
+
+--- Iteration 5/5 ---
+  Running bs_kernel_default_kv21_R9...
+  Running bs_kernel_cap2_kv21_R9...
+  Running bs_kernel_default_f0_kv21_R9...
+
+==================================================================================================================================
+Wall-time comparison — DECODE STEP (mean ± σ over 5 repeats)
+==================================================================================================================================
+method                                  decode_ms (μ±σ)                   Δ vs default
+----------------------------------------------------------------------------------------------------------------------------------
+bs_kernel_default_kv21_R9               13318.37 ± 34.53                                  —
+bs_kernel_cap2_kv21_R9                  13062.34 ± 31.22          -256.04 ± 46.55 (-1.92%)*
+bs_kernel_default_f0_kv21_R9            16559.16 ± 17.76        +3240.79 ± 38.82 (+24.33%)*
+
+==================================================================================================================================
+Phase breakdown — FORWARD ms = GPU attention+MLP, mean ± σ over 5 repeats
+==================================================================================================================================
+method                                    forward (μ±σ)                   Δfwd       plan      cow       topk     fork
+----------------------------------------------------------------------------------------------------------------------------------
+bs_kernel_default_kv21_R9           5150.27 ±  2.37                         —    6819.41   181.22     777.02   386.76
+bs_kernel_cap2_kv21_R9              5151.09 ±  1.02    +0.83 ± 2.58 (+0.02%)     6575.11   181.59     777.09   373.73
+bs_kernel_default_f0_kv21_R9        8186.03 ±  5.56    +3035.76 ± 6.04 (+58.94%)*    7080.25   181.93     776.94   330.30
+
+'*' = |Δ| > 2σ (statistically distinguishable at this sample size)
+
+--- bs_kernel_default_kv21_R9 picker stats ---
+  Steps × prompts total : 8160
+  Cut-count distribution (per prompt × step):
+    1 cuts (2L cascade    ) :    8160  (100.0%)
+  Top intermediate (R, run_pages) in LCA trees:
+    R=2   run_pages=1   → R·G=8   pad@T_pre=128 = 93.8%   count=14038
+    R=2   run_pages=2   → R·G=8   pad@T_pre=128 = 93.8%   count=7279
+    R=28  run_pages=1   → R·G=112 pad@T_pre=128 = 12.5%   count=2747
+    R=24  run_pages=1   → R·G=96  pad@T_pre=128 = 25.0%   count=2522
+    R=26  run_pages=1   → R·G=104 pad@T_pre=128 = 18.8%   count=2459
+    R=29  run_pages=1   → R·G=116 pad@T_pre=128 = 9.4%   count=2446
+    R=20  run_pages=1   → R·G=80  pad@T_pre=128 = 37.5%   count=2372
+    R=27  run_pages=1   → R·G=108 pad@T_pre=128 = 15.6%   count=2336
+    R=30  run_pages=1   → R·G=120 pad@T_pre=128 = 6.2%   count=2320
+    R=19  run_pages=1   → R·G=76  pad@T_pre=128 = 40.6%   count=2309
+
+--- bs_kernel_cap2_kv21_R9 picker stats ---
+  Steps × prompts total : 8160
+  Cut-count distribution (per prompt × step):
+    1 cuts (2L cascade    ) :    8160  (100.0%)
+
+--- bs_kernel_default_f0_kv21_R9 picker stats ---
+  Steps × prompts total : 8160
+  Cut-count distribution (per prompt × step):
+    1 cuts (2L cascade    ) :    1731  ( 21.2%)
+    2 cuts (3L cascade    ) :    3995  ( 49.0%)
+    3 cuts (4L cascade    ) :    2434  ( 29.8%)
+
