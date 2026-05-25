@@ -1,9 +1,8 @@
-"""bs_kernel correctness vs tree.py.
+"""bs_kernel correctness vs paged.py.
 
-`tree.py` is the validated numerical reference (`tests/test_baselines.py`
-already establishes that paged.py and tree.py produce identical beam token
-sets within fp16 attention drift). This script asserts that bs_kernel.beam_search
-matches tree.py across:
+`paged.py` is the validated numerical reference — the PagedAttention
+baseline. This script asserts that bs_kernel.beam_search matches
+paged.py across:
 
   * K ∈ {1, 4, 16}        K=1 verifies the degenerate-to-PER_BEAM fallback
                           (cost model picks PER_BEAM, driver dispatches to
@@ -31,7 +30,7 @@ from collections import Counter
 import torch
 from transformers import AutoTokenizer
 
-from beam_engine.baselines import tree
+from beam_engine.baselines import paged
 from beam_engine.methods import bs_kernel
 from beam_engine.methods.bs_kernel.cost_model import Strategy
 from beam_engine.models.modeling_llama import LlamaForCausalLM
@@ -120,7 +119,7 @@ def main():
         print(f"Case: {label}")
         print("=" * 60)
 
-        ref_beams = tree.beam_search(
+        ref_beams = paged.beam_search(
             model, config, [prompt_ids], max_new, K,
         )[0]
         our_beams_list, picks_list = bs_kernel.beam_search(
@@ -147,7 +146,7 @@ def main():
                 any(p.strategy != Strategy.PER_BEAM for p in picks),
             )
 
-        all_pass &= _ok(f"matches tree.py ({label})", _compare(label, ref_beams, our_beams))
+        all_pass &= _ok(f"matches paged.py ({label})", _compare(label, ref_beams, our_beams))
 
         # Best-beam score sanity (tighter tolerance than per-beam drift).
         all_pass &= _ok(

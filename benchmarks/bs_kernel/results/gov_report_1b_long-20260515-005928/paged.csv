@@ -1,2 +1,0 @@
-method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms,plan_mean_ms,plan_total_ms,forward_mean_ms,forward_total_ms,cow_mean_ms,cow_total_ms,topk_mean_ms,topk_total_ms,fork_mean_ms,fork_total_ms
-paged,32,8192,16,2048,624.3050,81111.7489,39.6247,2.4765,7.8916,16154.0461,28.1792,57682.8012,0.5381,1101.3993,1.6370,3350.9930,1.3649,2793.9589

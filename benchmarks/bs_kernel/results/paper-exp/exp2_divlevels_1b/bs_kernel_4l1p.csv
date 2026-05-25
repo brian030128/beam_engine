@@ -1,2 +1,0 @@
-method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms,plan_mean_ms,plan_total_ms,forward_mean_ms,forward_total_ms,cow_mean_ms,cow_total_ms,topk_mean_ms,topk_total_ms,fork_mean_ms,fork_total_ms,dispatch_total_ms
-bs_kernel_4l1p,32,8192,8,2048,306.6119,8967.9654,17.9359,2.2420,4.2711,2135.5551,11.8911,5945.5288,0.3689,184.4291,1.1721,586.0433,0.2197,109.8662,89.0372

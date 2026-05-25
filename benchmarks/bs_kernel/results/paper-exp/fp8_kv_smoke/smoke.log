@@ -1,26 +1,0 @@
-=== fp8 KV smoke on 8B started 2026-05-20T15:13:20+08:00 ===
-model: meta-llama/Llama-3.1-8B  (tp_size=1)
-scenarios: ['multi_level_system']
-methods:   ['bs_kernel', 'paged']
-max_new:   16, repeat: 1
-
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 23721.00it/s]
-Model loaded.
-
-k_overrides: [16]
-Building TreeSpecs (this tokenizes the inputs)...
-  multi_level_system       [K=16    ] B=2   K=16  L_shared~2516  L_priv~80    n_leaves=32
-
---- multi_level_system [K=16] ---
-  bs_kernel    r=0  prefill= 1149.3ms  decode=  201.1ms  plan/step= 2.60ms  fwd/step=10.70ms  p50/step= 9.91ms  wall=  1.5s
-  paged        r=0  prefill=  205.6ms  decode=  156.0ms  plan/step= 0.50ms  fwd/step= 9.79ms  p50/step=10.27ms  wall=  0.5s
-  rank (decode_total): paged=156.0, bs_kernel=201.1
-
-
-wrote 2 rows to benchmarks/bs_kernel/results/paper-exp/fp8_kv_smoke/smoke.csv
-
-=== summary (best decode_total per method, ms) ===
-multi_level_system       [K=16    ]   rank (decode_total): paged=156.0, bs_kernel=201.1
-[W520 15:13:34.797913934 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-Done.

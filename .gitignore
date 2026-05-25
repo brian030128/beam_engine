@@ -34,9 +34,16 @@ dist/
 # Out-of-repo backups
 3rdparty.backup/
 
-# Per-run benchmark outputs (not tracked; use run_all.sh and inspect results dirs locally)
+# Per-run scratch benchmark outputs (not tracked).
 benchmarks/bs_kernel/results/run-*/
+# Result subdirs are ignored by default, but the paper-result dirs are kept
+# tracked (they back the paper's tables/figure — see REPRODUCE.md).
 benchmarks/bs_kernel/results/*/
+!benchmarks/bs_kernel/results/paper-exp/
+benchmarks/bs_kernel/results/paper-exp/*/
+!benchmarks/bs_kernel/results/paper-exp/final_paper/
+!benchmarks/bs_kernel/results/paper-exp/exp2_divlevels_8b_tp2/
+!benchmarks/bs_kernel/results/paper-exp/exp3_plan_breakdown/
 
 # Out-of-tree third-party clones (sglang etc.)
 3rdparty/sglang/

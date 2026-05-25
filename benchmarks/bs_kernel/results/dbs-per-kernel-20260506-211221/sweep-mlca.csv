@@ -1,4 +1,0 @@
-method,K,L_p,max_new,prefill_ms,decode_step_ms_p50,decode_step_ms_p90,decode_step_ms_p99,decode_step_ms_mean,decode_step_count
-mlca,16,8192,16,1125.5297,13.0722,15.4365,121.3373,20.2547,15
-mlca,32,8192,16,233.9969,14.6663,20.7590,24.0361,15.7438,15
-mlca,64,8192,16,230.9324,19.8285,26.0398,31.8061,20.6550,15

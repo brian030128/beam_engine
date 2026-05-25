@@ -1,36 +1,0 @@
-=== multi_doc_qa K=128 B=4 70B-fp8 2026-05-23T19:34:38+08:00 ===
-W0523 19:34:40.468000 1694873 torch/distributed/run.py:803] 
-W0523 19:34:40.468000 1694873 torch/distributed/run.py:803] *****************************************
-W0523 19:34:40.468000 1694873 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
-W0523 19:34:40.468000 1694873 torch/distributed/run.py:803] *****************************************
-model: RedHatAI/Meta-Llama-3-70B-Instruct-FP8  (tp_size=2)
-scenarios: ['multi_doc_qa']
-methods:   ['paged', 'mlca', 'bs_kernel', 'bsk_2l_1p', 'bsk_2l_dt']
-max_new:   256, repeat: 3
-
-Loading tokenizer + model...
-Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:   0%|          | 0/21 [00:00<?, ?it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:03,  5.97it/s]Fetching 21 files:  10%|▉         | 2/21 [00:00<00:04,  4.22it/s]Fetching 21 files:  14%|█▍        | 3/21 [00:38<04:49, 16.11s/it]Fetching 21 files:  14%|█▍        | 3/21 [00:38<04:50, 16.11s/it]Fetching 21 files:  52%|█████▏    | 11/21 [01:09<00:59,  5.93s/it]Fetching 21 files: 100%|██████████| 21/21 [01:09<00:00,  3.29s/it]
-Fetching 21 files:  52%|█████▏    | 11/21 [01:09<00:59,  5.93s/it]Fetching 21 files: 100%|██████████| 21/21 [01:09<00:00,  3.29s/it]
-Model loaded.
-
-k_overrides: [128]
-Building TreeSpecs (this tokenizes the inputs)...
-  multi_doc_qa             [K=128   ] B=4   K=128 L_shared~80102 L_priv~51    n_leaves=512
-
---- multi_doc_qa [K=128] ---
-  paged        r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.89 GiB. GPU 0 has a total capacity of 79.10 GiB of which 2.54 GiB is free. Including non-PyTorch memory, this process has 76.55 GiB memory in use. Of the allocated memory 75.95 GiB is allocated by PyTorch, and 7.48 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
-  mlca         r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.89 GiB. GPU 0 has a total capacity of 79.10 GiB of which 2.52 GiB is free. Including non-PyTorch memory, this process has 76.57 GiB memory in use. Of the allocated memory 75.96 GiB is allocated by PyTorch, and 19.23 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
-  bs_kernel    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.89 GiB. GPU 0 has a total capacity of 79.10 GiB of which 2.46 GiB is free. Including non-PyTorch memory, this process has 76.62 GiB memory in use. Of the allocated memory 76.02 GiB is allocated by PyTorch, and 14.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
-  bsk_2l_1p    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.89 GiB. GPU 0 has a total capacity of 79.10 GiB of which 2.46 GiB is free. Including non-PyTorch memory, this process has 76.62 GiB memory in use. Of the allocated memory 76.02 GiB is allocated by PyTorch, and 14.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
-  bsk_2l_dt    r=0  FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 4.89 GiB. GPU 0 has a total capacity of 79.10 GiB of which 2.46 GiB is free. Including non-PyTorch memory, this process has 76.62 GiB memory in use. Of the allocated memory 76.02 GiB is allocated by PyTorch, and 14.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
-  rank (decode_total): paged=inf, mlca=inf, bs_kernel=inf, bsk_2l_1p=inf, bsk_2l_dt=inf
-
-
-wrote 0 rows to benchmarks/bs_kernel/results/paper-exp/final_paper/Llama-3-70B-Instruct-FP8/F1b_multi_doc_qa_K128_B4_mn256.csv
-
-=== summary (best decode_total per method, ms) ===
-multi_doc_qa             [K=128   ]   rank (decode_total): paged=inf, mlca=inf, bs_kernel=inf, bsk_2l_1p=inf, bsk_2l_dt=inf
-[W523 19:36:31.393535375 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-[W523 19:36:49.606682695 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-[W523 19:36:50.620937793 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-=== done 2026-05-23T19:36:51+08:00 ===

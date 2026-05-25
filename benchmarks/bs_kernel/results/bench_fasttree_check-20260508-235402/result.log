@@ -1,15 +1,0 @@
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 2 methods = 2 runs
-methods: ['fasttree', 'bs_kernel']
-max_new: 256
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 21812.87it/s]
-Model loaded.
-
-  fasttree       K=64  L_p=8192   B=32 prefill= 2201.0ms  decode_total=215292.9ms  per_pt_token= 26.38ms  (217.9s wall)
-  bs_kernel      K=64  L_p=8192   B=32 prefill= 1473.5ms  decode_total=12004.8ms  per_pt_token=  1.47ms  ( 13.8s wall)
-
-wrote 2 rows to benchmarks/bs_kernel/results/bench_fasttree_check-20260508-235402/result.csv
-[W508 23:58:02.611056576 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

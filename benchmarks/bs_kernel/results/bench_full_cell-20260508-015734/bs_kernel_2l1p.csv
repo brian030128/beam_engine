@@ -1,2 +1,0 @@
-method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
-bs_kernel_2l1p,64,8192,32,256,2288.2813,29409.4499,115.3312,3.6041

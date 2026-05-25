@@ -1,40 +1,0 @@
-=== gov_ft_long started 2026-05-15T13:01:00+08:00 ===
-cell:  L_p=8192, K=32, B=16, max_new=2048
-
-=== running method: fasttree ===
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['fasttree']
-max_new: 2048
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 44620.26it/s]
-Model loaded.
-
-loaded 200 prompts from data/gov_report.jsonl
-  fasttree       warmup K=32  L_p=8192   B=16 discard          decode_total=62746.8ms  ( 64.8s wall)
-  fasttree              K=32  L_p=8192   B=16 prefill=  614.6ms  decode_total=62230.0ms  per_pt_token=  1.90ms  ( 63.2s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/gov_ft_long-20260515-130100/fasttree.csv
-[W515 13:03:21.396743252 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== running method: dbs_fasttree ===
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['dbs_fasttree']
-max_new: 2048
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 22446.58it/s]
-Model loaded.
-
-loaded 200 prompts from data/gov_report.jsonl
-  dbs_fasttree   warmup K=32  L_p=8192   B=16 discard          decode_total=66316.8ms  ( 68.4s wall)
-  dbs_fasttree          K=32  L_p=8192   B=16 prefill=  616.1ms  decode_total=65694.6ms  per_pt_token=  2.01ms  ( 66.7s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/gov_ft_long-20260515-130100/dbs_fasttree.csv
-[W515 13:05:50.338803201 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-Done. Results: benchmarks/bs_kernel/results/gov_ft_long-20260515-130100

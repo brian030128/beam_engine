@@ -1,11 +1,0 @@
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 6 cells × 6 modes = 36 runs
-modes: ['picker', 'PER_BEAM', 'SHARED_2L_1POOL', 'SHARED_2L_2POOL', 'SHARED_3L_1POOL', 'SHARED_3L_2POOL']
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 13573.80it/s]
-Model loaded.
-
-  picker             K=16  L_p=8192   B=1  prefill=  855.4ms  decode_total=  2971.4ms  per_pt_token=  5.81ms  (  3.9s wall)
-  PER_BEAM           K=16  L_p=8192   B=1  

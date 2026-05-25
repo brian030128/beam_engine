@@ -1,5 +1,0 @@
-scenario,method,repeat,n_leaves,prefill_shared_ms,prefill_private_ms,decode_total_ms,decode_p50_ms,decode_p99_ms,n_decode_steps
-multi_level_system,bs_kernel,0,128,1477.5151,287.0167,271.6383,15.0081,15.1541,15
-multi_level_system,fasttree,0,128,615.3970,283.5407,650.3182,15.4042,16.5242,15
-multi_level_system,paged,0,128,617.6988,283.5145,634.4742,42.1153,42.2134,15
-multi_level_system,mlca,0,128,619.2200,281.6227,248.9117,16.4198,17.0702,15

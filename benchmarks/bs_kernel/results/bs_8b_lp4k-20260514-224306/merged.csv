@@ -1,5 +1,0 @@
-method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
-fasttree,16,4096,32,256,3237.1807,9704.0951,38.0553,1.1892
-bs_kernel,16,4096,32,256,3244.7565,9637.3078,37.7934,1.1810
-paged,16,4096,32,256,3239.4583,14486.9381,56.8115,1.7754
-mlca,16,4096,32,256,3245.5469,17014.0780,66.7219,2.0851

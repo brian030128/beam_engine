@@ -1,19 +1,0 @@
-=== mlca long-decode numpy-bridge 2026-05-17T18:59:01+08:00 ===
-GPU: NVIDIA H100 80GB HBM3
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['mlca']
-max_new: 2048
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 26144.37it/s]
-Model loaded.
-
-loaded 200 prompts from data/gov_report.jsonl
-  mlca           warmup K=32  L_p=8192   B=16 discard          decode_total=112382.7ms  (114.4s wall)
-  mlca                  K=32  L_p=8192   B=16 prefill=  620.3ms  decode_total=112409.2ms  per_pt_token=  3.43ms  (113.4s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp4_long_decode/mlca_npbr.csv
-[W517 19:03:02.577348207 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-Done.

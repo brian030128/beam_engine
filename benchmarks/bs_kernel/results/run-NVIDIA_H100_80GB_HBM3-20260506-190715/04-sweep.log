@@ -1,84 +1,0 @@
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 3 configs × 1 methods = 3 runs
-methods: ['paged']
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 10657.74it/s]
-Model loaded.
-
-  paged          K=16  L_p=8192  max_new=16   prefill=1200.1ms  decode= 12.85ms p50  (  1.6s wall)
-  paged          K=32  L_p=8192  max_new=16   prefill= 235.9ms  decode= 17.18ms p50  (  0.5s wall)
-  paged          K=64  L_p=8192  max_new=16   prefill= 238.2ms  decode= 27.93ms p50  (  0.7s wall)
-
-wrote 3 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-190715/04-sweep-paged.csv
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 3 configs × 1 methods = 3 runs
-methods: ['tree']
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 21650.56it/s]
-Model loaded.
-
-  tree           K=16  L_p=8192  max_new=16   prefill=1146.0ms  decode= 16.23ms p50  (  1.6s wall)
-  tree           K=32  L_p=8192  max_new=16   prefill= 230.1ms  decode= 23.73ms p50  (  0.6s wall)
-  tree           K=64  L_p=8192  max_new=16   prefill= 232.6ms  decode= 38.81ms p50  (  0.8s wall)
-
-wrote 3 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-190715/04-sweep-tree.csv
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 3 configs × 1 methods = 3 runs
-methods: ['adaptive_pool']
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 40049.78it/s]
-Model loaded.
-
-  adaptive_pool  K=16  L_p=8192  max_new=16   prefill=1148.4ms  decode= 12.22ms p50  (  1.5s wall)
-  adaptive_pool  K=32  L_p=8192  max_new=16   prefill= 240.7ms  decode= 13.84ms p50  (  0.5s wall)
-  adaptive_pool  K=64  L_p=8192  max_new=16   prefill= 234.7ms  decode= 19.91ms p50  (  0.5s wall)
-
-wrote 3 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-190715/04-sweep-adaptive_pool.csv
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 3 configs × 1 methods = 3 runs
-methods: ['bs_kernel']
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 33603.31it/s]
-Model loaded.
-
-  bs_kernel      K=16  L_p=8192  max_new=16   prefill=1160.6ms  decode= 11.86ms p50  (  1.6s wall)
-  bs_kernel      K=32  L_p=8192  max_new=16   prefill= 235.8ms  decode= 13.97ms p50  (  0.5s wall)
-  bs_kernel      K=64  L_p=8192  max_new=16   prefill= 236.2ms  decode= 20.10ms p50  (  0.6s wall)
-
-wrote 3 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-190715/04-sweep-bs_kernel.csv
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 3 configs × 1 methods = 3 runs
-methods: ['fasttree']
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 45771.17it/s]
-Model loaded.
-
-  fasttree       K=16  L_p=8192  max_new=16   prefill=1172.4ms  decode= 16.78ms p50  (  2.0s wall)
-  fasttree       K=32  L_p=8192  max_new=16   prefill= 234.6ms  decode= 24.63ms p50  (  0.6s wall)
-  fasttree       K=64  L_p=8192  max_new=16   prefill= 234.4ms  decode= 34.44ms p50  (  0.8s wall)
-
-wrote 3 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-190715/04-sweep-fasttree.csv
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 3 configs × 1 methods = 3 runs
-methods: ['mlca']
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 145085.99it/s]
-Model loaded.
-
-  mlca           K=16  L_p=8192  max_new=16     [mlca] FAILED: AttributeError: 'MultiLevelCascadeAttentionWrapper' object has no attribute 'num_levels'
-  mlca           K=32  L_p=8192  max_new=16     [mlca] FAILED: AttributeError: 'MultiLevelCascadeAttentionWrapper' object has no attribute 'num_levels'
-  mlca           K=64  L_p=8192  max_new=16     [mlca] FAILED: AttributeError: 'MultiLevelCascadeAttentionWrapper' object has no attribute 'num_levels'
-
-wrote 0 rows to benchmarks/bs_kernel/results/run-NVIDIA_H100_80GB_HBM3-20260506-190715/04-sweep-mlca.csv

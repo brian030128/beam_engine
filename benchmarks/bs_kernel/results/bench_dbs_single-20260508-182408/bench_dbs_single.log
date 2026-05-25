@@ -1,19 +1,0 @@
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 6 methods = 6 runs
-methods: ['dbs_paged', 'dbs_tree', 'dbs_fasttree', 'dbs_mlca', 'dbs_adaptive_pool', 'dbs_bs_kernel']
-max_new: 256
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 61941.20it/s]
-Model loaded.
-
-  dbs_paged      K=64  L_p=8192   B=32 prefill= 2288.4ms  decode_total=58158.5ms  per_pt_token=  7.13ms  ( 60.8s wall)
-  dbs_tree       K=64  L_p=8192   B=32 prefill= 1316.1ms  decode_total=270271.9ms  per_pt_token= 33.12ms  (271.8s wall)
-  dbs_fasttree   K=64  L_p=8192   B=32 prefill= 1362.0ms  decode_total=234226.7ms  per_pt_token= 28.70ms  (235.9s wall)
-  dbs_mlca       K=64  L_p=8192   B=32 prefill= 1448.3ms  decode_total=29509.5ms  per_pt_token=  3.62ms  ( 31.2s wall)
-  dbs_adaptive_pool K=64  L_p=8192   B=32 prefill= 1450.9ms  decode_total=26547.9ms  per_pt_token=  3.25ms  ( 28.3s wall)
-  dbs_bs_kernel  K=64  L_p=8192   B=32 prefill= 1455.0ms  decode_total=28297.7ms  per_pt_token=  3.47ms  ( 30.0s wall)
-
-wrote 6 rows to benchmarks/bs_kernel/results/bench_dbs_single-20260508-182408/bench_dbs_single.csv
-[W508 18:35:15.484803714 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

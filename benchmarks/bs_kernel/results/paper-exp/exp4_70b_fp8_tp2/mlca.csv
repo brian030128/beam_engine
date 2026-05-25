@@ -1,2 +1,0 @@
-method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms,plan_mean_ms,plan_total_ms,forward_mean_ms,forward_total_ms,cow_mean_ms,cow_total_ms,topk_mean_ms,topk_total_ms,fork_mean_ms,fork_total_ms
-mlca,32,8192,4,768,3855.4009,54184.6162,70.6449,17.6612,1.9866,1523.7184,66.3960,50925.7652,1.4180,1087.6301,0.5312,407.4267,0.2969,227.7593

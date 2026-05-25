@@ -1,2 +1,0 @@
-method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
-fasttree,16,4096,32,256,3237.1807,9704.0951,38.0553,1.1892

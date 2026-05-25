@@ -1,4 +1,0 @@
-method,K,L_p,max_new,prefill_ms,decode_step_ms_p50,decode_step_ms_p90,decode_step_ms_p99,decode_step_ms_mean,decode_step_count
-tree,16,8192,16,1111.3302,15.6924,15.9423,172.8121,26.1586,15
-tree,32,8192,16,229.8654,22.6839,22.8969,32.5313,23.3524,15
-tree,64,8192,16,228.6403,36.9752,37.3485,48.5188,37.7063,15

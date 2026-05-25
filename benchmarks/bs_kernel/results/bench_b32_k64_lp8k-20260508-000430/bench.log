@@ -1,96 +1,0 @@
-=== bench_b32_k64_lp8k started 2026-05-08T00:04:30+08:00 ===
-config: K=64, L_p=8192, B=32, max_new=16
-methods: paged fasttree mlca adaptive_pool bs_kernel
-GPU: NVIDIA H100 80GB HBM3
-
-=== running method: paged ===
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['paged']
-max_new: 16
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 15991.36it/s]
-Model loaded.
-
-  paged          K=64  L_p=8192   B=32 prefill= 2301.9ms  decode_total= 5287.6ms  per_pt_token= 11.02ms  (  7.9s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/bench_b32_k64_lp8k-20260508-000430/paged.csv
-[W508 00:04:46.621662492 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== running method: fasttree ===
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['fasttree']
-max_new: 16
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 116508.44it/s]
-Model loaded.
-
-  fasttree       K=64  L_p=8192   B=32 prefill= 2208.6ms  decode_total=11784.8ms  per_pt_token= 24.55ms  ( 14.3s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/bench_b32_k64_lp8k-20260508-000430/fasttree.csv
-[W508 00:05:09.578494262 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== running method: mlca ===
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['mlca']
-max_new: 16
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 25508.36it/s]
-Model loaded.
-
-  mlca           K=64  L_p=8192   B=32 prefill= 2305.4ms  decode_total= 3009.0ms  per_pt_token=  6.27ms  (  5.6s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/bench_b32_k64_lp8k-20260508-000430/mlca.csv
-[W508 00:05:24.909807815 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== running method: adaptive_pool ===
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['adaptive_pool']
-max_new: 16
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 76260.07it/s]
-Model loaded.
-
-  adaptive_pool  K=64  L_p=8192   B=32 prefill= 2289.7ms  decode_total= 2950.9ms  per_pt_token=  6.15ms  (  5.5s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/bench_b32_k64_lp8k-20260508-000430/adaptive_pool.csv
-[W508 00:05:38.032790252 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== running method: bs_kernel ===
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['bs_kernel']
-max_new: 16
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 62203.66it/s]
-Model loaded.
-
-  bs_kernel      K=64  L_p=8192   B=32 prefill= 2302.4ms  decode_total= 3020.3ms  per_pt_token=  6.29ms  (  5.6s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/bench_b32_k64_lp8k-20260508-000430/bs_kernel.csv
-[W508 00:05:52.305524653 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== merging CSVs to benchmarks/bs_kernel/results/bench_b32_k64_lp8k-20260508-000430/bench_b32_k64_lp8k.csv ===
-
-=== merged results ===
-method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms
-paged,64,8192,32,16,2301.8658,5287.6365,352.5091,11.0159
-fasttree,64,8192,32,16,2208.5798,11784.8061,785.6537,24.5517
-mlca,64,8192,32,16,2305.3953,3009.0496,200.6033,6.2689
-adaptive_pool,64,8192,32,16,2289.6996,2950.8915,196.7261,6.1477
-bs_kernel,64,8192,32,16,2302.3736,3020.3364,201.3558,6.2924
-
-Done. Results: benchmarks/bs_kernel/results/bench_b32_k64_lp8k-20260508-000430

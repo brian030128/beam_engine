@@ -1,4 +1,0 @@
-method,K,L_p,max_new,prefill_ms,decode_step_ms_p50,decode_step_ms_p90,decode_step_ms_p99,decode_step_ms_mean,decode_step_count
-paged,16,8192,16,1200.0584,12.8508,15.1710,102.0377,18.7960,15
-paged,32,8192,16,235.8777,17.1753,23.8417,24.8960,18.2771,15
-paged,64,8192,16,238.1997,27.9331,34.3848,41.0577,28.7321,15

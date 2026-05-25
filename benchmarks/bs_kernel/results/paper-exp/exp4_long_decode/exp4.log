@@ -1,74 +1,0 @@
-=== exp4 long-decode beam search started 2026-05-17T22:09:05+08:00 ===
-model:    meta-llama/Llama-3.2-1B
-prompts:  data/gov_report.jsonl
-cell:     L_p=8192, K=32, B=16, max_new=2048
-methods:  paged fasttree deft mlca bs_kernel
-GPU:      NVIDIA H100 80GB HBM3
-
-=== running method: paged ===
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['paged']
-max_new: 2048
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 104857.60it/s]
-Model loaded.
-
-loaded 200 prompts from data/gov_report.jsonl
-  paged          warmup K=32  L_p=8192   B=16 discard          decode_total=82924.2ms  ( 85.2s wall)
-  paged                 K=32  L_p=8192   B=16 prefill=  631.2ms  decode_total=83057.5ms  per_pt_token=  2.54ms  ( 84.2s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp4_long_decode/paged.csv
-[W517 22:12:09.913742845 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== running method: fasttree ===
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['fasttree']
-max_new: 2048
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 103746.04it/s]
-Model loaded.
-
-loaded 200 prompts from data/gov_report.jsonl
-  fasttree       warmup K=32  L_p=8192   B=16 discard          decode_total=63164.3ms  ( 65.3s wall)
-  fasttree              K=32  L_p=8192   B=16 prefill=  657.2ms  decode_total=62462.3ms  per_pt_token=  1.91ms  ( 63.6s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp4_long_decode/fasttree.csv
-[W517 22:14:33.617867201 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== running method: deft ===
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['deft']
-max_new: 2048
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 69573.76it/s]
-Model loaded.
-
-loaded 200 prompts from data/gov_report.jsonl
-  deft           warmup K=32  L_p=8192   B=16 discard          decode_total=78515.2ms  ( 80.7s wall)
-  deft                  K=32  L_p=8192   B=16 prefill=  682.5ms  decode_total=75218.9ms  per_pt_token=  2.30ms  ( 76.5s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/exp4_long_decode/deft.csv
-[W517 22:17:24.426446906 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== running method: mlca ===
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['mlca']
-max_new: 2048
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 14896.06it/s]
-Model loaded.
-
-loaded 200 prompts from data/gov_report.jsonl
-  mlca           warmup K=32  L_p=8192   B=16 

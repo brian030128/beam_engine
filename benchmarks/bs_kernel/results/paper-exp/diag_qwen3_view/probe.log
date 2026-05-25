@@ -1,30 +1,0 @@
-W0521 02:00:19.455000 4078379 torch/distributed/run.py:803] 
-W0521 02:00:19.455000 4078379 torch/distributed/run.py:803] *****************************************
-W0521 02:00:19.455000 4078379 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
-W0521 02:00:19.455000 4078379 torch/distributed/run.py:803] *****************************************
-model: Qwen/Qwen3-4B  (tp_size=2)
-scenarios: ['multi_level_system']
-methods:   ['bs_kernel']
-max_new:   8, repeat: 1
-
-Loading tokenizer + model...
-Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 117597.31it/s]
-Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 122560.83it/s]
-Model loaded.
-
-k_overrides: [8]
-Building TreeSpecs (this tokenizes the inputs)...
-  multi_level_system       [K=8     ] B=2   K=8   L_shared~2522  L_priv~80    n_leaves=16
-
---- multi_level_system [K=8] ---
-  bs_kernel    r=0  prefill= 2034.8ms  decode=  208.4ms  plan/step=10.55ms  fwd/step=19.10ms  p50/step=14.39ms  wall=  2.5s
-  rank (decode_total): bs_kernel=208.4
-
-
-wrote 1 rows to benchmarks/bs_kernel/results/paper-exp/diag_qwen3_view/probe.csv
-
-=== summary (best decode_total per method, ms) ===
-multi_level_system       [K=8     ]   rank (decode_total): bs_kernel=208.4
-[W521 02:00:36.551969758 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-[W521 02:00:36.567250578 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-[W521 02:00:37.303566259 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

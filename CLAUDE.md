@@ -2,14 +2,13 @@
 
 Research project — building the fastest LLM beam search engine.
 
-The repo ships **six** beam-search methods, all driven by a unified
+This is the paper-artifact build (see `REPRODUCE.md`). The repo ships the
+**five** methods the paper compares, all driven by a unified
 `page_driver.beam_search` (cross-prompt batched: B prompts × K beams in
 one launch):
 
 - **paged** (`baselines/paged.py`) — FlashInfer paged decode wrapper;
   refcounted prefix sharing, copy-on-write at divergence.
-- **tree** (`baselines/tree.py`, arXiv:2502.00085) — fused-sequence
-  layout, single FlashAttention call with a tree-shaped mask.
 - **mlca** (`baselines/mlca.py`) — FlashInfer
   `MultiLevelCascadeAttentionWrapper` (one prefill launch *per level*
   + a separate `merge_states` bridge; not single-kernel).
@@ -17,9 +16,9 @@ one launch):
   two-stage radix-tree decode kernel; rewritten on top of
   `page_driver` with page-level radix + LCA-prefix-skip + numpy-bridged
   metadata. See `docs/baseline/fasttree_analysis.md`.
-- **adaptive_pool** (`methods/adaptive_pool.py`) — adaptive 2-pool
-  routing on top of FlashInfer's `FusedMultiLevelCascadeAttentionWrapper`;
-  picks pool sizes per step.
+- **deft** (`baselines/deft.py`) — DeFT split-by-node Triton kernel
+  (vendored at `baselines/_deft_kernel/`); metadata built from the same
+  page-radix tree as fasttree.
 - **bs_kernel** (`methods/bs_kernel/`, our proposed method) — unified
   cost-model picker over (cascade depth × pool count × tail-kernel),
   with online-calibrated coefficients and plan-state caching keyed by
@@ -29,7 +28,9 @@ one launch):
   `docs/cta_tile_q_design.md`.
 
 All methods share the same Llama model code (`models/`) via the
-`AttentionContext` dispatch layer.
+`AttentionContext` dispatch layer. `methods/adaptive_pool.py` is kept as
+an internal precursor: it is not a paper-reported method, but bs_kernel,
+fasttree, and deft reuse its shared `Beam` / pool data structures.
 
 ## Environment
 
@@ -41,8 +42,8 @@ All methods share the same Llama model code (`models/`) via the
 
 ## GPU usage
 
-GPU access varies by host. Check `docs/h100_usage.md` for cluster
-specifics.
+GPU access varies by host. See `REPRODUCE.md` for the per-model TP / GPU
+counts used in the paper.
 
 - **nano5 (current default)** — SLURM cluster. H100s on
   `hgpn[01-06,17-21]`; the login node has no usable GPU. Submit work
@@ -70,9 +71,10 @@ src/beam_engine/
                                 # is what each method implements.
   decoding.py                   # standard / DBS top-K selectors (batched + per-prompt)
   baselines/
-    paged.py, tree.py, mlca.py, fasttree.py
+    paged.py, mlca.py, fasttree.py, deft.py
+    _deft_kernel/               # vendored DeFT split-by-node Triton kernel
   methods/
-    adaptive_pool.py            # PageDecodeBackend; 2-pool fused-cascade picker
+    adaptive_pool.py            # shared Beam/pool structs (internal precursor)
     bs_kernel/
       cost_model.py             # Strategy enum, pick_strategy_batch, fallbacks
       driver.py                 # _BsKernelWrappers + dispatch (PER_BEAM/SHARED_*L/DEC_TAIL)
@@ -86,12 +88,16 @@ slurm/                          # *.sbatch entry points (nano5 cluster)
 docs/
   bs_kernel_design.md           # design plan for bs_kernel (cost model + kernel)
   cta_tile_q_design.md          # two-pool CTA_TILE_Q justification
+  dispatch_space_justification.md  # why the dispatch set is fixed-cardinality
+  multilevel_tree_spec.md       # multi-level TreeSpec / cross-prompt sharing
   baseline/
     paged_attention.md          # paged-attention baseline
-    tree_attention.md           # tree-attention baseline
+    tree_attention.md           # tree-attention background
     fasttree_analysis.md        # FastTree weaknesses + bs_kernel novelty
 tests/
-  test_baselines.py             # cross-baseline equality + greedy match
+  test_bs_kernel.py             # bs_kernel ≡ paged token-equality
+REPRODUCE.md                    # paper artifact -> command map
+PAPER_CONFIG_MISMATCHES.md      # paper-text vs data config discrepancies
 ```
 
 ## Cascade attention references

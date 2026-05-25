@@ -1,132 +1,0 @@
-=== 8b max_new=2048 | started 2026-05-23T00:56:10+08:00 ===
-grid:   K=32, L_p=8192, max_new=2048, B∈{1,2,4,16}
-model:  meta-llama/Llama-3.1-8B
-GPU:    NVIDIA H100 80GB HBM3
-flashinfer diff (single_launch must be live):
-=== bs_kernel_2l1p_single_K32_B1 | max_pages=5632 ===
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['bs_kernel_2l1p_single']
-max_new: 2048
-tp_size: 1, device: cuda
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 131445.42it/s]
-Model loaded.
-
-  bs_kernel_2l1p_single warmup K=32  L_p=8192   B=1  discard          decode_total=24556.8ms  ( 26.0s wall)
-  bs_kernel_2l1p_single        K=32  L_p=8192   B=1  prefill=  215.8ms  decode_total=24474.3ms  per_pt_token= 11.96ms  ( 24.9s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b_mn2048-20260523-005610/bs_kernel_2l1p_single_K32_B1.csv
-[W523 00:57:11.779669230 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== bs_kernel_2l1p_single_K32_B2 | max_pages=10240 ===
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['bs_kernel_2l1p_single']
-max_new: 2048
-tp_size: 1, device: cuda
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 3139.02it/s]
-Model loaded.
-
-  bs_kernel_2l1p_single warmup K=32  L_p=8192   B=2  discard          decode_total=30736.0ms  ( 32.4s wall)
-  bs_kernel_2l1p_single        K=32  L_p=8192   B=2  prefill=  429.6ms  decode_total=30598.1ms  per_pt_token=  7.47ms  ( 31.2s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b_mn2048-20260523-005610/bs_kernel_2l1p_single_K32_B2.csv
-[W523 00:58:26.116024784 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== bs_kernel_2l1p_single_K32_B4 | max_pages=19456 ===
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['bs_kernel_2l1p_single']
-max_new: 2048
-tp_size: 1, device: cuda
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 155869.41it/s]
-Model loaded.
-
-  bs_kernel_2l1p_single warmup K=32  L_p=8192   B=4  discard          decode_total=39935.9ms  ( 42.1s wall)
-  bs_kernel_2l1p_single        K=32  L_p=8192   B=4  prefill=  860.9ms  decode_total=39847.9ms  per_pt_token=  4.87ms  ( 41.0s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b_mn2048-20260523-005610/bs_kernel_2l1p_single_K32_B4.csv
-[W523 00:59:59.587768774 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== bs_kernel_2l1p_single_K32_B16 | max_pages=74752 ===
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['bs_kernel_2l1p_single']
-max_new: 2048
-tp_size: 1, device: cuda
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 133344.92it/s]
-Model loaded.
-
-  bs_kernel_2l1p_single warmup K=32  L_p=8192   B=16   [bs_kernel_2l1p_single] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 146.12 GiB. GPU 0 has a total capacity of 79.10 GiB of which 63.62 GiB is free. Including non-PyTorch memory, this process has 15.47 GiB memory in use. Of the allocated memory 14.96 GiB is allocated by PyTorch, and 5.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
-
-wrote 0 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b_mn2048-20260523-005610/bs_kernel_2l1p_single_K32_B16.csv
-[W523 01:00:10.522391717 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== bs_kernel_2ldt_K32_B1 | max_pages=5632 ===
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['bs_kernel_2ldt']
-max_new: 2048
-tp_size: 1, device: cuda
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 155869.41it/s]
-Model loaded.
-
-  bs_kernel_2ldt warmup K=32  L_p=8192   B=1  discard          decode_total=23044.6ms  ( 24.5s wall)
-  bs_kernel_2ldt        K=32  L_p=8192   B=1  prefill=  216.2ms  decode_total=22955.5ms  per_pt_token= 11.21ms  ( 23.3s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b_mn2048-20260523-005610/bs_kernel_2ldt_K32_B1.csv
-[W523 01:01:08.702857523 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== bs_kernel_2ldt_K32_B2 | max_pages=10240 ===
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['bs_kernel_2ldt']
-max_new: 2048
-tp_size: 1, device: cuda
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 154305.50it/s]
-Model loaded.
-
-  bs_kernel_2ldt warmup K=32  L_p=8192   B=2  discard          decode_total=26939.6ms  ( 28.6s wall)
-  bs_kernel_2ldt        K=32  L_p=8192   B=2  prefill=  428.5ms  decode_total=26802.7ms  per_pt_token=  6.55ms  ( 27.4s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b_mn2048-20260523-005610/bs_kernel_2ldt_K32_B2.csv
-[W523 01:02:15.019006057 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== bs_kernel_2ldt_K32_B4 | max_pages=19456 ===
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['bs_kernel_2ldt']
-max_new: 2048
-tp_size: 1, device: cuda
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 152772.66it/s]
-Model loaded.
-
-  bs_kernel_2ldt warmup K=32  L_p=8192   B=4  discard          decode_total=35142.8ms  ( 37.3s wall)
-  bs_kernel_2ldt        K=32  L_p=8192   B=4  prefill=  861.3ms  decode_total=35029.7ms  per_pt_token=  4.28ms  ( 36.2s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b_mn2048-20260523-005610/bs_kernel_2ldt_K32_B4.csv
-[W523 01:03:39.969264022 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== bs_kernel_2ldt_K32_B16 | max_pages=74752 ===
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['bs_kernel_2ldt']
-max_new: 2048
-tp_size: 1, device: cuda
-Loading tokenizer + model...
-Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 156397.78it/s]
-Model loaded.
-
-  bs_kernel_2ldt warmup K=32  L_p=8192   B=16   [bs_kernel_2ldt] FAILED: OutOfMemoryError: CUDA out of memory. Tried to allocate 146.12 GiB. GPU 0 has a total capacity of 79.10 GiB of which 63.62 GiB is free. Including non-PyTorch memory, this process has 15.47 GiB memory in use. Of the allocated memory 14.96 GiB is allocated by PyTorch, and 5.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
-
-wrote 0 rows to benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b_mn2048-20260523-005610/bs_kernel_2ldt_K32_B16.csv
-[W523 01:03:49.215034339 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-
-=== merged ===
-method,K,L_p,B,max_new,prefill_ms,decode_total_ms,decode_per_token_ms,decode_per_prompt_per_token_ms,plan_mean_ms,plan_total_ms,forward_mean_ms,forward_total_ms,cow_mean_ms,cow_total_ms,topk_mean_ms,topk_total_ms,fork_mean_ms,fork_total_ms
-bs_kernel_2l1p_single,32,8192,1,2048,215.7993,24474.2818,11.9562,11.9562,0.8746,1790.3375,10.1393,20755.1293,0.4071,833.3124,0.4435,907.8086,0.0790,161.6902
-bs_kernel_2l1p_single,32,8192,2,2048,429.5641,30598.1086,14.9478,7.4739,1.3114,2684.4844,12.6083,25809.1892,0.4171,853.8822,0.4887,1000.3267,0.1094,223.8543
-bs_kernel_2l1p_single,32,8192,4,2048,860.9477,39847.8609,19.4665,4.8666,2.2085,4520.8288,15.9166,32581.3279,0.4376,895.7225,0.7188,1471.2982,0.1721,352.2291
-bs_kernel_2ldt,32,8192,1,2048,216.1545,22955.5389,11.2142,11.2142,0.6974,1427.4969,9.5777,19605.5021,0.4071,833.3051,0.4427,906.3033,0.0767,156.9417
-bs_kernel_2ldt,32,8192,2,2048,428.5150,26802.6675,13.0936,6.5468,1.0987,2249.0082,10.9663,22447.9413,0.4181,855.8393,0.4892,1001.3351,0.1086,222.3457
-bs_kernel_2ldt,32,8192,4,2048,861.2739,35029.6751,17.1127,4.2782,1.9022,3893.7991,13.8681,28387.9238,0.4366,893.7826,0.7208,1475.5688,0.1718,351.7415
-Done. Results: benchmarks/bs_kernel/results/2l1p_single_vs_2ldt_8b_mn2048-20260523-005610

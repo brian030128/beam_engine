@@ -3,7 +3,7 @@
 For each method × (K, L_p, B), run beam search on B prompts (use
 ``--distinct`` for pairwise-distinct prompts; default repeats one prompt
 B times) and report total decode wall time per (prompt, token). All
-methods (paged, tree, fasttree, mlca, adaptive_pool, bs_kernel) are
+methods (paged, fasttree, deft, mlca, adaptive_pool, bs_kernel) are
 batched: one decode-loop iteration covers all B prompts, with a single
 attention kernel launch per layer covering B·K query rows. The
 per-prompt Python loop only builds the layout arrays before they're
@@ -16,7 +16,7 @@ Output CSV columns:
 Usage:
     uv run python benchmarks/bs_kernel/bench_batched.py \
         --K 16 --L_p 8192 --B 1 2 4 8 --max_new 16 \
-        --methods paged tree fasttree mlca adaptive_pool bs_kernel \
+        --methods paged fasttree mlca adaptive_pool bs_kernel \
         --out benchmarks/bs_kernel/results/bench_batched.csv
 """
 
@@ -34,7 +34,7 @@ from typing import Callable
 import torch
 from transformers import AutoTokenizer
 
-from beam_engine.baselines import dbs, deft, fasttree, mlca, paged, tree
+from beam_engine.baselines import deft, fasttree, mlca, paged
 from beam_engine.distributed import (
     destroy_tp,
     get_tp_rank,
@@ -292,7 +292,6 @@ def _bs_kernel_force_5l_dec_tail(
 
 METHODS: dict[str, Callable] = {
     "paged":            paged.beam_search,
-    "tree":             tree.beam_search,
     "fasttree":         fasttree.beam_search,
     "deft":             deft.beam_search,
     "mlca":             mlca.beam_search,
@@ -307,14 +306,6 @@ METHODS: dict[str, Callable] = {
     "bs_kernel_4ldt":   _bs_kernel_force_4l_dec_tail,
     "bs_kernel_5l1p":   _bs_kernel_force_5l1p,
     "bs_kernel_5ldt":   _bs_kernel_force_5l_dec_tail,
-    # DBS variants — same kernel, diversity-penalized top-K
-    # (num_groups=4, λ=0.5 default).
-    "dbs_paged":         dbs.dbs_paged,
-    "dbs_tree":          dbs.dbs_tree,
-    "dbs_fasttree":      dbs.dbs_fasttree,
-    "dbs_mlca":          dbs.dbs_mlca,
-    "dbs_adaptive_pool": dbs.dbs_adaptive_pool,
-    "dbs_bs_kernel":     dbs.dbs_bs_kernel,
 }
 
 

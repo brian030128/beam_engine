@@ -1,4 +1,0 @@
-scenario,k_override,method,repeat,n_leaves,prefill_shared_ms,prefill_private_ms,decode_total_ms,decode_p50_ms,decode_p99_ms,n_decode_steps,plan_mean_ms,plan_p50_ms,plan_p99_ms,plan_total_ms,forward_mean_ms,forward_p50_ms,forward_p99_ms,forward_total_ms,alloc_mean_ms,alloc_total_ms,topk_mean_ms,topk_total_ms,dispatch_total_ms
-multi_level_system,64,bs_kernel,0,64,311.6657,650.7837,13870.8617,54.4956,56.4805,255,0.5752,0.4837,1.8000,146.6665,53.6953,53.7839,55.3360,13692.3030,0.0096,2.4376,0.1000,25.4874,14.2283
-multi_level_system,64,bsk_2l_1p,0,64,309.7450,656.0759,13869.7241,54.4112,56.4694,255,0.5661,0.4778,1.7975,144.3646,53.6985,53.7760,54.9569,13693.1090,0.0097,2.4746,0.1009,25.7311,0.0000
-multi_level_system,64,bsk_2l_dt,0,64,355.4401,648.4507,15058.9494,59.1422,60.2773,255,0.4332,0.3820,1.0768,110.4692,58.4959,58.5986,59.7253,14916.4619,0.0093,2.3615,0.1006,25.6567,0.0000

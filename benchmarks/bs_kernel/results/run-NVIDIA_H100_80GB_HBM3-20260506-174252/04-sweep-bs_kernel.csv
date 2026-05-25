@@ -1,4 +1,0 @@
-method,K,L_p,max_new,prefill_ms,decode_step_ms_p50,decode_step_ms_p90,decode_step_ms_p99,decode_step_ms_mean,decode_step_count
-bs_kernel,16,8192,16,1126.7138,11.6666,13.9352,137.1339,20.0227,15
-bs_kernel,32,8192,16,231.6631,13.6312,19.5488,22.4489,14.6972,15
-bs_kernel,64,8192,16,233.6568,19.5610,25.5514,31.4027,20.2773,15

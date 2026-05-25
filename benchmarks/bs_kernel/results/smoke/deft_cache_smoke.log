@@ -1,112 +1,0 @@
-=== deft cache A/B smoke 2026-05-18T00:31:28+08:00 ===
-GPU: NVIDIA H100 80GB HBM3
-
---- cell small: K=4 L_p=128 B=2 max_new=64 ---
-    methods=deft fasttree  BE_DEFT_PLAN_CACHE=1
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 2 methods = 2 runs
-methods: ['deft', 'fasttree']
-max_new: 64
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 18629.52it/s]
-Model loaded.
-
-  deft           warmup K=4   L_p=128    B=2  discard          decode_total=  985.3ms  (  2.0s wall)
-  deft                  K=4   L_p=128    B=2  prefill=    4.9ms  decode_total=  456.6ms  per_pt_token=  3.62ms  (  0.5s wall)
-  fasttree       warmup K=4   L_p=128    B=2  discard          decode_total=  373.6ms  (  0.5s wall)
-  fasttree              K=4   L_p=128    B=2  prefill=    4.8ms  decode_total=  351.3ms  per_pt_token=  2.79ms  (  0.4s wall)
-
-wrote 2 rows to benchmarks/bs_kernel/results/smoke/deft_cache_small_c1.csv
-[W518 00:31:40.849032726 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
---- cell small: K=4 L_p=128 B=2 max_new=64 ---
-    methods=deft  BE_DEFT_PLAN_CACHE=0
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['deft']
-max_new: 64
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 24164.71it/s]
-Model loaded.
-
-  deft           warmup K=4   L_p=128    B=2  discard          decode_total=  980.0ms  (  2.0s wall)
-  deft                  K=4   L_p=128    B=2  prefill=    4.9ms  decode_total=  466.4ms  per_pt_token=  3.70ms  (  0.5s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/smoke/deft_cache_small_c0.csv
-[W518 00:31:51.093835040 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
---- cell midk: K=64 L_p=512 B=2 max_new=64 ---
-    methods=deft fasttree  BE_DEFT_PLAN_CACHE=1
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 2 methods = 2 runs
-methods: ['deft', 'fasttree']
-max_new: 64
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 29098.24it/s]
-Model loaded.
-
-  deft           warmup K=64  L_p=512    B=2  discard          decode_total= 1097.0ms  (  2.1s wall)
-  deft                  K=64  L_p=512    B=2  prefill=    5.3ms  decode_total=  570.0ms  per_pt_token=  4.52ms  (  0.7s wall)
-  fasttree       warmup K=64  L_p=512    B=2  discard          decode_total=  515.3ms  (  0.6s wall)
-  fasttree              K=64  L_p=512    B=2  prefill=    5.3ms  decode_total=  495.4ms  per_pt_token=  3.93ms  (  0.6s wall)
-
-wrote 2 rows to benchmarks/bs_kernel/results/smoke/deft_cache_midk_c1.csv
-[W518 00:32:03.792761830 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
---- cell midk: K=64 L_p=512 B=2 max_new=64 ---
-    methods=deft  BE_DEFT_PLAN_CACHE=0
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['deft']
-max_new: 64
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 17050.02it/s]
-Model loaded.
-
-  deft           warmup K=64  L_p=512    B=2  discard          decode_total= 1081.6ms  (  2.1s wall)
-  deft                  K=64  L_p=512    B=2  prefill=    5.4ms  decode_total=  574.2ms  per_pt_token=  4.56ms  (  0.7s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/smoke/deft_cache_midk_c0.csv
-[W518 00:32:15.307160592 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
---- cell long: K=32 L_p=1024 B=4 max_new=512 ---
-    methods=deft fasttree  BE_DEFT_PLAN_CACHE=1
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 2 methods = 2 runs
-methods: ['deft', 'fasttree']
-max_new: 512
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 112061.56it/s]
-Model loaded.
-
-  deft           warmup K=32  L_p=1024   B=4  discard          decode_total= 5261.7ms  (  6.3s wall)
-  deft                  K=32  L_p=1024   B=4  prefill=   16.2ms  decode_total= 4734.8ms  per_pt_token=  2.32ms  (  4.9s wall)
-  fasttree       warmup K=32  L_p=1024   B=4  discard          decode_total= 4405.2ms  (  4.5s wall)
-  fasttree              K=32  L_p=1024   B=4  prefill=   16.2ms  decode_total= 4397.2ms  per_pt_token=  2.15ms  (  4.5s wall)
-
-wrote 2 rows to benchmarks/bs_kernel/results/smoke/deft_cache_long_c1.csv
-[W518 00:32:44.338304002 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
---- cell long: K=32 L_p=1024 B=4 max_new=512 ---
-    methods=deft  BE_DEFT_PLAN_CACHE=0
-/home/u4320956/beam_engine-v3/.venv/lib/python3.11/site-packages/tvm_ffi/_optional_torch_c_dlpack.py:181: UserWarning: Failed to JIT torch c dlpack extension, EnvTensorAllocator will not be enabled.
-We recommend installing via `pip install torch-c-dlpack-ext`
-  warnings.warn(
-grid: 1 (K,L_p,B) cells × 1 methods = 1 runs
-methods: ['deft']
-max_new: 512
-Loading tokenizer + model...
-Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 17270.66it/s]
-Model loaded.
-
-  deft           warmup K=32  L_p=1024   B=4  discard          decode_total= 5217.4ms  (  6.3s wall)
-  deft                  K=32  L_p=1024   B=4  prefill=   16.2ms  decode_total= 4683.8ms  per_pt_token=  2.29ms  (  4.8s wall)
-
-wrote 1 rows to benchmarks/bs_kernel/results/smoke/deft_cache_long_c0.csv
-[W518 00:33:04.259514023 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
-Done.
