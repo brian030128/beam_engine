@@ -54,13 +54,6 @@ and timing-breakdown jobs additionally read `data/gov_report.jsonl` and
 shape) is gated by `SEEDS=...`; `verify_shape_parity.py` checks shape
 conformance. See the per-scenario builders and `final_paper_lib.sh`.
 
-## ⚠️ Known paper-text / data discrepancies
-
-The reported numbers are correct, but two **prose** workload descriptions
-in `paper.tex` disagree with the actual settings (F3 prefix is 16K not
-40K and B=8 on 8B/70B; F4 prefix is per-model 32K/16K/64K not a uniform
-16K). See **`PAPER_CONFIG_MISMATCHES.md`** for the full list and fixes.
-
 ## Cost-model calibration
 
 `bs_kernel`'s cost-model constants are recalibrated once per model at
